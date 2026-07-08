@@ -1,0 +1,45 @@
+{# 手动记录表单：ctx = form_log_date, form_saved, form_errors, session_type_hints
+   注：嵌在训练页「手动记一笔」.card 区块内，根元素不带卡片样式（outerHTML 自换） #}
+<form id="workout-manual-form"
+      hx-post="/workout/logs"
+      hx-target="this" hx-swap="outerHTML"
+      hx-disabled-elt="find button[type='submit']"
+      class="space-y-3">
+  {% if form_saved %}<div class="fade-in"><span class="badge-accent">已记录 ✓</span></div>{% endif %}
+  {% if form_errors %}<div class="text-sm text-rose-400">{{ form_errors | join('；') }}</div>{% endif %}
+  <div class="grid grid-cols-2 gap-3">
+    <label class="block">
+      <span class="field-label">日期</span>
+      <input type="date" name="log_date" value="{{ form_log_date }}"
+             class="field text-sm tabular-nums">
+    </label>
+    <label class="block">
+      <span class="field-label">类型</span>
+      <input type="text" name="session_type" list="workout-session-type-options" placeholder="力量 / 有氧 / 盆底…"
+             class="field text-sm">
+      <datalist id="workout-session-type-options">
+        {% for opt in session_type_hints %}<option value="{{ opt }}"></option>{% endfor %}
+      </datalist>
+    </label>
+    <label class="block">
+      <span class="field-label">时长（分钟）</span>
+      <input type="number" name="duration_min" inputmode="numeric" min="0" max="1440" placeholder="30"
+             class="field text-sm tabular-nums">
+    </label>
+    <label class="block">
+      <span class="field-label">距离（km，可空）</span>
+      <input type="number" name="distance_km" inputmode="decimal" step="0.01" min="0" max="1000" placeholder="3.5"
+             class="field text-sm tabular-nums">
+    </label>
+    <label class="block">
+      <span class="field-label">RPE 自觉强度 1–10（可空）</span>
+      <input type="number" name="rpe" inputmode="numeric" min="1" max="10" placeholder="6"
+             class="field text-sm tabular-nums">
+    </label>
+    <label class="block">
+      <span class="field-label">备注（可空）</span>
+      <input type="text" name="notes" class="field text-sm">
+    </label>
+  </div>
+  <button type="submit" class="btn-primary w-full">记一笔</button>
+</form>

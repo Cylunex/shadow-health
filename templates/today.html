@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block page_title %}今日{% endblock %}
+{% block content %}
+<div class="space-y-5">
+
+  <!-- 1. 问候行 + 当前日期 -->
+  <section class="px-1 pt-1 fade-in">
+    <h2 class="text-2xl font-bold tracking-tight">{{ greeting }}</h2>
+    <p class="mt-1 text-sm text-slate-400 tabular-nums">{{ today.year }} 年 {{ today.month }} 月 {{ today.day }} 日 · {{ weekday_cn }}</p>
+  </section>
+
+  <!-- 2. 今日步数进度条（daily_activity + app_settings.target_steps） -->
+  <section class="card">
+    <h2 class="card-title">今日步数</h2>
+    {% if steps is not none %}
+    <div class="flex items-end justify-between gap-3">
+      <div class="leading-none">
+        <span class="stat-num text-3xl">{{ '{:,}'.format(steps) }}</span>
+        <span class="ml-1 text-xs text-slate-500">步</span>
+      </div>
+      <span class="pb-0.5 text-xs text-slate-500 tabular-nums">目标 {{ '{:,}'.format(target_steps) }}</span>
+    </div>
+    <div class="progress-track mt-3">
+      <div class="progress-fill" style="width: {{ steps_pct }}%"></div>
+    </div>
+    <p class="mt-2 text-xs tabular-nums">
+      {% if steps_pct >= 100 %}
+      <span class="badge-accent">今日目标已达成 🎉</span>
+      {% else %}
+      <span class="text-slate-500">已完成 {{ steps_pct }}%</span>
+      {% endif %}
+    </p>
+    {% else %}
+    <div class="flex flex-col items-center gap-2 py-5 text-center">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
+           stroke-linecap="round" stroke-linejoin="round" class="w-9 h-9 text-slate-600">
+        <path d="M3 3v16a2 2 0 0 0 2 2h16M7 14l4-4 3 3 5-6"/>
+      </svg>
+      <p class="text-sm text-slate-500">暂无步数数据</p>
+      <p class="text-xs text-slate-600">导入或同步运动数据后，这里会显示今日进度</p>
+    </div>
+    {% endif %}
+  </section>
+
+  <!-- 3. 计划卡区（workout 模块片段：每个 active 计划一张卡，无计划时片段自带引导） -->
+  <section class="card">
+    <h2 class="card-title">训练计划</h2>
+    <div id="workout-plan-cards" hx-get="/fragments/workout/plan-cards" hx-trigger="load">
+      <div class="animate-pulse space-y-2">
+        <div class="h-4 w-1/3 rounded-full bg-slate-800"></div>
+        <div class="h-12 rounded-xl bg-slate-800/60"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4. 习惯打卡区（habits 模块片段 + 汇总条监听 habit-changed 被动刷新） -->
+  <section class="card">
+    <h2 class="card-title">习惯打卡</h2>
+    <div class="space-y-3">
+      <div hx-get="/fragments/habits/today" hx-trigger="load">
+        <div class="animate-pulse space-y-2">
+          <div class="h-11 rounded-xl bg-slate-800/60"></div>
+          <div class="h-11 rounded-xl bg-slate-800/60"></div>
+        </div>
+      </div>
+      <div hx-get="/fragments/habits/summary" hx-trigger="load, habit-changed from:body">
+        <div class="animate-pulse h-3 w-2/5 rounded-full bg-slate-800/80"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5. 快速记指标（metrics 模块片段：体重/睡眠/晨勃迷你表单） -->
+  <section class="card">
+    <div class="mb-3 flex items-center justify-between">
+      <h2 class="card-title mb-0">快速记指标</h2>
+      <a href="/metrics" class="inline-flex min-h-[44px] items-center px-2 -mr-2 text-xs font-medium text-emerald-400 active:text-emerald-300">全部指标 →</a>
+    </div>
+    <div hx-get="/fragments/metrics/quick" hx-trigger="load">
+      <div class="animate-pulse space-y-2">
+        <div class="h-4 w-1/4 rounded-full bg-slate-800"></div>
+        <div class="h-11 rounded-xl bg-slate-800/60"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 6. 快速记饮食（diet 模块片段：日汇总监听 diet-changed + 常吃 chips） -->
+  <section class="card">
+    <div class="mb-3 flex items-center justify-between">
+      <h2 class="card-title mb-0">快速记饮食</h2>
+      <a href="/diet" class="inline-flex min-h-[44px] items-center px-2 -mr-2 text-xs font-medium text-emerald-400 active:text-emerald-300">去记录 →</a>
+    </div>
+    <div class="space-y-3">
+      <div hx-get="/fragments/diet/summary" hx-trigger="load, diet-changed from:body">
+        <div class="animate-pulse space-y-2">
+          <div class="h-4 w-1/2 rounded-full bg-slate-800"></div>
+          <div class="h-3 w-1/3 rounded-full bg-slate-800/70"></div>
+        </div>
+      </div>
+      <div hx-get="/fragments/diet/chips" hx-trigger="load">
+        <div class="animate-pulse flex gap-2">
+          <div class="h-10 w-16 rounded-full bg-slate-800/70"></div>
+          <div class="h-10 w-20 rounded-full bg-slate-800/70"></div>
+          <div class="h-10 w-14 rounded-full bg-slate-800/70"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 7. 快速记训练入口 -->
+  <a href="/workout"
+     class="card flex min-h-[44px] items-center gap-3.5 transition-transform active:scale-[0.98]">
+    <span class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-emerald-800/50"
+          style="background: linear-gradient(135deg, rgba(16,185,129,0.18), rgba(45,212,191,0.08));">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round" class="w-6 h-6 text-emerald-400">
+        <path d="M6.5 6.5v11M17.5 6.5v11M3 9.5v5M21 9.5v5M6.5 12h11"/>
+      </svg>
+    </span>
+    <span class="min-w-0 flex-1">
+      <span class="block text-sm font-semibold text-slate-200">快速记训练</span>
+      <span class="mt-0.5 block text-xs text-slate-500">按今日模板一键完成，或手动记录</span>
+    </span>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5 shrink-0 text-emerald-400">
+      <path d="m9 6 6 6-6 6"/>
+    </svg>
+  </a>
+
+</div>
+{% endblock %}

@@ -1,0 +1,72 @@
+{# 今日打卡单条：ctx = habit, st{target,today_count,period_count,done,auto,auto_status} #}
+<li id="habit-item-{{ habit.id }}"
+    class="rounded-xl border transition-all duration-200 {{ 'border-emerald-500/50 bg-emerald-950/40 shadow-[0_0_18px_-6px_rgba(16,185,129,0.5),inset_0_1px_0_rgba(52,211,153,0.15)]' if st.done else 'border-slate-800/80 bg-slate-900/60' }}">
+  {% if st.target == 1 %}
+  {# 单次打卡：整行大按钮，再点即撤销 #}
+  <button type="button"
+          hx-post="/habits/{{ habit.id }}/toggle"
+          hx-target="#habit-item-{{ habit.id }}" hx-swap="outerHTML"
+          hx-disabled-elt="this"
+          class="w-full min-h-[52px] px-4 py-3 flex items-center justify-between gap-3 text-left active:scale-[0.99] transition-transform">
+    <span class="flex items-center gap-2.5 min-w-0">
+      <span class="w-7 h-7 shrink-0 rounded-full flex items-center justify-center transition-all
+                   {{ 'text-white bg-gradient-to-br from-emerald-500 to-teal-600 shadow-[0_2px_10px_-2px_rgba(16,185,129,0.7)]' if st.done else 'border-2 border-dashed border-slate-600' }}">
+        {% if st.done %}
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5">
+          <path d="M20 6 9 17l-5-5"/>
+        </svg>
+        {% endif %}
+      </span>
+      <span class="truncate {{ 'text-emerald-300 font-medium' if st.done else 'text-slate-100' }}">{{ habit.name }}</span>
+    </span>
+    <span class="flex items-center gap-1.5 shrink-0">
+      {% if habit.period == 'weekly' %}
+      <span class="text-xs tabular-nums {{ 'text-emerald-400' if st.done else 'text-slate-400' }}">本周 {{ st.period_count }}/{{ st.target }}</span>
+      {% endif %}
+      {% if habit.time_hint %}
+      <span class="badge">{{ habit.time_hint }}</span>
+      {% endif %}
+      {% if st.auto %}
+      <span class="{{ 'badge-accent' if st.auto_status else 'badge' }}">
+        {{ '自动·无数据' if st.auto_status is none else '自动' }}</span>
+      {% endif %}
+    </span>
+  </button>
+  {% else %}
+  {# 计数打卡：「提肛 3/5 ＋−」 #}
+  <div class="min-h-[52px] px-4 py-2.5 flex items-center justify-between gap-3">
+    <div class="min-w-0">
+      <div class="truncate {{ 'text-emerald-300 font-medium' if st.done else 'text-slate-100' }}">{{ habit.name }}</div>
+      <div class="mt-0.5 text-xs text-slate-400 flex items-center gap-1.5">
+        {% if habit.period == 'weekly' %}
+        <span class="tabular-nums">本周 {{ st.period_count }}/{{ st.target }}</span>
+        {% if st.today_count %}<span class="tabular-nums">· 今日 {{ st.today_count }}</span>{% endif %}
+        {% endif %}
+        {% if habit.time_hint %}
+        <span class="badge">{{ habit.time_hint }}</span>
+        {% endif %}
+        {% if st.auto %}
+        <span class="{{ 'badge-accent' if st.auto_status else 'badge' }}">
+          {{ '自动·无数据' if st.auto_status is none else '自动' }}</span>
+        {% endif %}
+      </div>
+    </div>
+    <div class="flex items-center gap-2 shrink-0">
+      <button type="button"
+              hx-post="/habits/{{ habit.id }}/decrement"
+              hx-target="#habit-item-{{ habit.id }}" hx-swap="outerHTML"
+              hx-disabled-elt="this"
+              class="w-11 h-11 min-h-[44px] min-w-[44px] rounded-full border border-slate-700 bg-slate-800/60 text-slate-300 text-xl leading-none flex items-center justify-center transition-all active:scale-95 disabled:opacity-30"
+              {% if st.today_count == 0 %}disabled{% endif %}
+              aria-label="减一">−</button>
+      <span class="w-12 text-center tabular-nums {{ 'text-emerald-400 font-bold' if st.done else 'text-slate-200 font-medium' }}">{{ st.period_count }}/{{ st.target }}</span>
+      <button type="button"
+              hx-post="/habits/{{ habit.id }}/increment"
+              hx-target="#habit-item-{{ habit.id }}" hx-swap="outerHTML"
+              hx-disabled-elt="this"
+              class="w-11 h-11 min-h-[44px] min-w-[44px] rounded-full border border-emerald-600/60 bg-emerald-950/60 text-emerald-300 text-xl leading-none flex items-center justify-center transition-all active:scale-95 shadow-[0_0_12px_-4px_rgba(16,185,129,0.55)]"
+              aria-label="加一">＋</button>
+    </div>
+  </div>
+  {% endif %}
+</li>

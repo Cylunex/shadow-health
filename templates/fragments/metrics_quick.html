@@ -1,0 +1,52 @@
+{# 今日面板迷你表单：3 个最高频字段（体重/睡眠小时/晨勃 chips），hx-post 到 POST /metrics #}
+<form id="metrics-quick"
+      hx-post="/metrics"
+      hx-target="this"
+      hx-swap="outerHTML"
+      hx-disabled-elt="find button[type='submit']"
+      class="card p-3 space-y-3">
+  <input type="hidden" name="log_date" value="{{ quick_log_date }}">
+  <input type="hidden" name="fragment" value="quick">
+
+  <div class="flex items-center justify-between min-h-[20px]">
+    <span class="text-sm font-medium text-slate-200">今日指标</span>
+    {% if quick_saved %}
+    <span class="badge-accent fade-in">已保存 ✓</span>
+    {% elif quick_errors %}
+    <span class="text-xs text-red-400 fade-in">{{ quick_errors | join('、') }}</span>
+    {% endif %}
+  </div>
+
+  <div class="grid grid-cols-2 gap-2">
+    <label class="block">
+      <span class="field-label">体重 (kg)</span>
+      <input type="text" inputmode="decimal" name="weight_kg" value="{{ quick_weight }}"
+             autocomplete="off"
+             class="field tabular-nums">
+    </label>
+    <label class="block">
+      <span class="field-label">睡眠 (h)</span>
+      <input type="text" inputmode="decimal" name="sleep_hours" value="{{ quick_sleep }}"
+             autocomplete="off"
+             class="field tabular-nums">
+    </label>
+  </div>
+
+  <div x-data="{ v: {{ 'true' if quick_me == true else ('false' if quick_me == false else 'null') }} }"
+       class="flex items-center gap-2">
+    <span class="field-label mb-0 shrink-0">晨勃</span>
+    <input type="hidden" name="morning_erection" :value="v === null ? '' : (v ? '1' : '0')">
+    <div class="grid grid-cols-2 gap-1.5 flex-1">
+      <button type="button" @click="v = (v === true ? null : true)"
+              :class="v === true ? 'chip-active' : ''"
+              class="chip min-h-[44px]">是</button>
+      <button type="button" @click="v = (v === false ? null : false)"
+              :class="v === false ? 'bg-slate-600 border-slate-500 text-white' : ''"
+              class="chip min-h-[44px]">否</button>
+    </div>
+  </div>
+
+  <button type="submit" class="btn-primary w-full">
+    记一笔
+  </button>
+</form>

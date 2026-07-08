@@ -1,0 +1,32 @@
+{# 日热量/蛋白汇总 vs 目标（目标读 app_settings target_kcal/target_protein_g）；今日面板也用。
+   根节点不带 .card：饮食页/今日面板各自用卡片包裹 #}
+<div id="diet-summary"
+     hx-get="/fragments/diet/summary?d={{ d.isoformat() }}"
+     hx-trigger="diet-changed from:body"
+     hx-swap="outerHTML"
+     class="space-y-4">
+  <div>
+    <div class="flex items-end justify-between gap-2">
+      <span class="text-xs text-slate-400">热量</span>
+      <span class="flex items-baseline gap-1.5">
+        <span class="stat-num{% if kcal_over %} bg-none text-amber-400{% endif %}">{{ fmt(total_kcal) }}</span>
+        <span class="text-xs text-slate-500 tabular-nums">/ {% if target_kcal %}{{ fmt(target_kcal) }} kcal{% else %}目标未设置{% endif %}</span>
+      </span>
+    </div>
+    <div class="progress-track mt-2">
+      <div class="progress-fill{% if kcal_over %} progress-fill-over{% endif %}" style="width: {{ kcal_pct }}%"></div>
+    </div>
+  </div>
+  <div>
+    <div class="flex items-end justify-between gap-2">
+      <span class="text-xs text-slate-400">蛋白质</span>
+      <span class="flex items-baseline gap-1.5">
+        <span class="{% if protein_ok %}stat-num{% else %}text-2xl font-bold tabular-nums text-slate-100{% endif %}">{{ fmt(total_protein) }}</span>
+        <span class="text-xs text-slate-500 tabular-nums">/ {% if target_protein %}{{ fmt(target_protein) }} g{% else %}目标未设置{% endif %}</span>
+      </span>
+    </div>
+    <div class="progress-track mt-2">
+      <div class="progress-fill" style="width: {{ protein_pct }}%"></div>
+    </div>
+  </div>
+</div>

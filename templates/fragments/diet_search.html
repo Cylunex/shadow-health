@@ -1,0 +1,27 @@
+{# 搜索联想选项：选中预填该食物上次记录用量（data-amount）；渲染进 #diet-suggestions 绝对定位浮层 #}
+{% if items %}
+<ul class="mt-1.5 rounded-xl border border-slate-700/80 bg-slate-900 shadow-2xl shadow-black/60 divide-y divide-slate-800/80 overflow-hidden fade-in">
+  {% for it in items %}
+  <li>
+    <button type="button" onclick="dietPickFood(this)"
+            data-id="{{ it.food.id }}" data-name="{{ it.food.name }}" data-amount="{{ fmt(it.last_amount) }}"
+            class="w-full flex items-center justify-between gap-2 px-3.5 min-h-[44px] text-left hover:bg-slate-800/70 active:bg-slate-800 transition-colors">
+      <span class="text-sm text-slate-100">{{ it.food.name }}
+        {%- if it.food.category %} <span class="badge ml-1">{{ it.food.category }}</span>{% endif -%}
+      </span>
+      <span class="text-xs text-slate-400 tabular-nums shrink-0">
+        {%- if it.food.kcal_per_100g is not none %}{{ fmt(it.food.kcal_per_100g) }} kcal/100g{% endif -%}
+      </span>
+    </button>
+  </li>
+  {% endfor %}
+</ul>
+{% elif q %}
+<div class="mt-1.5 flex items-center gap-2.5 rounded-xl border border-slate-700/80 bg-slate-900 shadow-2xl shadow-black/60 px-3.5 py-3 fade-in">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+       stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0 text-slate-600">
+    <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+  </svg>
+  <span class="text-xs text-slate-500">食物库无匹配，直接提交将按自由文本记录（可手填热量）</span>
+</div>
+{% endif %}

@@ -1,0 +1,408 @@
+"""设置 + 导入中心（设计文档 §3.6、§四 /settings 与 /settings/imports 行）。
+
+端点：
+- GET  /settings                          目标值表单 + 各源同步状态 + CSV 导出 + 导入中心入口
+- POST /settings/targets                  保存 app_settings（jsonb 值），返回表单片段
+- GET  /settings/export?table=...         CSV 导出（BOM utf-8-sig，Excel 可直接打开）
+- GET  /settings/imports                  导入历史列表 + 各源状态
+- GET  /settings/imports/new              导入向导（同页渲染，向导展开）
+- POST /settings/imports                  multipart 上传；samsung_zip / keep_file 均走
+                                          BackgroundTasks 调对应导入器（keep 密码透传不落库）
+- GET  /settings/imports/{job_id}/status  进度片段；done/failed 时响应 286 停止轮询
+"""
+from __future__ import annotations
+
+import csv
+import io
+import json
+import re
+from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
+from pathlib import Path
+from typing import Any
+
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    UploadFile,
+)
+from fastapi.responses import RedirectResponse, StreamingResponse
+from sqlalchemy import select, text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.orm import Session
+
+from app.config import get_settings
+from app.db import SessionLocal, get_db
+from app.deps import require_login, templates
+from app.models import (
+    AppSetting,
+    BodyMetrics,
+    DailyActivity,
+    DietLog,
+    HabitLog,
+    ImportJob,
+    SyncState,
+    WorkoutLog,
+)
+from app.timeutil import LOCAL_TZ, now_local, today_local
+
+router = APIRouter(prefix="/settings", dependencies=[Depends(require_login)])
+
+# jsonb 的 JSON null（app_settings.value NOT NULL，"未设定"用 JSON null 表达）
+_JSONB_NULL = text("'null'::jsonb")
+
+# 目标值字段：(key, 中文名, 类型, 下限, 上限)
+_TARGET_DEFS: list[tuple[str, str, str, float, float]] = [
+    ("target_weight_kg", "目标体重", "decimal", 20, 500),
+    ("target_kcal", "目标热量", "int", 500, 10000),
+    ("target_protein_g", "目标蛋白质", "int", 10, 500),
+    ("target_steps", "目标步数", "int", 500, 100000),
+    ("target_weekly_cardio_min", "周有氧目标", "int", 10, 3000),
+    ("height_cm", "身高", "decimal", 50, 250),
+]
+
+_SOURCE_LABELS = {
+    "samsung_zip": "三星导出",
+    "health_connect": "Health Connect",
+    "keep_file": "Keep 文件",
+    "keep_api": "Keep API",
+}
+
+# CSV 导出白名单：table 参数 -> (模型, 排序列)
+_EXPORT_MODELS: dict[str, tuple[type, tuple[str, ...]]] = {
+    "body_metrics": (BodyMetrics, ("log_date",)),
+    "diet_logs": (DietLog, ("log_date", "id")),
+    "workout_logs": (WorkoutLog, ("log_date", "id")),
+    "habit_logs": (HabitLog, ("log_date", "id")),
+    "daily_activity": (DailyActivity, ("log_date",)),
+}
+_EXPORT_LABELS = [
+    ("body_metrics", "身体指标"),
+    ("diet_logs", "饮食记录"),
+    ("workout_logs", "训练记录"),
+    ("habit_logs", "打卡记录"),
+    ("daily_activity", "每日活动"),
+]
+
+_IMPORT_SOURCES = ("samsung_zip", "keep_file")
+_IMPORT_SOURCE_LABELS = {"samsung_zip": "三星健康导出 zip", "keep_file": "Keep 导出文件"}
+_JOB_STATUS_LABELS = {"pending": "等待中", "running": "进行中", "done": "已完成", "failed": "失败"}
+_SAFE_NAME_RE = re.compile(r"[^\w.\-]+")
+
+
+# ---------- 通用小工具 ----------
+def _fmt_num(v: Any) -> str:
+    """app_settings 数值 → 表单显示字符串；JSON null/缺失 → ''。"""
+    if v is None or isinstance(v, bool):
+        return ""
+    if isinstance(v, int):
+        return str(v)
+    if isinstance(v, float):
+        s = f"{v:.2f}".rstrip("0").rstrip(".")
+        return s or "0"
+    return str(v)
+
+
+def _fmt_ts(dt: datetime | None) -> str:
+    if dt is None:
+        return "—"
+    return dt.astimezone(LOCAL_TZ).strftime("%Y-%m-%d %H:%M")
+
+
+# ---------- 目标值 ----------
+def _targets_context(
+    db: Session, saved: bool = False, errors: list[str] | None = None
+) -> dict[str, Any]:
+    stored = {r.key: r.value for r in db.execute(select(AppSetting)).scalars()}
+    values = {key: _fmt_num(stored.get(key)) for key, *_ in _TARGET_DEFS}
+    # 蛋白目标建议：最近体重 × 1.8（§5.6，录入体重后提示重算）
+    last_weight = db.execute(
+        select(BodyMetrics.weight_kg)
+        .where(BodyMetrics.weight_kg.is_not(None))
+        .order_by(BodyMetrics.log_date.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    protein_hint = (
+        f"建议：最近体重 {_fmt_num(float(last_weight))} kg × 1.8 ≈ {round(float(last_weight) * 1.8)} g/日"
+        if last_weight is not None
+        else None
+    )
+    return {
+        "t_values": values,
+        "protein_hint": protein_hint,
+        "t_saved": saved,
+        "t_errors": errors or [],
+    }
+
+
+def _sync_rows(db: Session) -> list[dict[str, Any]]:
+    rows = db.execute(select(SyncState).order_by(SyncState.source)).scalars().all()
+    return [
+        {
+            "label": _SOURCE_LABELS.get(r.source, r.source),
+            "last_success": _fmt_ts(r.last_success_at),
+            "last_error": r.last_error,
+            "failures": r.consecutive_failures,
+            "needs_reauth": r.needs_reauth,
+            "watermark": _fmt_ts(r.watermark),
+        }
+        for r in rows
+    ]
+
+
+@router.get("")
+def settings_page(request: Request, db: Session = Depends(get_db)):
+    ctx: dict[str, Any] = {"sync_rows": _sync_rows(db), "export_tables": _EXPORT_LABELS}
+    ctx.update(_targets_context(db))
+    return templates.TemplateResponse(request, "settings.html", ctx)
+
+
+@router.post("/targets")
+async def targets_save(request: Request, db: Session = Depends(get_db)):
+    form = await request.form()
+    errors: list[str] = []
+    parsed: dict[str, Any] = {}
+    for key, label, kind, lo, hi in _TARGET_DEFS:
+        raw = str(form.get(key) or "").strip()
+        if raw == "":
+            parsed[key] = None  # 留空 = 未设定，存 JSON null
+            continue
+        try:
+            value: Any = int(raw) if kind == "int" else float(Decimal(raw))
+        except (ValueError, InvalidOperation):
+            errors.append(label)
+            continue
+        if not (lo <= float(value) <= hi):
+            errors.append(f"{label}（{_fmt_num(lo)}~{_fmt_num(hi)}）")
+            continue
+        parsed[key] = round(value, 2) if isinstance(value, float) else value
+
+    saved = False
+    if not errors:
+        for key, value in parsed.items():
+            stmt = pg_insert(AppSetting).values(
+                key=key, value=_JSONB_NULL if value is None else value
+            )
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["key"],
+                set_={"value": stmt.excluded.value, "updated_at": text("now()")},
+            )
+            db.execute(stmt)
+        saved = True
+    return templates.TemplateResponse(
+        request, "fragments/settings_targets.html", _targets_context(db, saved=saved, errors=errors)
+    )
+
+
+# ---------- CSV 导出 ----------
+def _csv_cell(value: Any) -> Any:
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, datetime):
+        return value.astimezone(LOCAL_TZ).isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False)
+    return value
+
+
+@router.get("/export")
+def settings_export(table: str = "", db: Session = Depends(get_db)):
+    entry = _EXPORT_MODELS.get(table)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="不支持导出该表")
+    model, order_cols = entry
+    columns = [c.key for c in model.__table__.columns]
+    rows = (
+        db.execute(select(model).order_by(*(getattr(model, c) for c in order_cols)))
+        .scalars()
+        .all()
+    )
+    # 先物化再流式输出：get_db 的会话在响应发送前就会关闭（FastAPI >= 0.106）
+    data = [[_csv_cell(getattr(r, c)) for c in columns] for r in rows]
+
+    def _iter():
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        yield "\ufeff"  # BOM（utf-8-sig）：Excel 直接打开不乱码
+        writer.writerow(columns)
+        yield buf.getvalue()
+        for row in data:
+            buf.seek(0)
+            buf.truncate(0)
+            writer.writerow(row)
+            yield buf.getvalue()
+
+    filename = f"{table}_{today_local():%Y%m%d}.csv"
+    return StreamingResponse(
+        _iter(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# ---------- 导入中心 ----------
+def _job_polling(job: ImportJob) -> bool:
+    """pending（后台任务即将接手）与 running 轮询；done/failed 由 286 停止。"""
+    return job.status in ("pending", "running")
+
+
+def _job_ctx(job: ImportJob) -> dict[str, Any]:
+    total = job.total or 0
+    processed = (job.inserted or 0) + (job.skipped or 0) + (job.failed or 0)
+    pct = min(100, round(processed * 100 / total)) if total else None
+    return {
+        "job": job,
+        "source_label": _IMPORT_SOURCE_LABELS.get(job.source, _SOURCE_LABELS.get(job.source, job.source)),
+        "status_label": _JOB_STATUS_LABELS.get(job.status, job.status),
+        "pct": pct,
+        "polling": _job_polling(job),
+        "started": _fmt_ts(job.started_at),
+        "finished": _fmt_ts(job.finished_at),
+        "report_json": json.dumps(job.report, ensure_ascii=False, indent=1) if job.report else None,
+    }
+
+
+def _imports_context(
+    db: Session, wizard_open: bool = False, wizard_error: str | None = None
+) -> dict[str, Any]:
+    jobs = (
+        db.execute(select(ImportJob).order_by(ImportJob.id.desc()).limit(50)).scalars().all()
+    )
+    return {
+        "jobs": [_job_ctx(j) for j in jobs],
+        "sync_rows": _sync_rows(db),
+        "wizard_open": wizard_open,
+        "wizard_error": wizard_error,
+    }
+
+
+@router.get("/imports")
+def imports_page(request: Request, db: Session = Depends(get_db)):
+    return templates.TemplateResponse(request, "imports.html", _imports_context(db))
+
+
+@router.get("/imports/new")
+def imports_new(request: Request, db: Session = Depends(get_db)):
+    return templates.TemplateResponse(
+        request, "imports.html", _imports_context(db, wizard_open=True)
+    )
+
+
+def _finish_job_failed(job_id: int, message: str) -> None:
+    """后台任务兜底：导入器没接手/中途抛异常时把 job 置 failed（importer 已收尾则不动）。"""
+    db = SessionLocal()
+    try:
+        job = db.get(ImportJob, job_id)
+        if job is not None and job.status not in ("done", "failed"):
+            job.status = "failed"
+            job.error = message
+            job.finished_at = now_local()
+        db.commit()
+    finally:
+        db.close()
+
+
+def _run_samsung_import(zip_path: str, job_id: int) -> None:
+    """BackgroundTasks 入口：调并行开发的三星导入器，进度由它写 import_jobs。"""
+    try:
+        from app.importers.samsung_zip import import_zip
+    except ImportError:
+        _finish_job_failed(
+            job_id,
+            "三星导入器（app.importers.samsung_zip）尚未就绪；文件已保存在 uploads/，导入器上线后可重新发起导入",
+        )
+        return
+    try:
+        import_zip(zip_path, db=None, dry_run=False, job_id=job_id)
+    except Exception as exc:  # noqa: BLE001 后台任务兜底，避免静默失败
+        _finish_job_failed(job_id, f"导入失败：{exc}")
+
+
+def _run_keep_import(file_path: str, job_id: int, password: str | None) -> None:
+    """BackgroundTasks 入口：Keep 导出文件导入器（M4b），进度由它写 import_jobs。"""
+    try:
+        from app.importers.keep_file import import_keep
+    except ImportError:
+        _finish_job_failed(
+            job_id,
+            "Keep 导入器（app.importers.keep_file）尚未就绪；文件已保存在 uploads/，导入器上线后可重新发起导入",
+        )
+        return
+    try:
+        import_keep(file_path, db=None, dry_run=False, job_id=job_id, password=password)
+    except Exception as exc:  # noqa: BLE001 后台任务兜底，避免静默失败
+        _finish_job_failed(job_id, f"导入失败：{exc}")
+
+
+@router.post("/imports")
+async def imports_create(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    source: str = Form(""),
+    file: UploadFile | None = File(None),
+    keep_password: str = Form(""),
+):
+    if source not in _IMPORT_SOURCES:
+        return templates.TemplateResponse(
+            request,
+            "imports.html",
+            _imports_context(db, wizard_open=True, wizard_error="请选择有效的数据来源"),
+            status_code=400,
+        )
+    if file is None or not (file.filename or "").strip():
+        return templates.TemplateResponse(
+            request,
+            "imports.html",
+            _imports_context(db, wizard_open=True, wizard_error="请选择要上传的文件"),
+            status_code=400,
+        )
+
+    upload_dir = get_settings().upload_dir
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    original = Path(file.filename).name
+    safe = _SAFE_NAME_RE.sub("_", original) or "upload.bin"
+    dest = upload_dir / f"{now_local():%Y%m%d_%H%M%S}_{source}_{safe}"
+    with dest.open("wb") as out:
+        while chunk := await file.read(1024 * 1024):
+            out.write(chunk)
+
+    job = ImportJob(source=source, filename=original, status="pending")
+    db.add(job)
+    db.flush()
+    # 显式提交：后台任务/导入器用独立会话按 job_id 读行，必须先落库
+    # （get_db 的收尾 commit 不保证在 BackgroundTasks 之前执行）
+    db.commit()
+    if source == "samsung_zip":
+        background_tasks.add_task(_run_samsung_import, str(dest), job.id)
+    else:  # keep_file：密码只透传给导入器，不落库
+        background_tasks.add_task(
+            _run_keep_import, str(dest), job.id, keep_password.strip() or None
+        )
+    return RedirectResponse("/settings/imports", status_code=303)
+
+
+@router.get("/imports/{job_id}/status")
+def import_job_status(job_id: int, request: Request, db: Session = Depends(get_db)):
+    job = db.get(ImportJob, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="导入任务不存在")
+    # 286：HTMX 收到后停止 every 2s 轮询（任务已结束）
+    status_code = 286 if job.status in ("done", "failed") else 200
+    return templates.TemplateResponse(
+        request,
+        "fragments/settings_import_job_status.html",
+        _job_ctx(job),
+        status_code=status_code,
+    )

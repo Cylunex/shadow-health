@@ -1,0 +1,13 @@
+.env
+__pycache__/
+# 私人内容素材不入仓（seed 会自动跳过，见 app/seed/data/README.md）
+app/seed/data/*.md
+!app/seed/data/README.md
+*.pyc
+.venv/
+tools/
+uploads/
+*.egg-info/
+.pytest_cache/
+dist/
+android/build/

@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f172a">
+  <title>{% block title %}shadow-health{% endblock %}</title>
+  <link rel="manifest" href="/static/manifest.json">
+  <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/static/icon-192.png">
+  <meta name="description" content="局域网个人健康管理：指标、饮食、训练、习惯的记录与回顾">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="健康">
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/vendor/htmx.min.js" defer></script>
+  <script src="/static/vendor/alpine.min.js" defer></script>
+  {% block head %}{% endblock %}
+</head>
+<body class="text-slate-100 min-h-screen pb-24 antialiased">
+  <header class="sticky top-0 z-20 border-b border-slate-800/70"
+          style="background: linear-gradient(180deg, rgba(15,23,42,0.97), rgba(15,23,42,0.88)); backdrop-filter: blur(12px);">
+    <div class="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between">
+      <h1 class="text-lg font-bold tracking-wide flex items-center gap-2">
+        {% block page_title %}shadow-health{% endblock %}
+      </h1>
+      <div class="text-xs font-medium text-slate-500 tabular-nums border border-slate-800 rounded-full px-2.5 py-1">
+        {{ today_local().strftime('%m-%d') }}
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-3xl mx-auto px-4 py-4">
+    {% block content %}{% endblock %}
+  </main>
+
+  <nav class="fixed bottom-0 inset-x-0 z-20 border-t border-slate-800/70"
+       style="background: linear-gradient(0deg, rgba(15,23,42,0.98), rgba(15,23,42,0.92)); backdrop-filter: blur(12px); padding-bottom: env(safe-area-inset-bottom)">
+    <div class="max-w-3xl mx-auto grid grid-cols-5">
+      {% set p = request.url.path %}
+      {% set nav = [
+        ('/', '今日', 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-6 9 2 2 4-4'),
+        ('/metrics', '指标', 'M3 3v16a2 2 0 0 0 2 2h16M7 14l4-4 3 3 5-6'),
+        ('/diet', '饮食', 'M3 11h18M5 11a7 7 0 0 1 14 0M12 4v1M8.5 20h7M12 11v9'),
+        ('/workout', '训练', 'M6.5 6.5v11M17.5 6.5v11M3 9.5v5M21 9.5v5M6.5 12h11'),
+        ('/more', '更多', 'M5 12h.01M12 12h.01M19 12h.01')
+      ] %}
+      {% for href, label, icon in nav %}
+      {% set active = p == href or (href != '/' and p.startswith(href)) %}
+      <a href="{{ href }}"
+         class="relative py-2 flex flex-col items-center gap-1 min-h-[52px] transition-colors {% if active %}text-emerald-400{% else %}text-slate-500 hover:text-slate-300{% endif %}">
+        {% if active %}
+        <span class="absolute top-0 inset-x-6 h-0.5 rounded-full"
+              style="background: linear-gradient(90deg, #34d399, #2dd4bf); box-shadow: 0 0 12px 1px rgba(52,211,153,0.6);"></span>
+        {% endif %}
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+             stroke-linecap="round" stroke-linejoin="round" class="w-[22px] h-[22px]">
+          <path d="{{ icon }}"/>
+        </svg>
+        <span class="text-[10px] font-medium leading-none">{{ label }}</span>
+      </a>
+      {% endfor %}
+    </div>
+  </nav>
+
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', function () {
+        // 经 GET /sw.js 路由注册，拿到根 scope（/static/sw.js 的默认 scope 罩不住页面）
+        navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(function () {});
+      });
+    }
+  </script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

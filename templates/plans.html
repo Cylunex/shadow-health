@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block page_title %}训练计划{% endblock %}
+{% block content %}
+<div class="space-y-5">
+  <div>
+    <a href="/workout" class="text-sm font-medium text-emerald-400 min-h-[44px] inline-flex items-center active:text-emerald-300">← 返回训练</a>
+  </div>
+
+  {% if not items %}
+  <section class="card">
+    <div class="flex flex-col items-center gap-2 py-6 text-center">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
+           stroke-linecap="round" stroke-linejoin="round" class="w-9 h-9 text-slate-600">
+        <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20M4 19.5A2.5 2.5 0 0 0 6.5 22H20V2H6.5A2.5 2.5 0 0 0 4 4.5v15Z"/>
+      </svg>
+      <p class="text-sm text-slate-500">计划库为空</p>
+      <p class="text-xs text-slate-600">先跑 <code class="bg-slate-800 rounded px-1 text-emerald-300">python -m app.seed</code> 导入 7 套计划</p>
+    </div>
+  </section>
+  {% else %}
+  <ul class="space-y-3">
+    {% for it in items %}
+    <li>
+      <a href="/workout/plans/{{ it.plan.id }}"
+         class="card block min-h-[44px] transition-transform active:scale-[0.99] {{ 'ring-1 ring-emerald-700/50' if it.enrolled_label else '' }}">
+        <div class="flex items-start justify-between gap-2">
+          <div class="font-semibold text-slate-100">{{ it.plan.name }}</div>
+          {% if it.enrolled_label %}
+          <span class="badge-accent shrink-0 gap-1.5">
+            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+            {{ it.enrolled_label }}
+          </span>
+          {% endif %}
+        </div>
+        <div class="mt-2 flex gap-1.5 flex-wrap">
+          {% if it.plan.goal %}<span class="badge-accent">{{ it.plan.goal }}</span>{% endif %}
+          <span class="badge">{{ (it.plan.duration_weeks ~ ' 周') if it.plan.duration_weeks else '循环计划' }}</span>
+          {% if it.plan.weekly_template %}<span class="badge">含周表</span>{% endif %}
+        </div>
+      </a>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</div>
+{% endblock %}

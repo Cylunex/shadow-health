@@ -1,0 +1,17 @@
+{# 最近 14 条记录列表：ctx = recent_rows, plan_names, source_labels #}
+{% if not recent_rows %}
+<div class="flex flex-col items-center gap-2 py-6 text-center">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
+       stroke-linecap="round" stroke-linejoin="round" class="w-9 h-9 text-slate-600">
+    <path d="M12 8v4l2.5 2.5M21 12a9 9 0 1 1-9-9 9 9 0 0 1 9 9Z"/>
+  </svg>
+  <p class="text-sm text-slate-500">还没有训练记录</p>
+  <p class="text-xs text-slate-600">先记一笔，或在计划卡上按模板完成</p>
+</div>
+{% else %}
+<ul class="space-y-2">
+  {% for log in recent_rows %}
+  {% include "fragments/workout_log_row.html" %}
+  {% endfor %}
+</ul>
+{% endif %}

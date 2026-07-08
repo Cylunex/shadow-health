@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}身体指标 · shadow-health{% endblock %}
+{% block page_title %}身体指标{% endblock %}
+{% block content %}
+<div class="space-y-5">
+  <section class="card">
+    <h2 class="card-title">记录指标</h2>
+    {% include "fragments/metrics_form.html" %}
+  </section>
+
+  <section class="card">
+    <h2 class="card-title">趋势</h2>
+    {% include "fragments/metrics_chart.html" %}
+  </section>
+
+  <section class="card">
+    <h2 class="card-title">最近 30 天</h2>
+    {% include "fragments/metrics_history.html" %}
+  </section>
+</div>
+{% endblock %}

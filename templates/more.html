@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block page_title %}更多{% endblock %}
+{% block content %}
+<div class="space-y-5">
+
+  <div class="space-y-2.5">
+    {% set items = [('/ai', 'AI 分析', '数据分析报告 · 智能问答',
+                     'M12 3v3m6.4-.4-2.1 2.1M21 12h-3m.4 6.4-2.1-2.1M12 18v3m-6.4-.4 2.1-2.1M3 12h3m-.4-6.4 2.1 2.1M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z'),
+                    ('/habits', '养生打卡', '习惯管理 · streak · 月完成率',
+                     'M22 11.1V12a10 10 0 1 1-5.93-9.14M22 4 12 14.01l-3-3'),
+                    ('/diet/recipes', '食疗方库', '药膳浏览 · 按功效筛选',
+                     'M4 19.5A2.5 2.5 0 0 1 6.5 17H20M4 19.5A2.5 2.5 0 0 0 6.5 22H20V2H6.5A2.5 2.5 0 0 0 4 4.5v15Z'),
+                    ('/workout/plans', '训练计划', '7 套预置计划 · 启动/查看',
+                     'M6.5 6.5v11M17.5 6.5v11M3 9.5v5M21 9.5v5M6.5 12h11'),
+                    ('/review', '周报', '每周自动汇总 + 手写复盘',
+                     'M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z'),
+                    ('/settings', '设置', '目标值 · 数据导入 · CSV 导出',
+                     'M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6')] %}
+    {% for href, label, desc, icon in items %}
+    <a href="{{ href }}" class="list-row transition-colors active:bg-slate-800/70">
+      <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-700/60 bg-slate-800/80 text-emerald-400">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+             stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5">
+          <path d="{{ icon }}"/>
+        </svg>
+      </span>
+      <span class="min-w-0 flex-1">
+        <span class="block font-semibold text-slate-200">{{ label }}</span>
+        <span class="block text-sm text-slate-400">{{ desc }}</span>
+      </span>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0 text-slate-600">
+        <path d="m9 6 6 6-6 6"/>
+      </svg>
+    </a>
+    {% endfor %}
+  </div>
+
+  <form method="post" action="/logout" class="pt-2">
+    <button type="submit" class="btn-ghost w-full">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4">
+        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>
+      </svg>
+      退出登录
+    </button>
+  </form>
+
+</div>
+{% endblock %}

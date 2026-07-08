@@ -1,0 +1,20 @@
+{# 复盘表单片段：PUT /review/{week_start} 后整体替换（含成功提示）；外层卡片由 review_detail 提供 #}
+<form id="review-summary"
+      hx-put="/review/{{ week_start }}"
+      hx-target="this"
+      hx-swap="outerHTML"
+      hx-disabled-elt="find button[type='submit']"
+      class="space-y-3">
+  {% if saved %}
+  <div class="rounded-xl bg-emerald-600/15 border border-emerald-600/40 text-emerald-400 text-sm px-3 py-2 flex items-center gap-1.5 fade-in">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0"><path d="M20 6 9 17l-5-5"/></svg>
+    复盘已保存
+  </div>
+  {% endif %}
+  <textarea name="summary" rows="6"
+            class="field py-2.5 leading-relaxed"
+            placeholder="这周做得如何？体重/训练/饮食/睡眠有什么发现，下周想调整什么…">{{ summary }}</textarea>
+  <button type="submit" class="btn-primary w-full min-h-[48px]">
+    保存复盘
+  </button>
+</form>

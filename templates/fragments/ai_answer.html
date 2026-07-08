@@ -1,0 +1,12 @@
+{# AI 问答结果片段 #}
+{% if error %}
+<div class="rounded-xl border border-red-900/60 bg-red-950/30 px-4 py-3 text-sm text-red-300 fade-in">{{ error }}</div>
+{% elif html %}
+<div class="fade-in space-y-2">
+  <div class="text-xs text-slate-500">Q：{{ question }}</div>
+  <div class="rounded-xl bg-slate-800/40 border border-slate-800 px-4 py-3 text-sm leading-relaxed text-slate-200
+              [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-1.5 [&_strong]:text-slate-50">
+    {{ html | safe }}
+  </div>
+</div>
+{% endif %}

@@ -1,0 +1,46 @@
+{# 行内编辑表单：food 行只改餐次/用量（营养自动重算）；自由文本行可改全部 #}
+<li id="diet-log-{{ log.id }}" class="rounded-xl border border-emerald-700/40 bg-slate-900/80 p-3.5 fade-in">
+  <form hx-put="/diet/logs/{{ log.id }}" hx-target="#diet-log-{{ log.id }}" hx-swap="outerHTML"
+        hx-disabled-elt="find button[type='submit']" class="space-y-2.5">
+    <div class="flex items-center gap-2">
+      <span class="text-sm font-medium text-slate-200 flex-1 truncate">{% if log.food_id is not none %}{{ name }}{% else %}自由记录{% endif %}</span>
+      <select name="meal" class="field w-auto pr-8 text-sm">
+        {% for m in meals %}
+        <option value="{{ m }}" {% if m == log.meal %}selected{% endif %}>{{ m }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    {% if log.food_id is none %}
+    <input type="text" name="free_text" value="{{ log.free_text or '' }}" placeholder="吃了什么" autocomplete="off"
+           class="field text-sm">
+    {% endif %}
+    <div class="grid grid-cols-3 gap-2">
+      <label class="block">
+        <span class="field-label">用量 (g)</span>
+        <input type="text" inputmode="decimal" name="amount_g" value="{{ fmt(log.amount_g) }}" autocomplete="off"
+               class="field text-sm">
+      </label>
+      {% if log.food_id is not none %}
+      <div class="col-span-2 self-end pb-3 text-xs text-slate-500">热量/蛋白按用量自动重算</div>
+      {% else %}
+      <label class="block">
+        <span class="field-label">热量 (kcal)</span>
+        <input type="text" inputmode="decimal" name="kcal" value="{{ fmt(log.kcal) }}" autocomplete="off"
+               class="field text-sm">
+      </label>
+      <label class="block">
+        <span class="field-label">蛋白 (g)</span>
+        <input type="text" inputmode="decimal" name="protein_g" value="{{ fmt(log.protein_g) }}" autocomplete="off"
+               class="field text-sm">
+      </label>
+      {% endif %}
+    </div>
+    {% if error %}<div class="text-xs text-red-400">{{ error }}</div>{% endif %}
+    <div class="grid grid-cols-2 gap-2">
+      <button type="button"
+              hx-get="/diet/logs/{{ log.id }}/row" hx-target="#diet-log-{{ log.id }}" hx-swap="outerHTML"
+              class="btn-ghost">取消</button>
+      <button type="submit" class="btn-primary">保存</button>
+    </div>
+  </form>
+</li>

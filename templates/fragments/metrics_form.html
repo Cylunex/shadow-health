@@ -1,0 +1,117 @@
+{# 身体指标录入表单片段：POST /metrics 后整体替换（含成功提示）；外层 .card 由 metrics.html 提供 #}
+{% macro num_input(name, label, mode='decimal', ph='') %}
+<label class="block">
+  <span class="field-label">{{ label }}</span>
+  <input type="text" inputmode="{{ mode }}" name="{{ name }}" value="{{ v[name] }}"
+         placeholder="{{ ph }}" autocomplete="off"
+         class="field tabular-nums">
+</label>
+{% endmacro %}
+<form id="metrics-form"
+      hx-post="/metrics"
+      hx-target="this"
+      hx-swap="outerHTML"
+      hx-disabled-elt="find button[type='submit']"
+      class="space-y-4">
+
+  {% if saved %}
+  <div class="fade-in flex items-center gap-2 rounded-xl bg-emerald-600/15 border border-emerald-600/40 text-emerald-300 text-sm px-3.5 py-2.5">
+    <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+    <span>已保存 {{ log_date }} 的记录 ✓</span>
+  </div>
+  {% endif %}
+  {% if errors %}
+  <div class="fade-in flex items-center gap-2 rounded-xl bg-red-600/15 border border-red-600/40 text-red-400 text-sm px-3.5 py-2.5">
+    <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4m0 4h.01"/></svg>
+    <span>未保存：{{ errors | join('、') }}</span>
+  </div>
+  {% endif %}
+
+  <label class="block">
+    <span class="field-label">日期</span>
+    <input type="date" name="log_date" value="{{ log_date }}"
+           hx-get="/fragments/metrics/form"
+           hx-trigger="change"
+           hx-disabled-elt="unset"
+           hx-target="#metrics-form"
+           hx-swap="outerHTML"
+           class="field tabular-nums">
+  </label>
+
+  <div class="grid grid-cols-2 gap-3">
+    {{ num_input('weight_kg', '体重 (kg)') }}
+    {{ num_input('body_fat_pct', '体脂率 (%)') }}
+    {{ num_input('waist_cm', '腰围 (cm)') }}
+    {{ num_input('sleep_hours', '睡眠时长 (h)') }}
+    {{ num_input('bp_systolic', '收缩压 (mmHg)', mode='numeric') }}
+    {{ num_input('bp_diastolic', '舒张压 (mmHg)', mode='numeric') }}
+  </div>
+
+  {# 睡眠质量 1-5 chips #}
+  <div x-data="{ v: {{ chips.sleep_quality if chips.sleep_quality is not none else 'null' }} }">
+    <span class="field-label">睡眠质量</span>
+    <input type="hidden" name="sleep_quality" :value="v === null ? '' : v">
+    <div class="flex gap-1.5">
+      {% for n in range(1, 6) %}
+      <button type="button" @click="v = (v === {{ n }} ? null : {{ n }})"
+              :class="v === {{ n }} ? 'chip-active' : ''"
+              class="chip flex-1 px-0 min-h-[44px] tabular-nums">{{ n }}</button>
+      {% endfor %}
+    </div>
+  </div>
+
+  {# 精力 1-5 chips #}
+  <div x-data="{ v: {{ chips.energy_level if chips.energy_level is not none else 'null' }} }">
+    <span class="field-label">精力</span>
+    <input type="hidden" name="energy_level" :value="v === null ? '' : v">
+    <div class="flex gap-1.5">
+      {% for n in range(1, 6) %}
+      <button type="button" @click="v = (v === {{ n }} ? null : {{ n }})"
+              :class="v === {{ n }} ? 'chip-active' : ''"
+              class="chip flex-1 px-0 min-h-[44px] tabular-nums">{{ n }}</button>
+      {% endfor %}
+    </div>
+  </div>
+
+  {# 晨勃 是/否 chips #}
+  <div x-data="{ v: {{ 'true' if chips.morning_erection == true else ('false' if chips.morning_erection == false else 'null') }} }">
+    <span class="field-label">晨勃</span>
+    <input type="hidden" name="morning_erection" :value="v === null ? '' : (v ? '1' : '0')">
+    <div class="grid grid-cols-2 gap-1.5">
+      <button type="button" @click="v = (v === true ? null : true)"
+              :class="v === true ? 'chip-active' : ''"
+              class="chip min-h-[44px]">是</button>
+      <button type="button" @click="v = (v === false ? null : false)"
+              :class="v === false ? 'bg-slate-600 border-slate-500 text-white' : ''"
+              class="chip min-h-[44px]">否</button>
+    </div>
+  </div>
+
+  <details class="group rounded-xl border border-slate-800/70 bg-slate-900/40 open:bg-slate-900/60 transition-colors">
+    <summary class="min-h-[44px] flex items-center gap-2 px-3.5 text-sm text-slate-400 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">
+      <svg class="w-3.5 h-3.5 shrink-0 text-slate-500 transition-transform group-open:rotate-90" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+      更多指标（体成分 / 心率 / 血氧）
+    </summary>
+    <div class="grid grid-cols-2 gap-3 p-3.5 pt-1">
+      {{ num_input('resting_hr', '静息心率 (次/分)', mode='numeric') }}
+      {{ num_input('spo2_pct', '血氧 (%)') }}
+      {{ num_input('muscle_mass_kg', '肌肉量 (kg)') }}
+      {{ num_input('skeletal_muscle_kg', '骨骼肌 (kg)') }}
+      {{ num_input('bmr_kcal', '基础代谢 (kcal)', mode='numeric') }}
+      {{ num_input('body_water_kg', '体水分 (kg)') }}
+      {{ num_input('visceral_fat_level', '内脏脂肪等级', mode='numeric') }}
+    </div>
+  </details>
+
+  <label class="block">
+    <span class="field-label">备注</span>
+    <textarea name="notes" rows="2"
+              class="field py-2.5"
+              placeholder="今天身体感受…">{{ notes }}</textarea>
+  </label>
+
+  <button type="submit" class="btn-primary w-full min-h-[48px]">
+    保存
+  </button>
+  <p class="text-xs text-slate-500">只保存填写了内容的字段；留空字段不改动。</p>
+</form>

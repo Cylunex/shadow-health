@@ -1,0 +1,62 @@
+# 生产部署（局域网 Debian 主机，设计文档 §7.3/§7.4）
+# 前置：本机已有 PostgreSQL（建专用库 shadow_health 与 health_app 角色，见设计文档附录 C）
+#
+# Debian 部署注意：
+# - PG 跑在宿主机（非容器）时，容器内没有 host.docker.internal（Linux 不自带），
+#   .env 的 DATABASE_URL 直接写宿主机局域网 IP（如 192.168.1.100:55432）；
+#   若想用 host.docker.internal，需给 app 服务加：
+#     extra_hosts: ["host.docker.internal:host-gateway"]
+#   并确保宿主机 PG 的 listen_addresses / pg_hba.conf 放行 Docker 网段（172.17.0.0/16 等）。
+# - /srv/health-backups 需先在宿主机创建，否则 Docker 会以 root 建目录：
+#     sudo mkdir -p /srv/health-backups && sudo chown $USER:$USER /srv/health-backups
+#   （backup 容器默认 root 运行可直接写；若自行加 user: 则 chown 成对应 uid）
+# - ./uploads 卷同理：宿主机目录属主与容器内进程（默认 root）不一致时会写失败，
+#   保持默认 root 运行即可，无需额外处理。
+services:
+  app:
+    build: .
+    container_name: shadow-health
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      TZ: Asia/Shanghai
+    ports:
+      - "${APP_PORT:-8080}:8000"
+    volumes:
+      - ./uploads:/srv/app/uploads
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz',timeout=3).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  backup:
+    image: prodrigestivill/postgres-backup-local:16
+    container_name: shadow-health-backup
+    restart: unless-stopped
+    environment:
+      # 连接串各项在部署机 .env 中提供
+      POSTGRES_HOST: ${BACKUP_PG_HOST}
+      POSTGRES_PORT: ${BACKUP_PG_PORT:-55432}
+      POSTGRES_DB: ${BACKUP_PG_DB:-shadow_health}
+      POSTGRES_USER: ${BACKUP_PG_USER:-health_app}
+      POSTGRES_PASSWORD: ${BACKUP_PG_PASSWORD}
+      POSTGRES_EXTRA_OPTS: "--schema=health"
+      SCHEDULE: "@daily"
+      BACKUP_KEEP_DAYS: "7"
+      BACKUP_KEEP_WEEKS: "4"
+      BACKUP_KEEP_MONTHS: "6"
+      TZ: Asia/Shanghai
+    volumes:
+      - /srv/health-backups:/backups
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"

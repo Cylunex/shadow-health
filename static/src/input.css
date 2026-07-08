@@ -1,0 +1,143 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============ shadow-health 设计系统 ============
+   深色主题：底 slate-950 带微光晕，主色 emerald→teal 渐变
+   所有页面统一使用下列组件类，保持一致性 */
+
+@layer base {
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+  body {
+    background:
+      radial-gradient(60rem 40rem at 85% -10%, rgba(16, 185, 129, 0.07), transparent 60%),
+      radial-gradient(50rem 35rem at -10% 30%, rgba(56, 189, 248, 0.05), transparent 55%),
+      theme("colors.slate.950");
+    background-attachment: fixed;
+  }
+  ::selection {
+    background: rgba(52, 211, 153, 0.35);
+  }
+  input[type="date"]::-webkit-calendar-picker-indicator {
+    filter: invert(0.7);
+  }
+}
+
+@layer components {
+  /* ---- 卡片 ---- */
+  .card {
+    @apply rounded-2xl border border-slate-800/80 p-4;
+    background: linear-gradient(160deg, rgba(30, 41, 59, 0.55), rgba(15, 23, 42, 0.85));
+    box-shadow: 0 1px 0 rgba(148, 163, 184, 0.06) inset, 0 8px 24px -12px rgba(0, 0, 0, 0.6);
+  }
+  .card-title {
+    @apply text-[13px] font-semibold tracking-wider text-slate-400 uppercase flex items-center gap-1.5 mb-3;
+  }
+  .card-title::before {
+    content: "";
+    @apply inline-block w-1 h-3.5 rounded-full;
+    background: linear-gradient(180deg, theme("colors.emerald.400"), theme("colors.teal.500"));
+  }
+
+  /* ---- 按钮 ---- */
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 min-h-[44px] px-4 rounded-xl text-sm font-medium
+      transition-all duration-150 active:scale-[0.97] disabled:opacity-50 disabled:pointer-events-none select-none;
+  }
+  .btn-primary {
+    @apply btn text-white;
+    background: linear-gradient(135deg, theme("colors.emerald.500"), theme("colors.teal.600"));
+    box-shadow: 0 4px 14px -4px rgba(16, 185, 129, 0.5);
+  }
+  .btn-primary:hover {
+    box-shadow: 0 6px 20px -4px rgba(16, 185, 129, 0.6);
+  }
+  .btn-ghost {
+    @apply btn border border-slate-700/80 text-slate-300 bg-slate-800/40 hover:bg-slate-800/80;
+  }
+  .btn-danger {
+    @apply btn border border-red-900/60 text-red-400 bg-red-950/30 hover:bg-red-950/60;
+  }
+
+  /* ---- chips（点选/筛选） ---- */
+  .chip {
+    @apply inline-flex items-center justify-center min-h-[40px] px-3.5 rounded-full border text-sm
+      transition-all duration-150 active:scale-[0.96] select-none cursor-pointer
+      bg-slate-800/60 border-slate-700/80 text-slate-300 hover:border-slate-500;
+  }
+  .chip-active {
+    @apply text-white border-transparent;
+    background: linear-gradient(135deg, theme("colors.emerald.500"), theme("colors.teal.600"));
+    box-shadow: 0 3px 10px -3px rgba(16, 185, 129, 0.55);
+  }
+
+  /* ---- 表单 ---- */
+  .field {
+    @apply w-full rounded-xl bg-slate-900/80 border border-slate-700/80 px-3.5 min-h-[44px]
+      text-slate-100 placeholder-slate-600 transition-colors
+      focus:border-emerald-500/80 focus:outline-none focus:ring-2 focus:ring-emerald-500/20;
+  }
+  .field-label {
+    @apply block text-xs text-slate-400 mb-1;
+  }
+
+  /* ---- 徽标 ---- */
+  .badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium
+      bg-slate-800/90 text-slate-400 border border-slate-700/60;
+  }
+  .badge-accent {
+    @apply badge text-emerald-300 border-emerald-800/70 bg-emerald-950/50;
+  }
+
+  /* ---- 进度条 ---- */
+  .progress-track {
+    @apply h-2.5 rounded-full bg-slate-800/90 overflow-hidden;
+  }
+  .progress-fill {
+    @apply h-full rounded-full transition-[width] duration-500;
+    background: linear-gradient(90deg, theme("colors.emerald.500"), theme("colors.teal.400"));
+  }
+  .progress-fill-over {
+    background: linear-gradient(90deg, theme("colors.amber.500"), theme("colors.orange.400"));
+  }
+
+  /* ---- 列表行 ---- */
+  .list-row {
+    @apply flex items-center justify-between gap-3 rounded-xl border border-slate-800/70
+      bg-slate-900/60 px-3.5 py-3 min-h-[52px];
+  }
+
+  /* ---- 数值强调 ---- */
+  .stat-num {
+    @apply text-2xl font-bold tabular-nums bg-clip-text text-transparent;
+    background-image: linear-gradient(135deg, theme("colors.emerald.300"), theme("colors.teal.400"));
+  }
+}
+
+@layer utilities {
+  /* htmx 换入内容淡入 */
+  .htmx-added {
+    opacity: 0;
+  }
+  .htmx-settling .htmx-added,
+  [hx-swap] > * {
+    transition: opacity 180ms ease-out;
+  }
+  .fade-in {
+    animation: sh-fade-in 240ms ease-out;
+  }
+  @keyframes sh-fade-in {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: none; }
+  }
+  /* 隐藏滚动条但保留滚动（chips 横向滚动区） */
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+}

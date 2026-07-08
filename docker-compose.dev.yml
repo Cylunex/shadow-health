@@ -1,0 +1,17 @@
+# 本地开发数据库（设计文档 M0：开发期用本地 Docker PG）
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: shadow-health-dev-pg
+    environment:
+      POSTGRES_USER: health_app
+      POSTGRES_PASSWORD: health_dev
+      POSTGRES_DB: health_dev
+      TZ: Asia/Shanghai
+    ports:
+      - "55433:5432"
+    volumes:
+      - pgdata_dev:/var/lib/postgresql/data
+
+volumes:
+  pgdata_dev:

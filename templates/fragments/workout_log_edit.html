@@ -1,0 +1,52 @@
+{# 行内编辑表单（替换 wlog 行）：ctx = log, errors #}
+<li id="wlog-{{ log.id }}"
+    class="rounded-xl border border-emerald-700/60 bg-slate-900/70 px-4 py-3 shadow-[0_0_16px_-6px_rgba(16,185,129,0.35)] fade-in">
+  <form hx-put="/workout/logs/{{ log.id }}"
+        hx-target="#wlog-{{ log.id }}" hx-swap="outerHTML"
+        hx-disabled-elt="find button[type='submit']"
+        class="space-y-2.5">
+    {% if errors %}<div class="text-xs text-rose-400">{{ errors | join('；') }}</div>{% endif %}
+    <div class="grid grid-cols-2 gap-2.5">
+      <label class="block">
+        <span class="field-label">日期</span>
+        <input type="date" name="log_date" value="{{ log.log_date.isoformat() }}"
+               class="field text-sm px-2.5 tabular-nums">
+      </label>
+      <label class="block">
+        <span class="field-label">类型</span>
+        <input type="text" name="session_type" value="{{ log.session_type or '' }}"
+               class="field text-sm px-2.5">
+      </label>
+      <label class="block">
+        <span class="field-label">时长（分钟）</span>
+        <input type="number" name="duration_min" inputmode="numeric" min="0" max="1440"
+               value="{{ log.duration_min if log.duration_min is not none else '' }}"
+               class="field text-sm px-2.5 tabular-nums">
+      </label>
+      <label class="block">
+        <span class="field-label">距离（km）</span>
+        <input type="number" name="distance_km" inputmode="decimal" step="0.01" min="0" max="1000"
+               value="{{ '%g' | format(log.distance_km | float) if log.distance_km is not none else '' }}"
+               class="field text-sm px-2.5 tabular-nums">
+      </label>
+      <label class="block">
+        <span class="field-label">RPE 1–10</span>
+        <input type="number" name="rpe" inputmode="numeric" min="1" max="10"
+               value="{{ log.rpe if log.rpe is not none else '' }}"
+               class="field text-sm px-2.5 tabular-nums">
+      </label>
+      <label class="block">
+        <span class="field-label">备注</span>
+        <input type="text" name="notes" value="{{ log.notes or '' }}"
+               class="field text-sm px-2.5">
+      </label>
+    </div>
+    <div class="flex gap-2">
+      <button type="submit" class="btn-primary flex-1">保存</button>
+      <button type="button"
+              hx-get="/fragments/workout/recent"
+              hx-target="#workout-recent" hx-swap="innerHTML"
+              class="btn-ghost flex-1">取消</button>
+    </div>
+  </form>
+</li>

@@ -1,0 +1,47 @@
+{# 管理页单行：ctx = habit, streak_label, month_rate。POST /habits/{id}/active 回传本片段 #}
+<li id="habit-row-{{ habit.id }}"
+    class="list-row {{ '' if habit.active else 'opacity-60' }}">
+  <div class="min-w-0 flex-1">
+    <div class="flex items-center gap-1.5 flex-wrap">
+      <span class="font-medium text-sm {{ 'text-slate-100' if habit.active else 'text-slate-400' }}">{{ habit.name }}</span>
+      {% if habit.period == 'weekly' %}
+      <span class="badge text-sky-300 border-sky-800/60 bg-sky-950/50">每周</span>
+      {% endif %}
+      {% if habit.target_per_period > 1 %}
+      <span class="badge tabular-nums">×{{ habit.target_per_period }}</span>
+      {% endif %}
+      {% if habit.time_hint %}
+      <span class="badge">{{ habit.time_hint }}</span>
+      {% endif %}
+      {% if habit.auto_rule %}
+      <span class="badge-accent">自动 {{ habit.auto_rule }}</span>
+      {% endif %}
+    </div>
+    <div class="mt-1.5 flex items-center flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
+      <span class="inline-flex items-center gap-1">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5 text-amber-400/90 shrink-0">
+          <path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/>
+        </svg>{{ streak_label }}
+      </span>
+      <span class="inline-flex items-center gap-1.5">
+        <svg viewBox="0 0 20 20" class="w-5 h-5 shrink-0 -rotate-90">
+          <circle cx="10" cy="10" r="8" fill="none" stroke="currentColor" stroke-width="3" class="text-slate-800"/>
+          <circle cx="10" cy="10" r="8" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"
+                  stroke-dasharray="{{ (month_rate * 0.5027) | round(1) }} 50.3" class="text-emerald-400"/>
+        </svg>
+        <span class="tabular-nums">本月 {{ month_rate }}%</span>
+      </span>
+      {% if habit.source_doc %}<span class="truncate">{{ habit.source_doc }}</span>{% endif %}
+    </div>
+  </div>
+  <button type="button"
+          hx-post="/habits/{{ habit.id }}/active"
+          hx-target="#habit-row-{{ habit.id }}" hx-swap="outerHTML"
+          hx-disabled-elt="this"
+          class="shrink-0 min-h-[44px] min-w-[44px] flex items-center justify-center"
+          aria-label="{{ '停用' if habit.active else '启用' }} {{ habit.name }}">
+    <span class="w-11 h-6 rounded-full relative transition-colors {{ 'bg-gradient-to-r from-emerald-500 to-teal-600 shadow-[0_0_10px_-2px_rgba(16,185,129,0.6)]' if habit.active else 'bg-slate-700' }}">
+      <span class="absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all {{ 'left-[22px]' if habit.active else 'left-0.5' }}"></span>
+    </span>
+  </button>
+</li>

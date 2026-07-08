@@ -1,0 +1,33 @@
+# 构建上下文瘦身 + 防泄密（Dockerfile 只 COPY app/templates/static/migrations/alembic.ini/pyproject.toml/uv.lock）
+.git
+.gitignore
+.claude
+
+# 凭据绝不进镜像（运行时用 env_file 注入）
+.env
+.env.example
+
+# 本地虚拟环境 / 缓存
+.venv
+__pycache__
+**/__pycache__
+*.pyc
+.pytest_cache
+
+# 开发机专用工具与产物（tailwindcss.exe 等 Windows 二进制）
+tools
+android
+
+# 运行时数据（容器内用 volume 挂载 ./uploads）
+uploads
+
+# 编排与文档本身不需要进镜像
+docker-compose.yml
+docker-compose.dev.yml
+Dockerfile
+.dockerignore
+README.md
+
+# Tailwind 源码配置（app.css 已预构建进 static/，镜像内不重建）
+tailwind.config.js
+static/src

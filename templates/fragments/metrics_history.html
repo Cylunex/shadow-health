@@ -1,0 +1,79 @@
+{# 最近 30 天历史表格：自动值旁小徽标标来源（autofilled jsonb）；保存后被动刷新；外层 .card 由 metrics.html 提供 #}
+{% macro badge(r, field) -%}
+{%- if field in (r.autofilled or {}) -%}
+<span class="badge ml-1 px-1.5 align-middle">{{ source_labels.get(r.autofilled[field], r.autofilled[field]) }}</span>
+{%- endif -%}
+{%- endmacro %}
+<div id="metrics-history"
+     hx-get="/fragments/metrics/history"
+     hx-trigger="metrics-changed from:body"
+     hx-swap="outerHTML"
+     class="rounded-xl border border-slate-800/70 overflow-hidden">
+  <div class="overflow-auto max-h-[60vh]">
+    <table class="w-full text-sm whitespace-nowrap tabular-nums">
+      <thead>
+        <tr class="text-xs text-slate-400">
+          <th class="sticky top-0 left-0 z-20 bg-slate-900 text-left py-2.5 pl-4 pr-3 font-normal border-b border-slate-800">日期</th>
+          <th class="sticky top-0 z-10 bg-slate-900 text-right px-3 py-2.5 font-normal border-b border-slate-800">体重kg</th>
+          <th class="sticky top-0 z-10 bg-slate-900 text-right px-3 py-2.5 font-normal border-b border-slate-800">体脂%</th>
+          <th class="sticky top-0 z-10 bg-slate-900 text-right px-3 py-2.5 font-normal border-b border-slate-800">腰围cm</th>
+          <th class="sticky top-0 z-10 bg-slate-900 text-right px-3 py-2.5 font-normal border-b border-slate-800">血压</th>
+          <th class="sticky top-0 z-10 bg-slate-900 text-right px-3 py-2.5 font-normal border-b border-slate-800">睡眠h</th>
+          <th class="sticky top-0 z-10 bg-slate-900 text-center px-3 py-2.5 font-normal border-b border-slate-800">质量</th>
+          <th class="sticky top-0 z-10 bg-slate-900 text-center px-3 py-2.5 font-normal border-b border-slate-800">晨勃</th>
+          <th class="sticky top-0 z-10 bg-slate-900 text-center px-3 py-2.5 font-normal border-b border-slate-800">精力</th>
+          <th class="sticky top-0 z-10 bg-slate-900 text-right px-3 pr-4 py-2.5 font-normal border-b border-slate-800">血氧%</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in history_rows %}
+        <tr class="odd:bg-slate-900/40 border-b border-slate-800/60 last:border-0 hover:bg-slate-800/40 transition-colors">
+          <td class="py-2.5 pl-4 pr-3 text-slate-300 sticky left-0 z-10 bg-slate-900">{{ r.log_date.strftime('%m-%d') }}</td>
+          <td class="text-right px-3">
+            {% if r.weight_kg is not none %}{{ fmt(r.weight_kg) }}{{ badge(r, 'weight_kg') }}{% else %}<span class="text-slate-700">—</span>{% endif %}
+          </td>
+          <td class="text-right px-3">
+            {% if r.body_fat_pct is not none %}{{ fmt(r.body_fat_pct) }}{{ badge(r, 'body_fat_pct') }}{% else %}<span class="text-slate-700">—</span>{% endif %}
+          </td>
+          <td class="text-right px-3">
+            {% if r.waist_cm is not none %}{{ fmt(r.waist_cm) }}{{ badge(r, 'waist_cm') }}{% else %}<span class="text-slate-700">—</span>{% endif %}
+          </td>
+          <td class="text-right px-3">
+            {% if r.bp_systolic is not none or r.bp_diastolic is not none %}
+              {{ r.bp_systolic or '?' }}/{{ r.bp_diastolic or '?' }}{{ badge(r, 'bp_systolic') }}
+            {% else %}<span class="text-slate-700">—</span>{% endif %}
+          </td>
+          <td class="text-right px-3">
+            {% if r.sleep_hours is not none %}{{ fmt(r.sleep_hours) }}{{ badge(r, 'sleep_hours') }}{% else %}<span class="text-slate-700">—</span>{% endif %}
+          </td>
+          <td class="text-center px-3">
+            {% if r.sleep_quality is not none %}{{ r.sleep_quality }}{{ badge(r, 'sleep_quality') }}{% else %}<span class="text-slate-700">—</span>{% endif %}
+          </td>
+          <td class="text-center px-3">
+            {% if r.morning_erection == true %}<span class="text-emerald-400">✓</span>
+            {% elif r.morning_erection == false %}<span class="text-slate-500">✗</span>
+            {% else %}<span class="text-slate-700">—</span>{% endif %}
+          </td>
+          <td class="text-center px-3">
+            {% if r.energy_level is not none %}{{ r.energy_level }}{{ badge(r, 'energy_level') }}{% else %}<span class="text-slate-700">—</span>{% endif %}
+          </td>
+          <td class="text-right px-3 pr-4">
+            {% if r.spo2_pct is not none %}{{ fmt(r.spo2_pct) }}{{ badge(r, 'spo2_pct') }}{% else %}<span class="text-slate-700">—</span>{% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="10" class="py-10 text-center">
+            <svg class="mx-auto w-10 h-10 text-slate-700" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="5" y="4" width="14" height="17" rx="2"/>
+              <path d="M9 4.5V3h6v1.5"/>
+              <path d="M9 10h6M9 14h6M9 18h3" stroke-dasharray="1.5 2.5"/>
+            </svg>
+            <p class="mt-2 text-sm text-slate-500">最近 30 天暂无记录，从上方表单记第一笔吧</p>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>

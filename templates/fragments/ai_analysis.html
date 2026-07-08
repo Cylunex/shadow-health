@@ -1,0 +1,22 @@
+{# AI 分析结果片段：analysis={html, generated_at, days} 或 error #}
+{% if error %}
+<div class="rounded-xl border border-red-900/60 bg-red-950/30 px-4 py-3 text-sm text-red-300 fade-in">{{ error }}</div>
+{% elif analysis %}
+<article class="fade-in">
+  <div class="flex items-center gap-2 mb-2 text-xs text-slate-500">
+    <span class="badge-accent">近 {{ analysis.days }} 天</span>
+    <span>生成于 {{ analysis.generated_at }}</span>
+  </div>
+  <div class="ai-md text-sm leading-relaxed text-slate-200 space-y-2
+              [&_h1]:text-base [&_h1]:font-bold [&_h1]:text-emerald-300 [&_h1]:mt-3
+              [&_h2]:text-[15px] [&_h2]:font-semibold [&_h2]:text-emerald-300 [&_h2]:mt-3
+              [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:text-teal-300 [&_h3]:mt-2
+              [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:space-y-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_ol]:space-y-1
+              [&_strong]:text-slate-50 [&_p]:my-1.5
+              [&_table]:w-full [&_table]:text-xs [&_th]:text-left [&_th]:text-slate-400 [&_th]:py-1 [&_td]:py-1 [&_td]:border-t [&_td]:border-slate-800">
+    {{ analysis.html | safe }}
+  </div>
+</article>
+{% else %}
+<p class="text-sm text-slate-600">还没有生成过分析。选择时间范围后点上面的按钮。</p>
+{% endif %}

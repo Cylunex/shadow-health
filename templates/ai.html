@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}AI 分析 · shadow-health{% endblock %}
+{% block page_title %}AI 分析{% endblock %}
+{% block content %}
+<div class="space-y-5">
+
+  {% if not configured %}
+  <section class="card border-amber-800/60">
+    <h2 class="card-title">未配置</h2>
+    <p class="text-sm text-slate-300 leading-relaxed">
+      还没有配置 API Key。在服务器的 <code class="text-emerald-300">.env</code> 里填入
+      <code class="text-emerald-300">ANTHROPIC_API_KEY</code>（如走代理再加
+      <code class="text-emerald-300">ANTHROPIC_BASE_URL</code>），重启应用即可使用。
+    </p>
+  </section>
+  {% endif %}
+
+  {# ---- 生成分析 ---- #}
+  <section class="card">
+    <h2 class="card-title">数据分析报告</h2>
+    <form hx-post="/ai/analyze" hx-target="#ai-analysis" hx-swap="innerHTML"
+          hx-disabled-elt="find button[type='submit']" hx-indicator="#ai-spinner"
+          class="space-y-3">
+      <div class="flex gap-1.5">
+        {% for d in days_options %}
+        <label class="flex-1 cursor-pointer">
+          <input type="radio" name="days" value="{{ d }}" class="peer sr-only" {% if d == 30 %}checked{% endif %}>
+          <span class="chip w-full peer-checked:text-white"
+                style="display:flex">近 {{ d }} 天</span>
+          <span class="hidden peer-checked:block absolute"></span>
+        </label>
+        {% endfor %}
+      </div>
+      <button type="submit" class="btn-primary w-full" {% if not configured %}disabled{% endif %}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="w-4 h-4">
+          <path d="M12 3v3m6.4-.4-2.1 2.1M21 12h-3m.4 6.4-2.1-2.1M12 18v3m-6.4-.4 2.1-2.1M3 12h3m-.4-6.4 2.1 2.1" stroke-linecap="round"/>
+        </svg>
+        生成分析（模型 {{ model }}，约需 1-2 分钟）
+      </button>
+      <div id="ai-spinner" class="htmx-indicator text-center text-sm text-slate-400">
+        <span class="inline-block animate-pulse">🧠 正在分析你的健康数据…请勿离开本页</span>
+      </div>
+    </form>
+    <div id="ai-analysis" class="mt-3">
+      {% include "fragments/ai_analysis.html" %}
+    </div>
+  </section>
+
+  {# ---- 自由问答 ---- #}
+  <section class="card">
+    <h2 class="card-title">问一问</h2>
+    <p class="text-xs text-slate-500 mb-2">带上你近 30 天的数据上下文回答，例如"我最近的减脂速度合理吗""下周训练该怎么排"。</p>
+    <form hx-post="/ai/ask" hx-target="#ai-answer" hx-swap="innerHTML"
+          hx-disabled-elt="find button[type='submit']" hx-indicator="#ai-ask-spinner"
+          class="space-y-2">
+      <textarea name="question" rows="2" placeholder="输入你的问题…" required
+                class="field !min-h-[68px] py-2.5 resize-y"></textarea>
+      <button type="submit" class="btn-ghost w-full" {% if not configured %}disabled{% endif %}>提问</button>
+      <div id="ai-ask-spinner" class="htmx-indicator text-center text-sm text-slate-400">
+        <span class="inline-block animate-pulse">💭 思考中…</span>
+      </div>
+    </form>
+    <div id="ai-answer" class="mt-3"></div>
+  </section>
+
+</div>
+{% endblock %}

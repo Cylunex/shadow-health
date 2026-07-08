@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}导入中心 · shadow-health{% endblock %}
+{% block page_title %}导入中心{% endblock %}
+{% block content %}
+<div class="space-y-5">
+  <a href="/settings" class="inline-flex items-center gap-0.5 text-sm text-slate-400 py-2.5 pr-3 min-h-[44px] hover:text-slate-200 transition-colors">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="m15 18-6-6 6-6"/></svg>
+    返回设置
+  </a>
+
+  {% if wizard_open %}
+  <section class="card">
+    <h2 class="card-title">新建导入</h2>
+    {% include "fragments/settings_import_wizard.html" %}
+  </section>
+  {% else %}
+  <a href="/settings/imports/new" class="btn-primary w-full min-h-[48px]">
+    ＋ 新建导入
+  </a>
+  {% endif %}
+
+  <section class="card">
+    <h2 class="card-title">各源状态</h2>
+    {% include "fragments/settings_sync_status.html" %}
+  </section>
+
+  <section class="card">
+    <h2 class="card-title">导入历史</h2>
+    {% if not jobs %}
+    <div class="flex flex-col items-center gap-2 rounded-xl border border-dashed border-slate-800 bg-slate-900/40 px-4 py-8 text-center">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="w-8 h-8 text-slate-700">
+        <path d="M22 12h-6l-2 3h-4l-2-3H2"/>
+        <path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>
+      </svg>
+      <p class="text-sm text-slate-500">还没有导入记录。</p>
+    </div>
+    {% endif %}
+    <div class="space-y-2">
+      {% for jc in jobs %}
+      {% with job=jc.job, source_label=jc.source_label, status_label=jc.status_label,
+              pct=jc.pct, polling=jc.polling, started=jc.started, finished=jc.finished,
+              report_json=jc.report_json %}
+      {% include "fragments/settings_import_job_status.html" %}
+      {% endwith %}
+      {% endfor %}
+    </div>
+  </section>
+</div>
+{% endblock %}

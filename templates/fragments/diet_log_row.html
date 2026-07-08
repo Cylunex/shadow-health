@@ -1,0 +1,31 @@
+{# 单条记录显示行；编辑/删除走行内三件套（hx-swap="outerHTML"） #}
+<li id="diet-log-{{ log.id }}" class="list-row gap-1 pr-1.5">
+  <div class="flex-1 min-w-0">
+    <div class="text-sm text-slate-100 truncate">
+      {{ name }}{% if log.food_id is none %}<span class="badge ml-1.5 align-middle">自由</span>{% endif %}
+    </div>
+    <div class="mt-0.5 text-xs text-slate-400 tabular-nums">
+      {%- if log.amount_g is not none %}{{ fmt(log.amount_g) }}g{% endif -%}
+      {%- if log.kcal is not none %}{% if log.amount_g is not none %} · {% endif %}{{ fmt(log.kcal) }} kcal{% endif -%}
+      {%- if log.protein_g is not none %} · 蛋白 {{ fmt(log.protein_g) }}g{% endif -%}
+      {%- if log.amount_g is none and log.kcal is none and log.protein_g is none %}<span class="text-slate-600">未填营养</span>{% endif -%}
+    </div>
+  </div>
+  <button type="button" aria-label="编辑"
+          hx-get="/diet/logs/{{ log.id }}/edit" hx-target="#diet-log-{{ log.id }}" hx-swap="outerHTML"
+          class="shrink-0 w-11 min-h-[44px] flex items-center justify-center rounded-lg text-slate-400 hover:text-slate-200 active:bg-slate-800 transition-colors">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+         stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4">
+      <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>
+    </svg>
+  </button>
+  <button type="button" aria-label="删除"
+          hx-delete="/diet/logs/{{ log.id }}" hx-confirm="删除这条「{{ name }}」记录？"
+          hx-target="#diet-log-{{ log.id }}" hx-swap="outerHTML" hx-disabled-elt="this"
+          class="shrink-0 w-11 min-h-[44px] flex items-center justify-center rounded-lg text-slate-500 hover:text-red-400 active:bg-slate-800 disabled:opacity-50 transition-colors">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+         stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4">
+      <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+    </svg>
+  </button>
+</li>

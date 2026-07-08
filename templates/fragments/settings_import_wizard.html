@@ -1,0 +1,42 @@
+{# 导入向导：来源选择 + 文件上传；keep_file 显示可选解压密码框（密码只透传导入器，不落库）；外层卡片由导入中心提供 #}
+<form method="post" action="/settings/imports" enctype="multipart/form-data"
+      x-data="{ src: 'samsung_zip', busy: false }" @submit="busy = true"
+      class="space-y-4">
+
+  {% if wizard_error %}
+  <div class="rounded-xl bg-red-600/15 border border-red-600/40 text-red-400 text-sm px-3 py-2 fade-in">
+    {{ wizard_error }}
+  </div>
+  {% endif %}
+
+  <label class="block">
+    <span class="field-label">数据来源</span>
+    <select name="source" x-model="src" class="field">
+      <option value="samsung_zip">三星健康导出 zip</option>
+      <option value="keep_file">Keep 导出文件（7z / zip / xlsx）</option>
+    </select>
+  </label>
+
+  <label class="block">
+    <span class="field-label">文件</span>
+    <input type="file" name="file" required
+           :accept="src === 'samsung_zip' ? '.zip' : '.7z,.zip,.xlsx'"
+           class="w-full rounded-xl border border-dashed border-slate-700 bg-slate-900/60 p-1.5 text-sm text-slate-400 cursor-pointer transition-colors hover:border-slate-500
+                  file:mr-3 file:min-h-[44px] file:px-4 file:rounded-lg file:border-0 file:cursor-pointer
+                  file:bg-emerald-950/80 file:text-emerald-300 file:text-sm file:font-medium">
+  </label>
+
+  <div x-show="src === 'keep_file'" style="display: none" class="space-y-2">
+    <label class="block">
+      <span class="field-label">解压密码（可选，Keep 客服导出的 zip 为 AES 加密）</span>
+      <input type="password" name="keep_password" autocomplete="off" class="field">
+    </label>
+  </div>
+
+  <p class="text-xs text-slate-500">上传后后台解析，可在下方导入历史查看进度。</p>
+
+  <button type="submit" :disabled="busy" :class="busy ? 'opacity-60' : ''"
+          class="btn-primary w-full min-h-[48px]">
+    上传并创建导入任务
+  </button>
+</form>

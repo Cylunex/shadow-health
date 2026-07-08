@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block page_title %}计划详情{% endblock %}
+{% block head %}
+<style>
+  /* 计划 markdown 排版微调（仅本页）：标题层级 / 表格滚动容器 / 就医红线段落红条强调 */
+  .plan-md h1 {
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid rgba(51, 65, 85, 0.55);
+  }
+  .plan-md h2::before {
+    content: "";
+    display: inline-block;
+    width: 0.25rem;
+    height: 1rem;
+    margin-right: 0.5rem;
+    border-radius: 9999px;
+    vertical-align: -2px;
+    background: linear-gradient(180deg, #34d399, #14b8a6);
+  }
+  .plan-md .overflow-x-auto {
+    border-radius: 0.5rem;
+    background: rgba(2, 6, 23, 0.4);
+  }
+  /* 素材里的 blockquote 全部是健康声明/就医红线警示，统一红条强调 */
+  .plan-md blockquote {
+    border-left-color: rgba(248, 113, 113, 0.75);
+    background: linear-gradient(90deg, rgba(127, 29, 29, 0.28), rgba(15, 23, 42, 0.6));
+    color: #fda4af;
+  }
+  .plan-md blockquote strong {
+    color: #fecdd3;
+  }
+</style>
+{% endblock %}
+{% block content %}
+<div class="space-y-5">
+  <div>
+    <a href="/workout/plans" class="text-sm font-medium text-emerald-400 min-h-[44px] inline-flex items-center active:text-emerald-300">← 计划列表</a>
+  </div>
+
+  <section class="card fade-in">
+    <h2 class="text-lg font-bold text-slate-100">{{ plan.name }}</h2>
+    <div class="mt-2 flex gap-1.5 flex-wrap">
+      {% if plan.goal %}<span class="badge-accent">{{ plan.goal }}</span>{% endif %}
+      <span class="badge">{{ (plan.duration_weeks ~ ' 周') if plan.duration_weeks else '循环计划' }}</span>
+      {% if plan.source_doc %}<span class="badge text-slate-500">{{ plan.source_doc }}</span>{% endif %}
+    </div>
+    <div id="enroll-panel" class="mt-3">{% include "fragments/workout_enroll_panel.html" %}</div>
+  </section>
+
+  <article class="card plan-md">{{ content_html | safe }}</article>
+</div>
+{% endblock %}

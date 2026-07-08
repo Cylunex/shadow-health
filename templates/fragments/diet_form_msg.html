@@ -1,0 +1,2 @@
+{# 记录表单提交反馈：成功响应带 HX-Trigger: diet-changed，day/summary/chips 被动刷新 #}
+{% if ok %}<span class="text-emerald-400">✓ {{ ok }}</span>{% elif error %}<span class="text-red-400">{{ error }}</span>{% endif %}

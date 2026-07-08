@@ -1,0 +1,54 @@
+{# 计划详情页启停面板：ctx = plan, active_items[{e, week_no}], history, today, enroll_error, status_labels #}
+{% if enroll_error %}<div class="text-sm text-rose-400 mb-2">{{ enroll_error }}</div>{% endif %}
+
+{% if active_items %}
+{% for it in active_items %}
+<div class="rounded-xl border border-emerald-800/60 bg-emerald-950/40 px-3 py-2.5 flex items-center justify-between gap-2 shadow-[0_0_14px_-5px_rgba(16,185,129,0.35)] {% if not loop.last %}mb-2{% endif %}">
+  <div class="text-sm text-emerald-300 min-w-0 flex items-center gap-2">
+    <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0"></span>
+    <span class="min-w-0 tabular-nums">执行中 · {{ it.e.start_date.isoformat() }} 启动{% if it.week_no %} · 第 {{ it.week_no }} 周{% endif %}</span>
+  </div>
+  <div class="flex gap-1.5 shrink-0">
+    <button type="button"
+            hx-post="/workout/enrollments/{{ it.e.id }}/finish"
+            hx-confirm="标记「{{ plan.name }}」为已完成？"
+            hx-target="#enroll-panel" hx-swap="innerHTML"
+            hx-disabled-elt="this"
+            class="btn-primary px-3">完成</button>
+    <button type="button"
+            hx-post="/workout/enrollments/{{ it.e.id }}/abandon"
+            hx-confirm="放弃这一轮「{{ plan.name }}」？"
+            hx-target="#enroll-panel" hx-swap="innerHTML"
+            hx-disabled-elt="this"
+            class="btn-ghost px-3">放弃</button>
+  </div>
+</div>
+{% endfor %}
+{% else %}
+<form hx-post="/workout/plans/{{ plan.id }}/enroll"
+      hx-confirm="启动「{{ plan.name }}」？"
+      hx-target="#enroll-panel" hx-swap="innerHTML"
+      hx-disabled-elt="find button[type='submit']"
+      class="flex items-end gap-2">
+  <label class="block flex-1">
+    <span class="field-label">开始日期</span>
+    <input type="date" name="start_date" value="{{ today }}"
+           class="field text-sm tabular-nums">
+  </label>
+  <button type="submit" class="btn-primary px-5 shrink-0">启动计划</button>
+</form>
+{% endif %}
+
+{% if history %}
+<details class="mt-2">
+  <summary class="text-xs text-slate-500 min-h-[44px] flex items-center cursor-pointer select-none active:text-slate-300">历史周期（{{ history | length }}）</summary>
+  <ul class="text-xs text-slate-400 space-y-1.5 mt-1 pl-1">
+    {% for e in history %}
+    <li class="flex items-center gap-1.5">
+      <span class="tabular-nums">{{ e.start_date.isoformat() }} ~ {{ e.end_date.isoformat() if e.end_date else '—' }}</span>
+      <span class="badge">{{ status_labels.get(e.status, e.status) }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+</details>
+{% endif %}

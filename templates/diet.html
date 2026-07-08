@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block page_title %}饮食{% endblock %}
+{% block content %}
+{# chips 一击记录通过 hx-include 携带当前查看的日期 #}
+<input type="hidden" id="diet-date" name="d" value="{{ d.isoformat() }}">
+
+<div class="space-y-5">
+
+  {# 翻天导航：一体化胶囊 ‹ 日期 › #}
+  <div class="card rounded-full p-1.5 flex items-center justify-between gap-2">
+    <a href="/diet?d={{ prev_d.isoformat() }}" aria-label="前一天"
+       class="shrink-0 w-11 min-h-[44px] flex items-center justify-center rounded-full text-lg bg-slate-800/60 border border-slate-700/60 text-slate-300 hover:border-slate-500 active:scale-95 transition-all">‹</a>
+    <div class="text-center leading-tight">
+      <div class="text-sm font-semibold tabular-nums text-slate-100">{{ d.strftime('%Y-%m-%d') }}{% if is_today %}<span class="text-emerald-400"> · 今天</span>{% endif %}</div>
+      {% if not is_today %}<a href="/diet" class="text-xs text-emerald-400 active:text-emerald-300">回到今天</a>{% endif %}
+    </div>
+    {% if is_today %}
+    <span class="shrink-0 w-11 min-h-[44px] flex items-center justify-center rounded-full text-lg bg-slate-900/40 border border-slate-800/50 text-slate-700">›</span>
+    {% else %}
+    <a href="/diet?d={{ next_d.isoformat() }}" aria-label="后一天"
+       class="shrink-0 w-11 min-h-[44px] flex items-center justify-center rounded-full text-lg bg-slate-800/60 border border-slate-700/60 text-slate-300 hover:border-slate-500 active:scale-95 transition-all">›</a>
+    {% endif %}
+  </div>
+
+  {# 日热量/蛋白汇总 vs 目标 #}
+  <section class="card">
+    <h2 class="card-title">当日摄入</h2>
+    {% include "fragments/diet_summary.html" %}
+  </section>
+
+  {# 记录表单：搜索联想选食物（服务端算营养）或直接自由文本（手填热量） #}
+  <form id="diet-add-form" hx-post="/diet/logs" hx-target="#diet-form-msg" hx-swap="innerHTML"
+        hx-disabled-elt="find button[type='submit']"
+        hx-on::after-request="if(event.detail.successful && event.detail.xhr.getResponseHeader('HX-Trigger')){this.reset();dietClearFood();}"
+        class="card space-y-3">
+    <h2 class="card-title">记一笔</h2>
+    <input type="hidden" name="log_date" value="{{ d.isoformat() }}">
+    <input type="hidden" name="food_id" id="diet-food-id" value="">
+
+    <div class="grid grid-cols-4 gap-2">
+      {% for m in meals %}
+      <label class="cursor-pointer">
+        <input type="radio" name="meal" value="{{ m }}" class="peer sr-only" {% if m == default_meal %}checked{% endif %}>
+        <span class="chip w-full min-h-[44px] peer-checked:text-white peer-checked:border-transparent peer-checked:bg-gradient-to-br peer-checked:from-emerald-500 peer-checked:to-teal-600 peer-checked:shadow-[0_3px_10px_-3px_rgba(16,185,129,0.55)]">{{ m }}</span>
+      </label>
+      {% endfor %}
+    </div>
+
+    <div class="relative">
+      <input type="search" name="q" id="diet-q" placeholder="搜食物库，或直接写吃了什么" autocomplete="off"
+             hx-get="/diet/foods/search" hx-trigger="input changed delay:300ms" hx-target="#diet-suggestions" hx-swap="innerHTML"
+             hx-disabled-elt="unset"
+             oninput="if(document.getElementById('diet-food-id').value)dietClearFood()"
+             class="field">
+      <div id="diet-suggestions" class="absolute inset-x-0 top-full z-30 empty:hidden"></div>
+      <div id="diet-picked" class="hidden mt-2 text-xs text-emerald-400">已选食物：<span id="diet-picked-name"></span>，热量/蛋白按用量自动计算</div>
+    </div>
+
+    <div class="grid grid-cols-3 gap-2">
+      <label class="block">
+        <span class="field-label">用量 (g)</span>
+        <input type="text" inputmode="decimal" name="amount_g" id="diet-amount" autocomplete="off"
+               class="field">
+      </label>
+      <label class="block">
+        <span class="field-label">热量 (kcal)</span>
+        <input type="text" inputmode="decimal" name="kcal" id="diet-kcal" autocomplete="off" placeholder="自由文本填"
+               class="field disabled:opacity-40">
+      </label>
+      <label class="block">
+        <span class="field-label">蛋白 (g)</span>
+        <input type="text" inputmode="decimal" name="protein_g" id="diet-protein" autocomplete="off" placeholder="可选"
+               class="field disabled:opacity-40">
+      </label>
+    </div>
+
+    <div id="diet-form-msg" class="text-xs empty:hidden"></div>
+    <button type="submit" class="btn-primary w-full">记一笔</button>
+  </form>
+
+  {# 最近常吃 chips（近 30 天 top8，一击记录） #}
+  {% include "fragments/diet_chips.html" %}
+
+  {# 四餐分组列表 #}
+  {% include "fragments/diet_day.html" %}
+
+  <div class="text-center">
+    <a href="/diet/recipes" class="btn-ghost px-6">🌿 食疗方库</a>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // 搜索联想选中食物：填 food_id/名称/上次用量，禁用手填营养项
+  function dietPickFood(btn) {
+    document.getElementById('diet-food-id').value = btn.dataset.id;
+    document.getElementById('diet-q').value = btn.dataset.name;
+    var amount = document.getElementById('diet-amount');
+    amount.value = btn.dataset.amount || '';
+    document.getElementById('diet-suggestions').innerHTML = '';
+    document.getElementById('diet-picked-name').textContent = btn.dataset.name;
+    document.getElementById('diet-picked').classList.remove('hidden');
+    document.getElementById('diet-kcal').disabled = true;
+    document.getElementById('diet-protein').disabled = true;
+    amount.focus();
+  }
+  // 取消选中（改文字/成功重置后回到自由文本态）
+  function dietClearFood() {
+    var fid = document.getElementById('diet-food-id');
+    if (!fid) return;
+    fid.value = '';
+    document.getElementById('diet-picked').classList.add('hidden');
+    document.getElementById('diet-suggestions').innerHTML = '';
+    document.getElementById('diet-kcal').disabled = false;
+    document.getElementById('diet-protein').disabled = false;
+  }
+</script>
+{% endblock %}

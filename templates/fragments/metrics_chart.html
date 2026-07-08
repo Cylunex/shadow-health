@@ -1,0 +1,159 @@
+{# 趋势图片段：metric × days 切换整体替换；保存指标后监听 metrics-changed 被动刷新；外层 .card 由 metrics.html 提供 #}
+<div id="metrics-chart-frame"
+     hx-get="/fragments/metrics/chart?metric={{ chart.metric }}&days={{ chart.days }}"
+     hx-trigger="metrics-changed from:body"
+     hx-swap="outerHTML"
+     class="space-y-3">
+
+  <div class="flex gap-2 overflow-x-auto scrollbar-none -mx-4 px-4 pb-1">
+    {% for key, label in chart.metric_options %}
+    <button type="button"
+            hx-get="/fragments/metrics/chart?metric={{ key }}&days={{ chart.days }}"
+            hx-target="#metrics-chart-frame" hx-swap="outerHTML"
+            class="chip shrink-0 min-h-[44px] whitespace-nowrap {% if key == chart.metric %}chip-active{% endif %}">
+      {{ label }}
+    </button>
+    {% endfor %}
+  </div>
+
+  <div class="flex gap-2">
+    {% for d in chart.days_options %}
+    <button type="button"
+            hx-get="/fragments/metrics/chart?metric={{ chart.metric }}&days={{ d }}"
+            hx-target="#metrics-chart-frame" hx-swap="outerHTML"
+            class="chip flex-1 min-h-[44px] tabular-nums {% if d == chart.days %}chip-active{% endif %}">
+      {{ d }} 天
+    </button>
+    {% endfor %}
+  </div>
+
+  {% if not chart.has_data %}
+  <div class="fade-in flex flex-col items-center gap-1.5 py-3 text-center">
+    <svg class="w-9 h-9 text-slate-700" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M3 3v16a2 2 0 0 0 2 2h16"/>
+      <path d="M7 15l4-5 3 3 5-7" stroke-dasharray="2.5 3"/>
+    </svg>
+    <p class="text-sm text-slate-500">该区间暂无数据</p>
+  </div>
+  {% endif %}
+
+  <div class="relative h-56 sm:h-64">
+    <canvas id="metrics-chart-canvas"></canvas>
+  </div>
+  <p class="text-xs text-slate-500 text-center">● 手动录入 · △ 自动同步</p>
+
+  <script type="application/json" id="metrics-chart-data">{{ chart.payload_json | safe }}</script>
+  <script>
+  (function () {
+    // 按需加载 Chart.js（base.html 未引入）；用 window.Chart 判断避免重复加载
+    if (!window.__ensureChartJs) {
+      window.__ensureChartJs = function (cb) {
+        if (window.Chart) { cb(); return; }
+        if (window.__chartJsQueue) { window.__chartJsQueue.push(cb); return; }
+        window.__chartJsQueue = [cb];
+        var s1 = document.createElement("script");
+        s1.src = "/static/vendor/chart.umd.min.js";
+        s1.onload = function () {
+          var s2 = document.createElement("script");
+          s2.src = "/static/vendor/chartjs-adapter-date-fns.bundle.min.js";
+          s2.onload = function () {
+            var q = window.__chartJsQueue || [];
+            window.__chartJsQueue = null;
+            q.forEach(function (f) { f(); });
+          };
+          document.head.appendChild(s2);
+        };
+        document.head.appendChild(s1);
+      };
+    }
+    var dataEl = document.getElementById("metrics-chart-data");
+    if (!dataEl) return;
+    var p = JSON.parse(dataEl.textContent);
+    // 延迟到 htmx settle（默认 20ms 属性回写）之后再建图：settle 会把 canvas 的
+    // width/height 属性快照回写成默认值，settle 期间建的图位图必被清空（实测）
+    setTimeout(function () {
+    window.__ensureChartJs(function () {
+      // 清理被 htmx 换掉的旧 canvas 上的实例，防泄漏
+      if (window.Chart.instances) {
+        Object.values(window.Chart.instances).forEach(function (c) {
+          if (c && c.canvas && !c.canvas.isConnected) { c.destroy(); }
+        });
+      }
+      var canvas = document.getElementById("metrics-chart-canvas");
+      if (!canvas || !canvas.isConnected) return;
+      var old = window.Chart.getChart(canvas);
+      if (old) { old.destroy(); }
+      // htmx 换入时脚本先于布局稳定执行，Chart.js 初始尺寸探测拿到默认 300×150 而
+      // 自带 ResizeObserver 不触发（实测 bug）；轮询 resize 直到位图与布局尺寸一致
+      var fixSize = function (chart) {
+        var tries = 0;
+        var tick = function () {
+          if (!chart.canvas || !chart.canvas.isConnected) return;
+          var c = chart.canvas;
+          var dpr = window.devicePixelRatio || 1;
+          var want = Math.round(c.clientWidth * dpr);
+          if (c.clientWidth > 0 && Math.abs(c.width - want) <= 4) return; // 已就位
+          chart.resize();
+          if (++tries < 12) setTimeout(tick, 80);
+        };
+        requestAnimationFrame(tick);
+      };
+      var datasets = p.datasets.map(function (d) {
+        var ds = {
+          label: d.label,
+          data: d.data,
+          borderColor: d.color,
+          backgroundColor: p.type === "bar" ? d.color + "99" : d.color,
+          borderWidth: 2,
+          spanGaps: false
+        };
+        if (p.type === "line") {
+          ds.pointStyle = d.pointStyle;          // 逐点：手动 circle / 自动 triangle
+          ds.pointBackgroundColor = d.pointBg;   // 自动点空心（透明填充）
+          ds.pointBorderColor = d.color;
+          ds.pointBorderWidth = 1.5;
+          ds.pointRadius = 3.5;
+          ds.pointHoverRadius = 6;
+          ds.tension = 0.25;
+        }
+        return ds;
+      });
+      fixSize(new window.Chart(canvas, {
+        type: p.type,
+        data: { labels: p.labels, datasets: datasets },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: false,
+          scales: {
+            x: {
+              type: "time",
+              time: {
+                unit: p.unit,
+                displayFormats: { day: "MM-dd", week: "MM-dd" },
+                tooltipFormat: "yyyy-MM-dd"
+              },
+              grid: { color: "rgba(51,65,85,0.35)" },
+              ticks: { color: "#94a3b8", maxRotation: 0, autoSkip: true, maxTicksLimit: 8 }
+            },
+            y: {
+              beginAtZero: p.beginAtZero,
+              grid: { color: "rgba(51,65,85,0.35)" },
+              ticks: { color: "#94a3b8" }
+            }
+          },
+          plugins: {
+            legend: {
+              display: p.datasets.length > 1,
+              labels: { color: "#cbd5e1", usePointStyle: true, boxWidth: 8 }
+            },
+            tooltip: { usePointStyle: true }
+          },
+          interaction: { mode: "nearest", axis: "x", intersect: false }
+        }
+      }));
+    });
+    }, 120);
+  })();
+  </script>
+</div>
