@@ -1,0 +1,8 @@
+# 构建产物与机器相关文件
+.gradle/
+build/
+app/build/
+local.properties
+# 三星 SDK 是专有 AAR，不入仓库（换机器从三星门户重下，见 app/libs/README.txt）
+app/libs/*.aar
+!app/libs/README.txt
