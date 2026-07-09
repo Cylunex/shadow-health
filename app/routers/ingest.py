@@ -36,8 +36,9 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import get_db
-from app.models import DailyActivity, ImportRaw, SleepSession, SyncState, WorkoutLog
+from app.models import AppSetting, DailyActivity, ImportRaw, SleepSession, SyncState, WorkoutLog
 from app.services.autofill import autofill_fields
+from app.services.miscale import compute_body_metrics
 from app.timeutil import LOCAL_TZ, now_local
 
 MAX_BODY_BYTES = 5 * 1024 * 1024
@@ -397,9 +398,8 @@ def _mark(db: Session, record_type: str, ext_id: str, status: str, error: str | 
 
 # ---------- 端点 ----------
 
-@router.post("/health_connect")
-async def ingest_health_connect(request: Request, db: Session = Depends(get_db)) -> Response:
-    # 1. 鉴权：token 未配置 503；Bearer 比对失败 401（无 body 细节）
+def _bearer_reject(request: Request) -> Response | None:
+    """Bearer 鉴权：token 未配置 503；比对失败 401（无 body 细节）；通过返回 None。"""
     settings = get_settings()
     if not settings.ingest_token:
         return Response(status_code=503)
@@ -408,6 +408,15 @@ async def ingest_health_connect(request: Request, db: Session = Depends(get_db))
         token.strip().encode("utf-8"), settings.ingest_token.encode("utf-8")
     ):
         return Response(status_code=401)
+    return None
+
+
+@router.post("/health_connect")
+async def ingest_health_connect(request: Request, db: Session = Depends(get_db)) -> Response:
+    # 1. 鉴权
+    reject = _bearer_reject(request)
+    if reject is not None:
+        return reject
 
     # 2. 请求体上限 5MB：先查 Content-Length，读后复核（兼容 chunked 无长度头）
     content_length = request.headers.get("content-length", "")
@@ -559,3 +568,170 @@ async def ingest_health_connect(request: Request, db: Session = Depends(get_db))
             db.rollback()
 
     return JSONResponse({"received": received})
+
+
+# ---------- 小米体脂秤（BLE 网关通道，设计文档外新增） ----------
+
+MISCALE_SOURCE = "miscale"
+
+
+def _miscale_ts(v: Any) -> datetime | None:
+    """秤的 RTC 时间：naive ISO 视为本地时区（秤跟米家配对时对的是本地钟）。"""
+    if isinstance(v, str):
+        s = v.strip()
+        if s and not re.fullmatch(r"-?\d{10,}", s):
+            try:
+                dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+            except ValueError:
+                return None
+            return dt if dt.tzinfo is not None else dt.replace(tzinfo=LOCAL_TZ)
+    return _parse_ts(v)
+
+
+def _miscale_profile(db: Session) -> tuple[str | None, float | None, float | None]:
+    """app_settings → (sex, age_years, height_cm)；缺项返回 None（只记体重）。"""
+    stored = {
+        r.key: r.value
+        for r in db.execute(
+            select(AppSetting).where(AppSetting.key.in_(["sex", "birth_date", "height_cm"]))
+        ).scalars()
+    }
+    sex = stored.get("sex") if stored.get("sex") in ("male", "female") else None
+    height = stored.get("height_cm")
+    height_cm = float(height) if isinstance(height, (int, float)) and not isinstance(height, bool) else None
+    age: float | None = None
+    birth = stored.get("birth_date")
+    if isinstance(birth, str):
+        try:
+            age = (now_local().date() - date.fromisoformat(birth)).days / 365.25
+        except ValueError:
+            age = None
+    return sex, age, height_cm
+
+
+@router.post("/miscale")
+async def ingest_miscale(request: Request, db: Session = Depends(get_db)) -> Response:
+    """体脂秤测量接收：手机/NAS 监听器解析 BLE 广播后 POST 解析结果。
+
+    请求体：{"measurements":[{"ts": ISO8601|epoch, "weight_kg": float, "impedance": int?}]}
+    （或单个测量对象）。去重键 = 秤 RTC 时间戳 + 体重，两个监听器同时上报只记一条。
+    体成分按档案（性别/生日/身高）计算；档案不全只记体重。响应恒 200（防重发风暴）。
+    """
+    reject = _bearer_reject(request)
+    if reject is not None:
+        return reject
+    body = await request.body()
+    if len(body) > MAX_BODY_BYTES:
+        return JSONResponse({"error": "payload too large"}, status_code=413)
+    try:
+        payload = json.loads(body)
+    except (ValueError, UnicodeDecodeError):
+        return JSONResponse({"error": "invalid json"}, status_code=400)
+    if isinstance(payload, dict) and isinstance(payload.get("measurements"), list):
+        records = payload["measurements"]
+    elif isinstance(payload, list):
+        records = payload
+    elif isinstance(payload, dict):
+        records = [payload]
+    else:
+        return JSONResponse({"error": "unsupported payload"}, status_code=400)
+
+    now = now_local()
+    # 解析 + 批内按去重键唯一
+    parsed: dict[str, dict[str, Any]] = {}
+    for item in records:
+        if not isinstance(item, dict):
+            continue
+        w = _qty(item.get("weight_kg")) or _qty(item.get("weight"))
+        if w is None or not (10 <= w <= 300):
+            continue
+        ts = _miscale_ts(item.get("ts") or item.get("timestamp"))
+        # 秤 RTC 掉电/未对时的兜底：时间明显不对就用服务器当前时间
+        if ts is None or ts.year < 2015 or ts > now + timedelta(days=1):
+            ts = now
+        z = _qty(item.get("impedance"))
+        impedance = float(z) if z is not None and 0 < z < 3000 else None
+        ext_id = f"{ts.astimezone(LOCAL_TZ):%Y%m%dT%H%M%S}-{round(w * 200)}"
+        parsed[ext_id] = {"ts": ts, "weight": round(float(w), 2), "impedance": impedance}
+
+    received = len(records)
+    if not parsed:
+        return JSONResponse({"received": received, "new": 0})
+
+    # 留档 + 去重（phone 与 NAS 双监听：同一次测量 ext_id 相同，冲突只刷新 last_seen_at）
+    new_ids: set[str] = set()
+    entries = [
+        {
+            "source": MISCALE_SOURCE,
+            "record_type": "measurement",
+            "external_id": ext_id,
+            "raw": {"ts": m["ts"].isoformat(), "weight_kg": m["weight"], "impedance": m["impedance"]},
+            "parse_status": "pending",
+            "parse_version": 0,
+            "last_seen_at": now,
+        }
+        for ext_id, m in parsed.items()
+    ]
+    ins = pg_insert(ImportRaw).values(entries)
+    stmt = ins.on_conflict_do_update(
+        index_elements=["source", "record_type", "external_id"],
+        set_={"last_seen_at": now},
+    ).returning(ImportRaw.external_id, literal_column("(xmax = 0)"))
+    for ext_id, is_new in db.execute(stmt):
+        if is_new:
+            new_ids.add(ext_id)
+    db.commit()
+
+    try:
+        # 同日多次测量：本批内取最后一次；跨批后到者覆盖（自动回填字段可重写）
+        by_day: dict[date, tuple[datetime, str]] = {}
+        for ext_id in new_ids:
+            m = parsed[ext_id]
+            d = m["ts"].astimezone(LOCAL_TZ).date()
+            prev = by_day.get(d)
+            if prev is None or m["ts"] >= prev[0]:
+                by_day[d] = (m["ts"], ext_id)
+
+        sex, age, height_cm = _miscale_profile(db)
+        for d in sorted(by_day):
+            _, ext_id = by_day[d]
+            m = parsed[ext_id]
+            values = compute_body_metrics(m["weight"], m["impedance"], sex, age, height_cm)
+            autofill_fields(db, d, MISCALE_SOURCE, values)
+        for ext_id in new_ids:
+            _mark_miscale(db, ext_id, "parsed")
+
+        state = db.get(SyncState, MISCALE_SOURCE)
+        if state is None:
+            state = SyncState(source=MISCALE_SOURCE)
+            db.add(state)
+        state.last_success_at = now
+        state.last_error = None
+        state.consecutive_failures = 0
+        db.commit()
+    except Exception as exc:  # raw 已落盘可重放；绝不 5xx
+        db.rollback()
+        try:
+            state = db.get(SyncState, MISCALE_SOURCE)
+            if state is None:
+                state = SyncState(source=MISCALE_SOURCE)
+                db.add(state)
+            state.consecutive_failures = (state.consecutive_failures or 0) + 1
+            state.last_error = str(exc)[:2000]
+            db.commit()
+        except Exception:
+            db.rollback()
+
+    return JSONResponse({"received": received, "new": len(new_ids)})
+
+
+def _mark_miscale(db: Session, ext_id: str, status: str, error: str | None = None) -> None:
+    db.execute(
+        update(ImportRaw)
+        .where(
+            ImportRaw.source == MISCALE_SOURCE,
+            ImportRaw.record_type == "measurement",
+            ImportRaw.external_id == ext_id,
+        )
+        .values(parse_status=status, parse_error=error, parse_version=PARSER_VERSION)
+    )

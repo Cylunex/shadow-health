@@ -10,6 +10,9 @@
 - DELETE /diet/logs/{id}           删除（hx-confirm，返回空文档 → 行消失）
 - GET    /diet/foods/search?q=     搜索联想片段（选中预填该食物上次记录用量）
 - POST   /diet/quick/{food_id}     chip 一击记录（amount 取上次用量，meal 按时间预选）
+- POST   /diet/photos              餐次照片上传（multipart：d + meal + file，存 photo_dir）
+- GET    /diet/photos/{id}         照片文件（登录后可见，FileResponse）
+- DELETE /diet/photos/{id}         删除照片（文件 + 行）
 - GET    /fragments/diet/day?d=    （契约外补充）四餐分组列表片段，diet-changed 被动刷新
 - GET    /fragments/diet/summary?d= 日汇总片段（今日面板也用）
 - GET    /fragments/diet/chips     近 30 天频次 top8 chips 片段
@@ -21,17 +24,21 @@ hx-trigger="diet-changed from:body" 被动刷新。
 """
 from __future__ import annotations
 
+import secrets
 from datetime import date, time, timedelta
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.db import get_db
 from app.deps import require_login, templates
-from app.models import AppSetting, DietLog, Food, Recipe
+from app.models import AppSetting, DietLog, DietPhoto, Food, Recipe
 from app.timeutil import now_local, today_local
 
 router = APIRouter(dependencies=[Depends(require_login)])
@@ -42,6 +49,10 @@ MEALS = ("早餐", "午餐", "加餐", "晚餐")
 # 药膳 effect_tags 受控词表（设计文档 §5.4）
 EFFECT_TAGS = ("平补", "温阳", "滋阴", "填精", "固精", "健脾", "强腰")
 DEFAULT_AMOUNT_G = Decimal("100")
+
+# 餐次照片：大小上限与扩展名白名单（heic 为 iPhone 相册原格式，浏览器兼容有限但先收下）
+PHOTO_MAX_BYTES = 15 * 1024 * 1024
+PHOTO_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic"}
 
 
 # ---------- 通用小工具 ----------
@@ -154,10 +165,16 @@ def _day_ctx(db: Session, d: date) -> dict:
         by_meal.setdefault(log.meal, []).append(
             {"log": log, "name": fname or log.free_text or "—"}
         )
+    photos_by_meal: dict[str, list[DietPhoto]] = {m: [] for m in MEALS}
+    for p in db.execute(
+        select(DietPhoto).where(DietPhoto.log_date == d).order_by(DietPhoto.id)
+    ).scalars():
+        photos_by_meal.setdefault(p.meal, []).append(p)
     meal_groups = [
         {
             "meal": meal,
             "rows": items,
+            "photos": photos_by_meal[meal],
             "kcal": sum((r["log"].kcal or Decimal(0)) for r in items),
         }
         for meal, items in by_meal.items()
@@ -388,6 +405,76 @@ async def diet_quick(food_id: int, request: Request, db: Session = Depends(get_d
     )
     db.flush()
     # chips 按钮 hx-swap="none"，只吃 HX-Trigger
+    return Response(status_code=200, content="", headers=dict(HX_TRIGGER))
+
+
+# ---------- 餐次照片 ----------
+def _photo_dir() -> Path:
+    d = get_settings().photo_dir
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _load_photo(db: Session, photo_id: int) -> DietPhoto:
+    photo = db.get(DietPhoto, photo_id)
+    if photo is None:
+        raise HTTPException(status_code=404, detail="照片不存在")
+    return photo
+
+
+@router.post("/diet/photos")
+async def diet_photo_upload(
+    db: Session = Depends(get_db),
+    d: str = Form(""),
+    meal: str = Form(""),
+    file: UploadFile | None = File(None),
+):
+    """餐次照片上传：文件存 photo_dir（生成名防穿越），行记 (log_date, meal, filename)。"""
+    log_date = min(_parse_date(d), today_local())
+    if meal not in MEALS:
+        raise HTTPException(status_code=400, detail="无效的餐次")
+    if file is None or not (file.filename or "").strip():
+        raise HTTPException(status_code=400, detail="未选择图片")
+    ext = Path(file.filename).suffix.lower()
+    if ext not in PHOTO_EXTS or not (file.content_type or "").startswith("image/"):
+        raise HTTPException(status_code=400, detail="仅支持图片（jpg/png/webp/gif/heic）")
+    name = f"{log_date:%Y%m%d}_{secrets.token_hex(8)}{ext}"
+    dest = _photo_dir() / name
+    size = 0
+    try:
+        with dest.open("wb") as out:
+            while chunk := await file.read(1024 * 1024):
+                size += len(chunk)
+                if size > PHOTO_MAX_BYTES:
+                    raise HTTPException(status_code=413, detail="图片超过 15MB")
+                out.write(chunk)
+    except HTTPException:
+        dest.unlink(missing_ok=True)
+        raise
+    db.add(
+        DietPhoto(log_date=log_date, meal=meal, filename=name, content_type=file.content_type)
+    )
+    db.flush()
+    # 上传表单 hx-swap="none"，day 片段经 HX-Trigger 被动刷新后出现新缩略图
+    return Response(status_code=200, content="", headers=dict(HX_TRIGGER))
+
+
+@router.get("/diet/photos/{photo_id}")
+def diet_photo_file(photo_id: int, db: Session = Depends(get_db)):
+    """照片文件：走认证路由下发（不进 /static，外人拿不到）。"""
+    photo = _load_photo(db, photo_id)
+    path = get_settings().photo_dir / photo.filename
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="照片文件缺失")
+    return FileResponse(str(path), media_type=photo.content_type or "application/octet-stream")
+
+
+@router.delete("/diet/photos/{photo_id}")
+def diet_photo_delete(photo_id: int, db: Session = Depends(get_db)):
+    photo = _load_photo(db, photo_id)
+    (get_settings().photo_dir / photo.filename).unlink(missing_ok=True)
+    db.delete(photo)
+    db.flush()
     return Response(status_code=200, content="", headers=dict(HX_TRIGGER))
 
 

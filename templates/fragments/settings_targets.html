@@ -36,6 +36,27 @@
   </div>
   {% if protein_hint %}<p class="text-xs text-slate-500">{{ protein_hint }}</p>{% endif %}
 
+  {# 体成分档案：体脂秤阻抗算体脂率需要（性别/出生日期 + 上面的身高） #}
+  <div class="grid grid-cols-2 gap-3">
+    <div x-data="{ v: '{{ t_sex or '' }}' }">
+      <span class="field-label">性别（体成分计算用）</span>
+      <input type="hidden" name="sex" :value="v">
+      <div class="grid grid-cols-2 gap-1.5">
+        <button type="button" @click="v = (v === 'male' ? '' : 'male')"
+                :class="v === 'male' ? 'chip-active' : ''"
+                class="chip min-h-[44px]">男</button>
+        <button type="button" @click="v = (v === 'female' ? '' : 'female')"
+                :class="v === 'female' ? 'chip-active' : ''"
+                class="chip min-h-[44px]">女</button>
+      </div>
+    </div>
+    <label class="block">
+      <span class="field-label">出生日期</span>
+      <input type="date" name="birth_date" value="{{ t_birth_date or '' }}"
+             class="field tabular-nums">
+    </label>
+  </div>
+
   <button type="submit" class="btn-primary w-full min-h-[48px]">
     保存目标
   </button>

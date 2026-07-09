@@ -1,10 +1,14 @@
 package com.shadowverse.health;
 
+import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -20,8 +24,15 @@ import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.TextView;
+import android.widget.Toast;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * WebView shell for the shadow-health LAN web app.
@@ -36,9 +47,12 @@ public class MainActivity extends Activity {
 
     private static final String PREFS_NAME = "shell";
     private static final String KEY_SERVER_URL = "server_url";
+    private static final String KEY_INGEST_TOKEN = "ingest_token";
+    private static final String KEY_SCALE_SCAN = "scale_scan_enabled";
     private static final String DEFAULT_SERVER_URL = "http://192.168.1.100:8080";
     private static final int DARK_BG = Color.parseColor("#0f172a");
     private static final long LONG_PRESS_MS = 700;
+    private static final int REQ_SCALE_PERMS = 42;
 
     private WebView webView;
     private SharedPreferences prefs;
@@ -112,6 +126,11 @@ public class MainActivity extends Activity {
         } else {
             loadServer();
         }
+
+        // 上次开着秤监听且权限还在：随应用启动恢复前台服务
+        if (prefs.getBoolean(KEY_SCALE_SCAN, false) && missingScalePermissions().isEmpty()) {
+            startScaleService();
+        }
     }
 
     private String getServerUrl() {
@@ -128,21 +147,47 @@ public class MainActivity extends Activity {
     private void showAddressDialog(final boolean firstRun) {
         final EditText input = new EditText(this);
         input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+        input.setHint("服务器地址");
         input.setText(getServerUrl());
         input.setSelection(input.getText().length());
+
+        final EditText tokenInput = new EditText(this);
+        tokenInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        tokenInput.setHint("INGEST_TOKEN（体脂秤上报用，同 .env）");
+        tokenInput.setText(prefs.getString(KEY_INGEST_TOKEN, ""));
+
+        final CheckBox scanBox = new CheckBox(this);
+        scanBox.setText("后台监听体脂秤（常驻通知）");
+        scanBox.setChecked(prefs.getBoolean(KEY_SCALE_SCAN, false));
+
+        TextView hint = new TextView(this);
+        hint.setText("秤监听需要蓝牙权限；小米/HyperOS 还需在应用设置里允许自启动，"
+                + "否则后台会被清理。");
+        hint.setTextSize(12);
+
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
         int pad = (int) (16 * getResources().getDisplayMetrics().density);
-        FrameLayout wrap = new FrameLayout(this);
-        wrap.setPadding(pad, pad / 2, pad, 0);
-        wrap.addView(input);
+        col.setPadding(pad, pad / 2, pad, 0);
+        col.addView(input);
+        col.addView(tokenInput);
+        col.addView(scanBox);
+        col.addView(hint);
 
         AlertDialog.Builder b = new AlertDialog.Builder(this)
-                .setTitle("服务器地址")
+                .setTitle("连接设置")
                 .setMessage("局域网内 shadow-health 服务地址")
-                .setView(wrap)
+                .setView(col)
                 .setPositiveButton("保存并连接", (d, w) -> {
                     String url = normalizeUrl(input.getText().toString());
-                    prefs.edit().putString(KEY_SERVER_URL, url).apply();
+                    boolean scanOn = scanBox.isChecked();
+                    prefs.edit()
+                            .putString(KEY_SERVER_URL, url)
+                            .putString(KEY_INGEST_TOKEN, tokenInput.getText().toString().trim())
+                            .putBoolean(KEY_SCALE_SCAN, scanOn)
+                            .apply();
                     loadServer();
+                    applyScaleScanSetting(scanOn);
                 })
                 .setNeutralButton("恢复默认", (d, w) -> {
                     prefs.edit().putString(KEY_SERVER_URL, DEFAULT_SERVER_URL).apply();
@@ -154,6 +199,67 @@ public class MainActivity extends Activity {
             b.setNegativeButton("取消", null);
         }
         b.show();
+    }
+
+    // ---- 体脂秤监听服务 ------------------------------------------------------
+
+    private List<String> missingScalePermissions() {
+        List<String> need = new ArrayList<>();
+        if (Build.VERSION.SDK_INT >= 31) {
+            if (checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN)
+                    != PackageManager.PERMISSION_GRANTED) {
+                need.add(Manifest.permission.BLUETOOTH_SCAN);
+            }
+        } else {
+            if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)
+                    != PackageManager.PERMISSION_GRANTED) {
+                need.add(Manifest.permission.ACCESS_FINE_LOCATION);
+            }
+        }
+        if (Build.VERSION.SDK_INT >= 33
+                && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED) {
+            need.add(Manifest.permission.POST_NOTIFICATIONS);
+        }
+        return need;
+    }
+
+    private void applyScaleScanSetting(boolean enabled) {
+        if (!enabled) {
+            stopService(new Intent(this, ScaleScanService.class));
+            return;
+        }
+        List<String> missing = missingScalePermissions();
+        if (missing.isEmpty()) {
+            startScaleService();
+        } else {
+            requestPermissions(missing.toArray(new String[0]), REQ_SCALE_PERMS);
+        }
+    }
+
+    private void startScaleService() {
+        startForegroundService(new Intent(this, ScaleScanService.class));
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
+        super.onRequestPermissionsResult(requestCode, permissions, results);
+        if (requestCode != REQ_SCALE_PERMS) {
+            return;
+        }
+        boolean scanGranted = true;
+        for (int i = 0; i < permissions.length; i++) {
+            boolean isNotif = Manifest.permission.POST_NOTIFICATIONS.equals(permissions[i]);
+            if (!isNotif && results[i] != PackageManager.PERMISSION_GRANTED) {
+                scanGranted = false;  // 通知权限被拒不拦路，扫描权限被拒才算失败
+            }
+        }
+        if (scanGranted) {
+            startScaleService();
+        } else {
+            prefs.edit().putBoolean(KEY_SCALE_SCAN, false).apply();
+            Toast.makeText(this, "未授予蓝牙权限，秤监听未开启", Toast.LENGTH_LONG).show();
+        }
     }
 
     private static String normalizeUrl(String raw) {

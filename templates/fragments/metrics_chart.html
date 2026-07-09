@@ -40,7 +40,7 @@
   <div class="relative h-56 sm:h-64">
     <canvas id="metrics-chart-canvas"></canvas>
   </div>
-  <p class="text-xs text-slate-500 text-center">● 手动录入 · △ 自动同步</p>
+  <p class="text-xs text-slate-500 text-center">● 手动录入 · △ 自动同步{% if chart.target_label %} · <span class="text-amber-400/90">┄ {{ chart.target_label }}</span>{% endif %}</p>
 
   <script type="application/json" id="metrics-chart-data">{{ chart.payload_json | safe }}</script>
   <script>
@@ -118,6 +118,23 @@
         }
         return ds;
       });
+      // 目标参考线：横贯全区间的琥珀色虚线，不进 legend/tooltip 统计
+      var legendCount = datasets.length;
+      if (p.target) {
+        datasets.push({
+          label: p.target.label,
+          data: p.labels.map(function () { return p.target.value; }),
+          type: "line",
+          borderColor: "#fbbf24",
+          borderDash: [6, 4],
+          borderWidth: 1.5,
+          pointRadius: 0,
+          pointHoverRadius: 0,
+          fill: false,
+          spanGaps: true,
+          _target: true
+        });
+      }
       fixSize(new window.Chart(canvas, {
         type: p.type,
         data: { labels: p.labels, datasets: datasets },
@@ -128,6 +145,7 @@
           scales: {
             x: {
               type: "time",
+              stacked: p.stacked === true,
               time: {
                 unit: p.unit,
                 displayFormats: { day: "MM-dd", week: "MM-dd" },
@@ -138,16 +156,26 @@
             },
             y: {
               beginAtZero: p.beginAtZero,
+              stacked: p.stacked === true,
               grid: { color: "rgba(51,65,85,0.35)" },
               ticks: { color: "#94a3b8" }
             }
           },
           plugins: {
             legend: {
-              display: p.datasets.length > 1,
-              labels: { color: "#cbd5e1", usePointStyle: true, boxWidth: 8 }
+              display: legendCount > 1,
+              labels: {
+                color: "#cbd5e1", usePointStyle: true, boxWidth: 8,
+                filter: function (item, data) {
+                  var ds = data.datasets[item.datasetIndex];
+                  return !(ds && ds._target);
+                }
+              }
             },
-            tooltip: { usePointStyle: true }
+            tooltip: {
+              usePointStyle: true,
+              filter: function (item) { return !item.dataset._target; }
+            }
           },
           interaction: { mode: "nearest", axis: "x", intersect: false }
         }

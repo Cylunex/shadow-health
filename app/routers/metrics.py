@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.deps import require_login, templates
-from app.models import BodyMetrics, DailyActivity, SleepSession
+from app.models import AppSetting, BodyMetrics, DailyActivity, SleepSession
 from app.services.autofill import get_or_create_day, mark_manual
 from app.timeutil import today_local
 
@@ -36,6 +36,7 @@ SOURCE_LABELS = {
     "health_connect": "HC",
     "keep_api": "Keep",
     "keep_file": "Keep",
+    "miscale": "体脂秤",
 }
 
 # 表单字段定义：(字段名, 中文名, 类型, 下限, 上限)。上下限做轻量合法性校验，
@@ -67,6 +68,7 @@ _CHART_METRICS: list[tuple[str, str]] = [
     ("body_fat", "体脂"),
     ("bp", "血压"),
     ("sleep", "睡眠"),
+    ("sleep_stages", "睡眠分期"),
     ("steps", "步数"),
     ("waist", "腰围"),
 ]
@@ -81,6 +83,15 @@ _COLORS = {
     "steps": "#34d399",
     "waist": "#38bdf8",
 }
+# 睡眠分期堆叠色：(字段, 图例, 颜色)
+_STAGE_DEFS = [
+    ("deep_min", "深睡", "#6366f1"),
+    ("light_min", "浅睡", "#a78bfa"),
+    ("rem_min", "REM", "#38bdf8"),
+    ("awake_min", "清醒", "#64748b"),
+]
+# 有目标值可画参考线的指标：metric -> (app_settings key, 单位)
+_TARGET_KEYS = {"weight": ("target_weight_kg", "kg"), "steps": ("target_steps", "步")}
 
 
 # ---------- 通用小工具 ----------
@@ -244,11 +255,23 @@ def _bm_field_map(db: Session, field: str, start: date, end: date) -> dict[date,
     }
 
 
+def _target_line(db: Session, metric: str) -> dict[str, Any] | None:
+    """目标参考线：读 app_settings 目标值，未设定（缺行/JSON null）返回 None。"""
+    entry = _TARGET_KEYS.get(metric)
+    if entry is None:
+        return None
+    key, unit = entry
+    value = db.execute(select(AppSetting.value).where(AppSetting.key == key)).scalar_one_or_none()
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return None
+    return {"value": float(value), "label": f"目标 {_fmt(value)} {unit}"}
+
+
 def _chart_context(db: Session, metric: str, days: int) -> dict[str, Any]:
     today = today_local()
     start = today - timedelta(days=days - 1)
     day_list = [start + timedelta(days=i) for i in range(days)]
-    chart_type = "bar" if metric == "steps" else "line"
+    chart_type = "bar" if metric in ("steps", "sleep_stages") else "line"
     datasets: list[dict[str, Any]] = []
 
     if metric == "bp":
@@ -273,6 +296,23 @@ def _chart_context(db: Session, metric: str, days: int) -> dict[str, Any]:
             if wake_date not in by_day and total_min:
                 by_day[wake_date] = (round(total_min / 60.0, 1), False)
         datasets.append(_line_dataset("睡眠时长 (h)", by_day, day_list, _COLORS["sleep"]))
+    elif metric == "sleep_stages":
+        # 各分期按 wake_date 求和（一日多段合并），单位小时；整段 NULL 的分期不画
+        rows = db.execute(
+            select(
+                SleepSession.wake_date,
+                *(func.sum(getattr(SleepSession, field)) for field, *_ in _STAGE_DEFS),
+            )
+            .where(SleepSession.wake_date.between(start, today))
+            .group_by(SleepSession.wake_date)
+        ).all()
+        for idx, (_, label, color) in enumerate(_STAGE_DEFS):
+            by_day = {
+                r[0]: (round(float(r[idx + 1]) / 60.0, 1), False)
+                for r in rows
+                if r[idx + 1] is not None
+            }
+            datasets.append(_line_dataset(f"{label} (h)", by_day, day_list, color))
     elif metric == "steps":
         rows = db.execute(
             select(DailyActivity.log_date, DailyActivity.steps).where(
@@ -289,12 +329,15 @@ def _chart_context(db: Session, metric: str, days: int) -> dict[str, Any]:
         }[metric]
         datasets.append(_line_dataset(label, _bm_field_map(db, field, start, today), day_list, _COLORS[metric]))
 
+    target = _target_line(db, metric)
     payload = {
         "type": chart_type,
         "labels": [d.isoformat() for d in day_list],
         "datasets": datasets,
         "unit": "day" if days <= 30 else "week",
-        "beginAtZero": metric in ("steps", "sleep"),
+        "beginAtZero": metric in ("steps", "sleep", "sleep_stages"),
+        "stacked": metric == "sleep_stages",
+        "target": target,
     }
     has_data = any(v is not None for ds in datasets for v in ds["data"])
     return {
@@ -303,6 +346,7 @@ def _chart_context(db: Session, metric: str, days: int) -> dict[str, Any]:
             "days": days,
             "payload_json": json.dumps(payload, ensure_ascii=False),
             "has_data": has_data,
+            "target_label": target["label"] if target else None,
             "metric_options": _CHART_METRICS,
             "days_options": _CHART_DAYS,
         }

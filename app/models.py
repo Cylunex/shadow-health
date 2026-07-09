@@ -162,6 +162,26 @@ class DietLog(TimestampMixin, Base):
     protein_g: Mapped[float | None] = mapped_column(Numeric(5, 1))
 
 
+class DietPhoto(Base):
+    """餐次照片：按 (log_date, meal) 挂载，文件存 photo_dir，行内只记存储名。"""
+
+    __tablename__ = "diet_photos"
+    __table_args__ = (
+        CheckConstraint("meal IN ('早餐','午餐','晚餐','加餐')", name="ck_photo_meal"),
+        Index("idx_diet_photos_date", "log_date"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    log_date: Mapped[date] = mapped_column(Date, nullable=False)
+    meal: Mapped[str] = mapped_column(Text, nullable=False)
+    filename: Mapped[str] = mapped_column(Text, nullable=False)
+    content_type: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=_tz_now
+    )
+
+
 # ---------- 3.4 运动训练 ----------
 class Exercise(Base):
     __tablename__ = "exercises"

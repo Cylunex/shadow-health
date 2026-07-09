@@ -31,6 +31,8 @@ class Settings:
         self.keep_mobile: str = os.environ.get("KEEP_MOBILE", "")
         self.keep_password: str = os.environ.get("KEEP_PASSWORD", "")
         self.upload_dir: Path = Path(os.environ.get("UPLOAD_DIR", BASE_DIR / "uploads"))
+        # 餐次照片目录：默认在 uploads/ 下，生产 compose 的 ./uploads 卷天然覆盖
+        self.photo_dir: Path = Path(os.environ.get("PHOTO_DIR") or (self.upload_dir / "photos"))
 
 
 @lru_cache

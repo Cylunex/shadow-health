@@ -1,8 +1,11 @@
-{# 四餐分组列表；写操作后经 diet-changed 被动整体刷新（含改餐次后重新归组） #}
+{# 四餐分组列表；写操作后经 diet-changed 被动整体刷新（含改餐次后重新归组）
+   照片：缩略图点开灯箱看大图/删除；上传格子选图即传（hx-swap=none，靠 HX-Trigger 刷新） #}
 <div id="diet-day"
      hx-get="/fragments/diet/day?d={{ d.isoformat() }}"
      hx-trigger="diet-changed from:body"
      hx-swap="outerHTML"
+     x-data="{ zoom: null }"
+     @keydown.escape.window="zoom = null"
      class="space-y-4">
   {% for g in meal_groups %}
   <section class="card">
@@ -25,6 +28,42 @@
       <span class="text-xs">未记录</span>
     </div>
     {% endif %}
+
+    <div class="mt-3 flex flex-wrap items-center gap-2">
+      {% for p in g.photos %}
+      <img src="/diet/photos/{{ p.id }}" alt="{{ g.meal }}照片" loading="lazy"
+           class="w-16 h-16 rounded-lg object-cover border border-slate-800 cursor-pointer hover:border-emerald-500/60 transition-colors"
+           @click="zoom = { url: '/diet/photos/{{ p.id }}', id: {{ p.id }} }">
+      {% endfor %}
+      <form hx-post="/diet/photos" hx-encoding="multipart/form-data" hx-swap="none"
+            hx-trigger="change from:find input[type='file']"
+            class="[&.htmx-request]:animate-pulse">
+        <input type="hidden" name="d" value="{{ d.isoformat() }}">
+        <input type="hidden" name="meal" value="{{ g.meal }}">
+        <label class="w-16 h-16 rounded-lg border border-dashed border-slate-700 flex flex-col items-center justify-center gap-0.5 text-slate-500 cursor-pointer hover:border-emerald-500/60 hover:text-emerald-400 transition-colors">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
+               stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5">
+            <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/>
+            <circle cx="12" cy="13" r="3"/>
+          </svg>
+          <span class="text-[10px]">传图</span>
+          <input type="file" name="file" accept="image/*" class="hidden">
+        </label>
+      </form>
+    </div>
   </section>
   {% endfor %}
+
+  {# 照片灯箱：点空白/关闭/Esc 退出；删除走 htmx.ajax（响应 HX-Trigger 触发整体刷新） #}
+  <div x-show="zoom" style="display: none" @click.self="zoom = null"
+       class="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4">
+    <div class="max-w-full max-h-full flex flex-col items-center gap-3" @click.outside="zoom = null">
+      <img :src="zoom && zoom.url" alt="照片大图" class="max-w-full max-h-[78vh] rounded-xl object-contain">
+      <div class="flex gap-2">
+        <button type="button" class="chip min-h-[44px] px-5" @click="zoom = null">关闭</button>
+        <button type="button" class="chip min-h-[44px] px-5 text-red-400"
+                @click="if (confirm('删除这张照片？')) { htmx.ajax('DELETE', '/diet/photos/' + zoom.id, { swap: 'none' }); zoom = null }">删除</button>
+      </div>
+    </div>
+  </div>
 </div>

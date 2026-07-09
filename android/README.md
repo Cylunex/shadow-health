@@ -48,6 +48,21 @@ apk 只有几十 KB，随便传，点开安装即可。
 其他行为：返回键 = 网页后退（无历史则退出应用）；登录 Cookie 持久化，
 重启应用不掉登录态。
 
+## 体脂秤后台监听（小米体脂秤 2）
+
+壳内置 `ScaleScanService` 前台服务：低功耗扫描秤的 BLE 广播（Service Data
+0x181B），测量稳定后 POST 到服务端 `/api/ingest/miscale`，与 NAS 网关同时
+在线也不会重复记录（服务端按秤时间戳去重）。协议与去抖逻辑同
+`gateway/miscale_listener.py`，整体说明见 [gateway/README.md](../gateway/README.md)。
+
+启用：连接设置对话框（三指长按）→ 填 `INGEST_TOKEN`（同服务器 .env）→
+勾选「后台监听体脂秤」→ 授予蓝牙（Android 12+ 为「附近的设备」）与通知权限。
+
+注意：
+- 小米/HyperOS 需在应用设置里允许**自启动**、电池策略改「无限制」，否则后台被清理；
+- Android 11 及以下系统限制：BLE 扫描需定位权限 + 系统定位开关打开；
+- 监听状态显示在常驻通知上，测量成功会更新为「已记录 xx.xx kg（含体成分）」。
+
 ## 重新打包
 
 前置：`tools\android\` 下已有工具链（gitignored，换机器需重搭，见下）。

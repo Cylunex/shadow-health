@@ -1,0 +1,28 @@
+# 体脂秤 BLE 网关（可选服务，NAS 有蓝牙适配器时叠加启动）：
+#   docker compose -f docker-compose.yml -f docker-compose.miscale.yml up -d --build
+#
+# 前置（宿主机）：
+# 1. 蓝牙适配器（板载或 USB 蓝牙棒），`bluetoothctl list` 能看到 Controller；
+# 2. BlueZ 在宿主机运行：`systemctl status bluetooth`；
+# 3. .env 里可选加 MISCALE_MAC=XX:XX:XX:XX:XX:XX（米家 App 设备信息里查，
+#    留空则接收所有 0x181B 广播——家里只有一台秤时无所谓）。
+#
+# network_mode: host —— 既为直连宿主 D-Bus/BlueZ，也让 SHADOW_URL 用 127.0.0.1 直达 app。
+services:
+  miscale-gateway:
+    build: ./gateway
+    container_name: shadow-health-miscale
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      SHADOW_URL: http://127.0.0.1:${APP_PORT:-8080}
+      INGEST_TOKEN: ${INGEST_TOKEN}
+      MISCALE_MAC: ${MISCALE_MAC:-}
+      TZ: Asia/Shanghai
+    volumes:
+      - /var/run/dbus:/var/run/dbus:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"

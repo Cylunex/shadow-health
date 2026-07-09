@@ -44,9 +44,14 @@ from app.models import (
     BodyMetrics,
     DailyActivity,
     DietLog,
+    Food,
+    Habit,
     HabitLog,
     ImportJob,
+    Recipe,
+    SleepSession,
     SyncState,
+    WeeklyReview,
     WorkoutLog,
 )
 from app.timeutil import LOCAL_TZ, now_local, today_local
@@ -71,6 +76,7 @@ _SOURCE_LABELS = {
     "health_connect": "Health Connect",
     "keep_file": "Keep 文件",
     "keep_api": "Keep API",
+    "miscale": "体脂秤",
 }
 
 # CSV 导出白名单：table 参数 -> (模型, 排序列)
@@ -80,6 +86,11 @@ _EXPORT_MODELS: dict[str, tuple[type, tuple[str, ...]]] = {
     "workout_logs": (WorkoutLog, ("log_date", "id")),
     "habit_logs": (HabitLog, ("log_date", "id")),
     "daily_activity": (DailyActivity, ("log_date",)),
+    "sleep_sessions": (SleepSession, ("wake_date", "id")),
+    "weekly_reviews": (WeeklyReview, ("week_start",)),
+    "habits": (Habit, ("sort", "id")),
+    "foods": (Food, ("id",)),
+    "recipes": (Recipe, ("id",)),
 }
 _EXPORT_LABELS = [
     ("body_metrics", "身体指标"),
@@ -87,6 +98,11 @@ _EXPORT_LABELS = [
     ("workout_logs", "训练记录"),
     ("habit_logs", "打卡记录"),
     ("daily_activity", "每日活动"),
+    ("sleep_sessions", "睡眠会话"),
+    ("weekly_reviews", "周报"),
+    ("habits", "习惯定义"),
+    ("foods", "食物库"),
+    ("recipes", "药膳库"),
 ]
 
 _IMPORT_SOURCES = ("samsung_zip", "keep_file")
@@ -132,9 +148,13 @@ def _targets_context(
         if last_weight is not None
         else None
     )
+    sex = stored.get("sex")
+    birth = stored.get("birth_date")
     return {
         "t_values": values,
         "protein_hint": protein_hint,
+        "t_sex": sex if sex in ("male", "female") else None,
+        "t_birth_date": birth if isinstance(birth, str) else None,
         "t_saved": saved,
         "t_errors": errors or [],
     }
@@ -181,6 +201,22 @@ async def targets_save(request: Request, db: Session = Depends(get_db)):
             errors.append(f"{label}（{_fmt_num(lo)}~{_fmt_num(hi)}）")
             continue
         parsed[key] = round(value, 2) if isinstance(value, float) else value
+
+    # 体成分档案（体脂秤计算用）：sex 受控词表，birth_date 合法日期
+    raw_sex = str(form.get("sex") or "").strip()
+    parsed["sex"] = raw_sex if raw_sex in ("male", "female") else None
+    raw_birth = str(form.get("birth_date") or "").strip()
+    if raw_birth:
+        try:
+            birth = date.fromisoformat(raw_birth)
+            if date(1900, 1, 1) <= birth <= today_local():
+                parsed["birth_date"] = birth.isoformat()
+            else:
+                errors.append("出生日期")
+        except ValueError:
+            errors.append("出生日期")
+    else:
+        parsed["birth_date"] = None
 
     saved = False
     if not errors:

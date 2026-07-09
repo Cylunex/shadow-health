@@ -8,6 +8,7 @@
 - POST /habits/{id}/active          启停习惯
 - GET  /fragments/habits/today      今日打卡列表片段（今日面板 hx-get 加载）
 - GET  /fragments/habits/summary    streak/今日完成率汇总条
+- GET  /fragments/habits/heatmap    打卡日历热力图片段（months=3/6/12，服务端渲染零 JS）
 
 注：/fragments/* 不在 /habits 前缀下，故本路由不设 prefix，路径写全。
 所有打卡写操作响应头带 HX-Trigger: habit-changed，summary 片段被动刷新。
@@ -28,6 +29,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.deps import require_login, templates
 from app.models import BodyMetrics, DailyActivity, Habit, HabitLog
+from app.routers.workout import HEATMAP_LEVEL_CLASSES, HEATMAP_MONTHS_OPTIONS
 from app.timeutil import today_local
 
 router = APIRouter(dependencies=[Depends(require_login)])
@@ -224,24 +226,89 @@ def _manage_row_ctx(habit: Habit, logs: dict[date, int], today: date) -> dict:
     }
 
 
+# ---------- 打卡日历热力图 ----------
+def _heatmap_ctx(db: Session, months: int) -> dict:
+    """打卡日历（复用训练热力图的周列布局与配色）：按天统计每日习惯达标数。
+
+    只统计当前启用中的 daily 习惯（weekly 习惯按周达标，无法落到单日格子）。
+    档位按当日达标比例分 4 档：<50% / <75% / <100% / 全勤。
+    """
+    if months not in HEATMAP_MONTHS_OPTIONS:
+        months = 3
+    today = today_local()
+    start = today - timedelta(days=round(months * 30.44))
+    start -= timedelta(days=start.isoweekday() - 1)  # 对齐周一
+
+    habits = db.execute(
+        select(Habit).where(Habit.active.is_(True), Habit.period == "daily")
+    ).scalars().all()
+    targets = {h.id: h.target_per_period or 1 for h in habits}
+    total = len(habits)
+
+    done_by_day: dict[date, int] = defaultdict(int)
+    if targets:
+        for hid, d, c in db.execute(
+            select(HabitLog.habit_id, HabitLog.log_date, HabitLog.done_count).where(
+                HabitLog.habit_id.in_(list(targets)),
+                HabitLog.log_date.between(start, today),
+            )
+        ):
+            if c >= targets[hid]:
+                done_by_day[d] += 1
+
+    weeks: list[dict] = []
+    col_start = start
+    prev_month: int | None = None
+    while col_start <= today:
+        days: list[dict] = []
+        for i in range(7):
+            d = col_start + timedelta(days=i)
+            if d > today:
+                days.append({"future": True})
+                continue
+            done = done_by_day.get(d, 0)
+            if total == 0 or done == 0:
+                level = 0
+            else:
+                ratio = done / total
+                level = 4 if ratio >= 1 else (3 if ratio >= 0.75 else (2 if ratio >= 0.5 else 1))
+            days.append({"future": False, "date": d, "done": done, "level": level})
+        month_label = ""
+        if col_start.month != prev_month:
+            month_label = f"{col_start.month}月"
+            prev_month = col_start.month
+        weeks.append({"days": days, "month_label": month_label})
+        col_start += timedelta(days=7)
+
+    return {
+        "hm": {
+            "months": months,
+            "options": HEATMAP_MONTHS_OPTIONS,
+            "weeks": weeks,
+            "level_classes": HEATMAP_LEVEL_CLASSES,
+            "total": total,
+            "days_any": sum(1 for v in done_by_day.values() if v > 0),
+            "days_full": sum(1 for v in done_by_day.values() if total and v >= total),
+        }
+    }
+
+
 # ---------- 页面 ----------
 @router.get("/habits")
 def habits_page(request: Request, db: Session = Depends(get_db)):
-    """管理页：全部习惯（含 inactive）+ 启停开关 + streak + 本月完成率。"""
+    """管理页：全部习惯（含 inactive）+ 启停开关 + streak + 本月完成率 + 打卡日历。"""
     today = today_local()
     habits = db.execute(
         select(Habit).order_by(Habit.sort, Habit.id)
     ).scalars().all()
     logs = _logs_map(db, [h.id for h in habits])
     rows = [_manage_row_ctx(h, logs[h.id], today) for h in habits]
-    return templates.TemplateResponse(
-        request,
-        "habits.html",
-        {
-            "active_rows": [r for r in rows if r["habit"].active],
-            "inactive_rows": [r for r in rows if not r["habit"].active],
-        },
-    )
+    ctx: dict = {
+        "active_rows": [r for r in rows if r["habit"].active],
+        "inactive_rows": [r for r in rows if not r["habit"].active],
+    }
+    ctx.update(_heatmap_ctx(db, 3))
+    return templates.TemplateResponse(request, "habits.html", ctx)
 
 
 # ---------- 打卡写操作 ----------
@@ -333,6 +400,13 @@ def habits_today_fragment(request: Request, db: Session = Depends(get_db)):
     headers = dict(HX_TRIGGER) if inserted else None
     return templates.TemplateResponse(
         request, "fragments/habits_today.html", {"items": items}, headers=headers
+    )
+
+
+@router.get("/fragments/habits/heatmap")
+def habits_heatmap_fragment(request: Request, months: int = 3, db: Session = Depends(get_db)):
+    return templates.TemplateResponse(
+        request, "fragments/habits_heatmap.html", _heatmap_ctx(db, months)
     )
 
 
