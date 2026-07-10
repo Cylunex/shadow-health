@@ -194,10 +194,12 @@ _P06_TEMPLATE = [
 
 
 def _plan_rows() -> list[dict]:
+    from app.seed.plans_builtin import BUILTIN_PLANS
+
     c04 = _build_04_contents()
     md05 = _read("05_无器械综合训练计划.md")
     md06 = _read("06_减脂·早晚徒手计划.md")
-    rows: list[dict] = []
+    rows: list[dict] = list(BUILTIN_PLANS)  # 内置通用计划：不依赖私人素材，始终可 seed
     if c04:
         rows += [
             dict(name="04·计划一 养肾基础 28 天", goal="养肾基础", duration_weeks=4,

@@ -35,7 +35,7 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.deps import require_login, templates
-from app.models import PlanEnrollment, WorkoutLog, WorkoutPlan
+from app.models import Exercise, PlanEnrollment, WorkoutLog, WorkoutPlan
 from app.timeutil import today_local
 
 router = APIRouter(dependencies=[Depends(require_login)])
@@ -538,6 +538,34 @@ def workout_page(request: Request, db: Session = Depends(get_db)):
 def timer_page(request: Request):
     """训练计时器（纯前端：动作/休息/组数循环、蜂鸣提示、屏幕常亮）。"""
     return templates.TemplateResponse(request, "workout_timer.html", {})
+
+
+# 动作库分类的展示顺序（seed 受控词表）
+_EXERCISE_CATEGORIES = ("下肢臀", "推", "拉", "核心", "有氧HIIT", "LISS", "拉伸", "盆底", "功法")
+
+
+@router.get("/workout/exercises")
+def exercises_page(request: Request, c: str = "", db: Session = Depends(get_db)):
+    """动作库：按分类浏览动作要领；同进阶链动作按 level 排出难度阶梯。"""
+    cat = c if c in _EXERCISE_CATEGORIES else None
+    stmt = select(Exercise).order_by(Exercise.category, Exercise.level, Exercise.id)
+    if cat:
+        stmt = stmt.where(Exercise.category == cat)
+    rows = db.execute(stmt).scalars().all()
+    # 按受控顺序分组
+    grouped: list[tuple[str, list[Exercise]]] = []
+    for name in _EXERCISE_CATEGORIES:
+        items = [e for e in rows if e.category == name]
+        if items:
+            grouped.append((name, items))
+    ctx = {"grouped": grouped, "cat": cat, "categories": _EXERCISE_CATEGORIES}
+    is_htmx = (
+        request.headers.get("HX-Request") == "true"
+        and request.headers.get("HX-History-Restore-Request") != "true"
+    )
+    if is_htmx:
+        return templates.TemplateResponse(request, "fragments/exercises_list.html", ctx)
+    return templates.TemplateResponse(request, "exercises.html", ctx)
 
 
 @router.get("/workout/plans")

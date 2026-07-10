@@ -1,0 +1,26 @@
+{# 动作库列表：按分类分节；同 progression_group 的动作按 level 排出阶梯 #}
+<div id="exercises-list" class="space-y-4">
+  {% for cname, items in grouped %}
+  <section class="card">
+    <h2 class="card-title">{{ cname }}<span class="ml-1.5 text-xs font-normal text-slate-500">{{ items | length }} 个动作</span></h2>
+    <ul class="space-y-2">
+      {% for e in items %}
+      <li class="rounded-xl border border-slate-800/70 bg-slate-900/50 px-3.5 py-2.5">
+        <div class="flex items-center gap-1.5 flex-wrap">
+          <span class="font-medium text-slate-100">{{ e.name }}</span>
+          {% if e.progression_group %}
+          <span class="badge text-emerald-400/90 border-emerald-700/50">{{ e.progression_group }}链 · Lv{{ e.level }}</span>
+          {% elif e.level > 1 %}
+          <span class="badge">Lv{{ e.level }}</span>
+          {% endif %}
+          {% if e.equipment %}<span class="badge">需要：{{ e.equipment }}</span>{% endif %}
+        </div>
+        <p class="mt-1 text-sm leading-relaxed text-slate-400">{{ e.description }}</p>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% else %}
+  <div class="card text-center text-sm text-slate-500 py-8">动作库为空——跑一次 seed：python -m app.seed</div>
+  {% endfor %}
+</div>
