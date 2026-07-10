@@ -2,7 +2,15 @@
 
 > 最后更新：2026-07-10。配套阅读：README（功能全貌）· docs/deploy.md（NAS 部署照单）·
 > docs/mobile-sync.md（三星直读背景）· gateway/README.md（体脂秤双端）·
-> **docs/audit-2026-07-10.md（全面审查：24 缺陷 + 18 建议，兼修复工作清单）**。
+> docs/audit-2026-07-10.md（全面审查清单，已全清、归档备忘）·
+> **docs/offline-plan.md（手机离线记录方案，▶ 下一任务）**。
+
+## ▶ 下一任务：手机离线记录 + 自动补同步（用户 2026-07-10 提出，方案已定稿）
+
+照 **docs/offline-plan.md** 执行（方案 A，三阶段）。要点：局域网 HTTP 下 SW 不可用，
+走「壳内原生离线页 + POST /api/ingest/offline Bearer 补发」，复用 ScaleScanService
+队列模式 / WorkManager / import_raw 幂等（迁移 11 给 source 词表加 'offline'）。
+先做阶段一（服务端通道 + 测试），再做阶段二（壳离线页 + 队列），阶段三看手感。
 
 ## 当前状态（截至 42883e8）
 
