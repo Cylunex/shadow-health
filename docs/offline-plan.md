@@ -1,10 +1,13 @@
-# 手机离线记录与自动补同步——设计方案（2026-07-11 定稿加强版，未开工）
+# 手机离线记录与自动补同步——设计方案（2026-07-11 定稿加强版）
 
 > 需求：手机应用不连服务器也能用，数据先本地缓存，连上之后自动同步。
 > 结论：**可行，全程不依赖 PWA/Service Worker**（用户 2026-07-11 确认走加强版）。
 > 架构：「壳本地启动页（秒开）+ 离线记录队列 + ingest 补发通道 + 原生页面快照」，
 > 复用体脂秤队列与 import_raw 幂等基建。约 3 天：服务端半天 + 壳启动页与队列
 > 1-1.5 天 + 快照缓存 1 天；页面内写队列为可选阶段四。
+>
+> **落地状态（2026-07-11）：阶段一/二/三已全部完成**（代码清单见各阶段标题），
+> APK 已本机构建通过；待真机回归（清单见 §5 第 4 条）。阶段四暂缓，视手感决定。
 
 ## 1. 关键约束（决定了技术路线）
 
@@ -28,7 +31,7 @@
 
 ## 3. 定稿架构（方案 A 加强版，四阶段）
 
-### 阶段一：服务端补发通道（~半天）
+### ✅ 阶段一：服务端补发通道（已落地：迁移 11 + app/routers/offline.py + tests/test_offline_ingest.py 24 测）
 
 **`POST /api/ingest/offline`**（Bearer 鉴权，与秤/手表同通道）：
 
@@ -55,7 +58,7 @@
     只允许 metrics 页同一批数值字段白名单）
 - 响应 `{received, new, skipped}`；单条失败不毒化整批（begin_nested，照 samsung_direct 通道抄）
 
-### 阶段二：壳本地启动页（秒开）+ 离线记录队列（~1-1.5 天）
+### ✅ 阶段二：壳本地启动页（秒开）+ 离线记录队列（已落地：assets/offline.html + OfflineStore/OfflineFlushWorker + MainActivity 改造）
 
 - **本地启动页取代直连加载**：壳启动先 loadDataWithBaseURL 内置本地页
   （毫秒级出屏，永不白屏），同时后台探测 `/healthz`：
@@ -76,7 +79,7 @@
   另在 App 启动/回前台时尝试。保序批量 POST /api/ingest/offline，成功清队列，
   失败保留下轮再试；通知栏提示「已补同步 N 条离线记录」
 
-### 阶段三：原生页面快照缓存——离线可读（~1 天）
+### ✅ 阶段三：原生页面快照缓存——离线可读（已落地：SnapshotCache.java，MainActivity.shouldInterceptRequest 接入）
 
 - WebViewClient.`shouldInterceptRequest` 把**成功的 GET 响应**写壳内磁盘缓存
   （URL 哈希做键，LRU 上限 ~20MB）：导航 HTML、`/fragments/*`（今日页的计划卡/
@@ -106,12 +109,13 @@
 
 ## 5. 实施顺序与验收
 
-1. 阶段一：迁移 11（source 词表 + 'offline'）+ `/api/ingest/offline` +
-   `/api/offline/bootstrap` + pytest（payload 校验/幂等重放/单条失败隔离）
-2. 阶段二：bootstrap 缓存 → 本地启动页（秒开 + 探测跳转）→ 队列 →
+1. ✅ 阶段一：迁移 11（source 词表 + 'offline'）+ `/api/ingest/offline` +
+   `/api/offline/bootstrap` + pytest（payload 校验/幂等重放/单条失败隔离，
+   全套 89 测通过）
+2. ✅ 阶段二：bootstrap 缓存 → 本地启动页（秒开 + 探测跳转）→ 队列 →
    WorkManager 补发 → 通知
-3. 阶段三：shouldInterceptRequest 快照缓存 + 离线横幅 + LRU 上限
-4. 真机回归清单：①冷启动秒出本地页、在线自动进网页 ②飞行模式：本地页记
+3. ✅ 阶段三：shouldInterceptRequest 快照缓存 + 离线横幅 + LRU 上限
+4. ⏳ 真机回归清单：①冷启动秒出本地页、在线自动进网页 ②飞行模式：本地页记
    打卡+饮食+体重 → 恢复网络 → 通知补同步 → 服务端落库、重复补发不双写
    ③飞行模式下打开最近看过的页面 → 出快照 + 离线横幅 ④队列积压跨 App 重启不丢
 5. 阶段四视手感决定要不要做

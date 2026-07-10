@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>离线记录</title>
+<!-- 壳内置本地启动页（docs/offline-plan.md 阶段二）：毫秒出屏，永不白屏。
+     在线时壳探测 /healthz 成功即自动跳服务器页面；离线时停留在此，
+     打卡清单用 bootstrap 缓存副本渲染，记录经 ShellBridge 入本地队列。 -->
+<style>
+  :root{color-scheme:dark}
+  *{box-sizing:border-box}
+  body{margin:0;background:#0f172a;color:#e2e8f0;font-family:system-ui,-apple-system,sans-serif;
+       padding:16px 16px 48px;max-width:520px;margin:0 auto}
+  header{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px}
+  h1{font-size:18px;margin:0;color:#34d399}
+  .status{font-size:12px;color:#94a3b8;margin:4px 0 16px;line-height:1.6}
+  .status b{color:#fbbf24;font-weight:600}
+  .retry{background:transparent;color:#34d399;border:1px solid #34d399;border-radius:8px;
+         padding:6px 14px;font-size:13px}
+  section{background:#1e293b;border-radius:14px;padding:14px;margin-bottom:14px}
+  h2{font-size:13px;margin:0 0 10px;color:#94a3b8;font-weight:600;letter-spacing:.05em}
+  .habit{display:flex;align-items:center;gap:10px;padding:9px 4px;border-bottom:1px solid rgba(51,65,85,.35)}
+  .habit:last-child{border-bottom:0}
+  .habit .box{width:22px;height:22px;border-radius:6px;border:2px solid #475569;flex:none;
+              display:flex;align-items:center;justify-content:center;font-size:14px;color:#0f172a}
+  .habit.done .box{background:#34d399;border-color:#34d399}
+  .habit .name{flex:1;font-size:15px}
+  .habit .hint{font-size:11px;color:#64748b;margin-left:6px}
+  .habit .cnt{font-size:12px;color:#94a3b8}
+  label{display:block;font-size:12px;color:#94a3b8;margin:8px 0 4px}
+  input,select{width:100%;background:#0f172a;color:#e2e8f0;border:1px solid #334155;
+               border-radius:8px;padding:9px 10px;font-size:15px}
+  .row{display:flex;gap:8px}
+  .row>div{flex:1}
+  .save{width:100%;margin-top:12px;background:#34d399;color:#0f172a;border:0;border-radius:10px;
+        padding:11px;font-weight:700;font-size:15px}
+  .chips{display:flex;flex-wrap:wrap;gap:6px}
+  .chip{background:#0f172a;border:1px solid #334155;color:#cbd5e1;border-radius:999px;
+        padding:6px 12px;font-size:13px}
+  .chip.on{border-color:#34d399;color:#34d399}
+  .toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:#34d399;
+         color:#0f172a;padding:8px 18px;border-radius:999px;font-size:13px;font-weight:600;
+         opacity:0;transition:opacity .25s;pointer-events:none;white-space:nowrap;z-index:9}
+  .toast.show{opacity:1}
+  .empty{font-size:13px;color:#64748b;padding:6px 0}
+  .err{color:#f87171;font-size:12px;margin-top:4px;word-break:break-all}
+  .note{font-size:11px;color:#475569;margin-top:8px}
+</style>
+</head>
+<body>
+<header>
+  <h1>📴 离线模式</h1>
+  <button class="retry" onclick="probeNow()">重试连接</button>
+</header>
+<div class="status">
+  已暂存 <b id="qn">0</b> 条 · 连上服务器后自动补同步（每 30 秒自动重试）
+  <div class="err" id="err"></div>
+</div>
+
+<section>
+  <h2>今日打卡（离线暂存）</h2>
+  <div id="habits"><div class="empty">还没缓存习惯清单，先连一次服务器</div></div>
+  <div class="note">仅显示离线暂存的打卡；已在线记录的不在此列，补同步时同日已有记录会自动跳过。</div>
+</section>
+
+<section>
+  <h2>快记饮食</h2>
+  <label for="meal">餐次</label><select id="meal"></select>
+  <label for="dietText">吃了什么</label><input id="dietText" placeholder="如：牛肉面">
+  <div class="row">
+    <div><label for="dietKcal">热量 kcal（可选）</label>
+      <input id="dietKcal" type="number" inputmode="decimal" min="0"></div>
+    <div><label for="dietProtein">蛋白质 g（可选）</label>
+      <input id="dietProtein" type="number" inputmode="decimal" min="0"></div>
+  </div>
+  <button class="save" onclick="saveDiet()">暂存饮食</button>
+</section>
+
+<section>
+  <h2>快记训练</h2>
+  <label>类型</label>
+  <div class="chips" id="types"></div>
+  <input id="typeText" placeholder="或手动输入类型" style="margin-top:8px">
+  <div class="row">
+    <div><label for="wkMin">时长 分钟（可选）</label>
+      <input id="wkMin" type="number" inputmode="numeric" min="1" max="1440"></div>
+    <div><label for="wkRpe">RPE 1-10（可选）</label>
+      <input id="wkRpe" type="number" inputmode="numeric" min="1" max="10"></div>
+  </div>
+  <button class="save" onclick="saveWorkout()">暂存训练</button>
+</section>
+
+<section>
+  <h2>记体重</h2>
+  <label for="weight">体重 kg</label>
+  <input id="weight" type="number" inputmode="decimal" min="20" max="500" step="0.1">
+  <button class="save" onclick="saveWeight()">暂存体重</button>
+</section>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function () {
+  'use strict';
+  // bootstrap 缓存缺失（首次离线）时的兜底词表，与服务端一致
+  var FALLBACK_MEALS = ['早餐', '午餐', '加餐', '晚餐'];
+  var FALLBACK_TYPES = ['力量', '有氧', '盆底', '快走', '慢跑', '跑步', 'HIIT', '壶铃', '拉伸', '功法'];
+
+  var bs = null;           // bootstrap 缓存副本
+  var queuedHabits = {};   // habit_id -> 今日已暂存 done_count
+  var selType = '';
+  var toastTimer = null;
+
+  function $(id) { return document.getElementById(id); }
+  function bridge() { return window.ShellBridge || null; }
+
+  function toast(msg) {
+    var el = $('toast');
+    el.textContent = msg;
+    el.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { el.classList.remove('show'); }, 1800);
+  }
+
+  function refreshStatus() {
+    var b = bridge();
+    if (!b) return;
+    try {
+      var st = JSON.parse(b.getOfflineStatus());
+      $('qn').textContent = st.queued;
+      $('err').textContent = st.error ? '上次连接失败：' + st.error : '';
+    } catch (e) { /* 桥不可用时保持默认显示 */ }
+  }
+
+  // ---- 打卡清单（bootstrap 缓存副本） ----
+  function renderHabits() {
+    var box = $('habits');
+    var habits = (bs && bs.habits) || [];
+    if (!habits.length) return;  // 无缓存：保留提示文案
+    box.innerHTML = '';
+    habits.forEach(function (h) {
+      var cnt = queuedHabits[h.id] || 0;
+      var row = document.createElement('div');
+      row.className = 'habit' + (cnt >= h.target ? ' done' : '');
+      var extra = '';
+      if (h.auto) extra += '<span class="hint">自动</span>';
+      if (h.period === 'weekly') extra += '<span class="hint">每周×' + h.target + '</span>';
+      else if (h.time_hint) extra += '<span class="hint">' + h.time_hint + '</span>';
+      var cntText = h.target > 1 && h.period !== 'weekly'
+        ? '<span class="cnt">' + cnt + '/' + h.target + '</span>' : '';
+      row.innerHTML = '<div class="box">' + (cnt >= h.target ? '✓' : (cnt > 0 ? cnt : '')) + '</div>'
+        + '<div class="name">' + h.name + extra + '</div>' + cntText;
+      row.onclick = function () { tapHabit(h); };
+      box.appendChild(row);
+    });
+  }
+
+  function tapHabit(h) {
+    var b = bridge();
+    if (!b) return;
+    var cur = queuedHabits[h.id] || 0;
+    // weekly 离线按「今天做过一次」记；daily 计数习惯逐次 +1，满额再点撤销暂存
+    var cap = h.period === 'weekly' ? 1 : h.target;
+    var next = cur >= cap ? 0 : cur + 1;
+    b.setQueuedHabit(h.id, next);
+    if (next > 0) queuedHabits[h.id] = next; else delete queuedHabits[h.id];
+    renderHabits();
+    refreshStatus();
+    toast(next > 0 ? '已暂存打卡' : '已撤销暂存');
+  }
+
+  // ---- 快记表单 ----
+  function enq(type, payload) {
+    var b = bridge();
+    if (!b) { toast('壳接口不可用'); return false; }
+    if (b.enqueueRecord(type, JSON.stringify(payload)) < 0) {
+      toast('暂存失败');
+      return false;
+    }
+    refreshStatus();
+    toast('已暂存，联网后自动同步');
+    return true;
+  }
+
+  function num(id) {
+    var v = $(id).value.trim();
+    if (!v) return null;
+    var n = Number(v);
+    return isFinite(n) ? n : null;
+  }
+
+  window.saveDiet = function () {
+    var text = $('dietText').value.trim();
+    if (!text) { toast('先写点吃了什么'); return; }
+    var p = { meal: $('meal').value, free_text: text };
+    var kcal = num('dietKcal');
+    if (kcal !== null) p.kcal = kcal;
+    var protein = num('dietProtein');
+    if (protein !== null) p.protein_g = protein;
+    if (enq('diet', p)) {
+      $('dietText').value = ''; $('dietKcal').value = ''; $('dietProtein').value = '';
+    }
+  };
+
+  window.saveWorkout = function () {
+    var manual = $('typeText').value.trim();
+    var type = manual || selType;
+    if (!type) { toast('先选或填训练类型'); return; }
+    var p = { session_type: type };
+    var min = num('wkMin');
+    if (min !== null) {
+      if (min < 1 || min > 1440) { toast('时长要在 1-1440 分钟'); return; }
+      p.duration_min = Math.round(min);
+    }
+    var rpe = num('wkRpe');
+    if (rpe !== null) {
+      if (rpe < 1 || rpe > 10) { toast('RPE 要在 1-10'); return; }
+      p.rpe = Math.round(rpe);
+    }
+    if (enq('workout', p)) {
+      $('typeText').value = ''; $('wkMin').value = ''; $('wkRpe').value = '';
+    }
+  };
+
+  window.saveWeight = function () {
+    var w = num('weight');
+    if (w === null || w < 20 || w > 500) { toast('体重要在 20-500 kg'); return; }
+    if (enq('metric', { weight_kg: w })) {
+      $('weight').value = '';
+    }
+  };
+
+  // ---- 连接探测（壳每 30s 自动跑；按钮手动触发） ----
+  window.probeNow = function () {
+    var b = bridge();
+    if (b) { b.probeNow(); toast('正在探测服务器…'); }
+  };
+  window.onProbeResult = function (ok) {
+    if (!ok) toast('仍然离线，稍后自动重试');
+  };
+
+  // ---- 初始化 ----
+  function renderMeals() {
+    var meals = (bs && bs.meals && bs.meals.length) ? bs.meals : FALLBACK_MEALS;
+    var sel = $('meal');
+    sel.innerHTML = '';
+    meals.forEach(function (m) {
+      var o = document.createElement('option');
+      o.value = m; o.textContent = m;
+      sel.appendChild(o);
+    });
+    // 缺省餐次按当前时间（与服务端 _default_meal 口径一致）
+    var hm = new Date().getHours() + new Date().getMinutes() / 60;
+    sel.value = hm < 10.5 ? '早餐' : (hm < 15 ? '午餐' : (hm < 17 ? '加餐' : '晚餐'));
+    if (!sel.value) sel.selectedIndex = 0;
+  }
+
+  function renderTypes() {
+    var types = (bs && bs.workout_types && bs.workout_types.length)
+      ? bs.workout_types : FALLBACK_TYPES;
+    var box = $('types');
+    box.innerHTML = '';
+    types.forEach(function (t) {
+      var c = document.createElement('button');
+      c.className = 'chip';
+      c.textContent = t;
+      c.onclick = function () {
+        selType = selType === t ? '' : t;
+        Array.prototype.forEach.call(box.children, function (el) {
+          el.className = 'chip' + (el.textContent === selType ? ' on' : '');
+        });
+      };
+      box.appendChild(c);
+    });
+  }
+
+  function init() {
+    var b = bridge();
+    if (b) {
+      try { var raw = b.getBootstrap(); if (raw) bs = JSON.parse(raw); } catch (e) { bs = null; }
+      try { queuedHabits = JSON.parse(b.getQueuedHabits() || '{}'); } catch (e) { queuedHabits = {}; }
+      // 键是字符串，统一转成数字键便于查表
+      var byId = {};
+      Object.keys(queuedHabits).forEach(function (k) { byId[Number(k)] = queuedHabits[k]; });
+      queuedHabits = byId;
+    }
+    renderMeals();
+    renderTypes();
+    renderHabits();
+    refreshStatus();
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>

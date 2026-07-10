@@ -357,7 +357,7 @@ class ImportRaw(Base):
     __table_args__ = (
         CheckConstraint(
             "source IN ('samsung_zip','health_connect','keep_api','keep_file',"
-            "'miscale','samsung_direct')",
+            "'miscale','samsung_direct','offline')",
             name="ck_import_source",
         ),
         CheckConstraint(

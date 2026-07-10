@@ -1,19 +1,32 @@
 # 会话交接（自包含，新会话从这里继续）
 
-> 最后更新：2026-07-10。配套阅读：README（功能全貌）· docs/deploy.md（NAS 部署照单）·
+> 最后更新：2026-07-11。配套阅读：README（功能全貌）· docs/deploy.md（NAS 部署照单）·
 > docs/mobile-sync.md（三星直读背景）· gateway/README.md（体脂秤双端）·
 > docs/audit-2026-07-10.md（全面审查清单，已全清、归档备忘）·
-> **docs/offline-plan.md（手机离线记录方案，▶ 下一任务）**。
+> **docs/offline-plan.md（手机离线记录方案，阶段一~三已落地，▶ 待真机回归）**。
 
-## ▶ 下一任务：手机离线记录 + 自动补同步（加强版，用户 2026-07-11 定稿）
+## ✅ 已完成：手机离线记录 + 自动补同步（2026-07-11，阶段一~三全落地）
 
-照 **docs/offline-plan.md** 执行（方案 A 加强版，四阶段，零 PWA 依赖）。要点：
-局域网 HTTP 下 SW 不可用；壳启动秒开本地页（在线自动跳网页、离线直接可记录），
-本地队列照 ScaleScanService 模式 + WorkManager 补发到 POST /api/ingest/offline
-（import_raw 幂等，迁移 11 给 source 词表加 'offline'）；阶段三用
-shouldInterceptRequest 做原生页面快照（含 /fragments/*，离线横幅）。
-顺序：阶段一服务端 → 阶段二壳启动页+队列 → 阶段三快照 → 阶段四（可选）页面写队列。
-用户已确认不做全原生 App 重写。
+照 docs/offline-plan.md（方案 A 加强版，零 PWA 依赖）实施完毕：
+
+- **阶段一（服务端）**：迁移 11（`ck_import_source` 词表加 'offline'）；
+  `POST /api/ingest/offline` + `GET /api/offline/bootstrap`（app/routers/offline.py，
+  Bearer 同秤/手表；import_raw 留档幂等 + begin_nested 单条隔离；归一化语义：
+  habit→ON CONFLICT DO NOTHING、diet→直插、workout→manual+`offline-{client_id}`、
+  metric→autofill 后 mark_manual 不覆盖既有手动值）；
+  tests/test_offline_ingest.py 24 测（DB 不可达自动 skip），全套 89 测绿
+- **阶段二（壳）**：assets/offline.html 本地启动页（秒开、暗色、打卡清单用
+  bootstrap 缓存 + 快记饮食/训练/体重）；MainActivity 启动先本地页 + 后台探测
+  /healthz（在线自动切网页、离线 30s 自动重试，加载失败也回落本地页）；
+  OfflineStore.java 队列（SharedPreferences，上限 500，UUID client_id，
+  drain 快照式补发不丢并发新记录）+ bootstrap 缓存（成功加载后 ≥1h 重拉）；
+  OfflineFlushWorker（NetworkType.CONNECTED，成功通知「已补同步 N 条」）
+- **阶段三（壳）**：SnapshotCache.java——shouldInterceptRequest 同源成功 GET
+  （导航 HTML + /fragments/* + /static/*）写磁盘 LRU（sha1 键，20MB，单条 3MB）；
+  离线回放 + 主文档注入「📴 离线快照 · 截至 HH:MM」横幅；无缓存回本地页；
+  /api//login/sw.js/uploads 及 attachment 下载不拦；302/非 200 交回原生
+- 阶段四（页面内写队列）**暂缓**，真机用过后视手感决定
+- APK 已本机构建通过（见下「开发注意」），**待真机回归**（清单见 offline-plan §5 第 4 条）
 
 ## 当前状态（截至 42883e8）
 
@@ -75,10 +88,16 @@ base.html 全局错误 toast + 「更多」导航高亮扩展；SW v9（cache:re
 
 ## 其余待办（优先级序）
 
-1. **真机回归**（Android 壳与网关改动后必做）：重新构建 APK 装机——验证壳内
-   hx-confirm 删除弹系统确认框、拍照记餐/导入 zip 文件选择器、CSV 导出下载、
-   断服上秤后恢复补发；NAS 网关重建镜像验证看门狗与 /data 队列。
-   顺带做心率同步回归（查 daily_activity.hr_min/hr_max）
+1. **真机回归**（Android 壳与网关改动后必做；本次离线三阶段全是壳改动，装机必验）：
+   - **离线四项**（offline-plan §5 第 4 条）：①冷启动秒出本地页、在线自动进网页
+     ②飞行模式本地页记打卡+饮食+体重 → 恢复网络 → 通知「已补同步 N 条」→
+     服务端落库、重复补发不双写 ③飞行模式打开最近看过的页面 → 快照 + 离线横幅
+     ④队列积压跨 App 重启不丢
+   - 快照拦截是全量 GET 代理，重点回归在线路径无回归：登录跳转、htmx 片段刷新
+     （HX-Trigger 透传）、CSV 导出下载（attachment 放行）、拍照记餐上传
+   - 历史项：壳内 hx-confirm 删除弹系统确认框、导入 zip 文件选择器、
+     断服上秤后恢复补发；NAS 网关重建镜像验证看门狗与 /data 队列。
+     顺带做心率同步回归（查 daily_activity.hr_min/hr_max）
 2. **NAS 部署**（用户明确"这里部署不了生产"，等到 NAS 环境照 deploy.md 执行；
    生产库角色未建是第一步；注意迁移 08/09 会随容器启动自动应用）
 3. 候选池：功能/UX 建议见 audit 文档 F1-F8/U1-U10（F8 即原「力量组次明细+PR」，
@@ -90,5 +109,9 @@ base.html 全局错误 toast + 「更多」导航高亮扩展；SW v9（cache:re
 - 改模板后：`npx -y tailwindcss@3.4.17 -c tailwind.config.js -i static/src/input.css
   -o static/app.css --minify`，并升 `static/sw.js` 的 `SW_VERSION`
 - 改动数据逻辑后跑 `uv run pytest`；uvicorn --reload 会清内存 session（重新登录）
-- Android 构建见 android/README.md；AAR 在 android/app/libs/（不入仓）
+- Android 构建见 android/README.md；AAR 在 android/app/libs/（不入仓）。
+  **这台 Mac 可以直接构建**（此前交接说不能是错的）：SDK 在
+  /opt/homebrew/share/android-commandlinetools（local.properties 已配），
+  默认 JDK 是 11，要用 `JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home
+  ./gradlew assembleDebug` 构建；真机回归仍不可省（构建通过 ≠ 运行验证）
 - 提交身份：仓库 local 配置已设 Cylunex

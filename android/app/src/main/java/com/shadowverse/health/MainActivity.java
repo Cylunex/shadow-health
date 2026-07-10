@@ -37,8 +37,18 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import org.json.JSONException;
+import org.json.JSONObject;
+
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
+import java.util.Locale;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * WebView shell for the shadow-health LAN web app.
@@ -46,7 +56,9 @@ import java.util.List;
  * - Server address lives in SharedPreferences (default http://192.168.1.100:8080).
  *   Change it on first launch, via a 3-finger long-press anywhere, or the MENU key.
  * - Back key walks WebView history before exiting.
- * - Load failures show an inline error page with retry / change-address buttons.
+ * - 启动先秒开内置本地页（assets/offline.html），后台探测 /healthz：在线自动切
+ *   服务器页面，离线停留本地页直接记录（队列见 OfflineStore，30s 自动重试）；
+ *   加载失败也回落到同一本地页（docs/offline-plan.md 阶段二）。
  * - Cookies persist (flushed on pause) so the login session survives restarts.
  */
 public class MainActivity extends Activity {
@@ -56,18 +68,25 @@ public class MainActivity extends Activity {
     private static final String KEY_INGEST_TOKEN = "ingest_token";
     private static final String KEY_SCALE_SCAN = "scale_scan_enabled";
     private static final String DEFAULT_SERVER_URL = "http://192.168.1.100:8080";
+    private static final String LOCAL_PAGE_URL = "file:///android_asset/offline.html";
     private static final int DARK_BG = Color.parseColor("#0f172a");
     private static final long LONG_PRESS_MS = 700;
+    private static final long PROBE_INTERVAL_MS = 30_000;
+    private static final long BOOTSTRAP_REFRESH_MS = 60 * 60_000L;
     private static final int REQ_SCALE_PERMS = 42;
     private static final int REQ_FILE_CHOOSER = 44;
 
     private WebView webView;
     private SharedPreferences prefs;
     private final Handler handler = new Handler(Looper.getMainLooper());
+    private final ExecutorService io = Executors.newSingleThreadExecutor();
+    private final Runnable probeRunnable = this::probeAndConnect;
     private Runnable pendingLongPress;
     private String lastAttemptedUrl;
-    private boolean showingErrorPage;
-    private String erroredUrl;  // 加载失败的 URL 也会触发 onPageFinished，需忽略以免复位错误页标志
+    private boolean showingLocalPage;
+    private String lastError;  // 最近一次加载失败原因，本地页状态栏展示
+    private boolean clearHistoryOnNextLoad;  // 本地启动页不留在返回历史里
+    private String erroredUrl;  // 加载失败的 URL 也会触发 onPageFinished，需忽略以免复位标志
     private ValueCallback<Uri[]> filePathCallback;  // <input type=file> 的回调，选择结果回传给 WebView
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -112,13 +131,30 @@ public class MainActivity extends Activity {
             }
 
             @Override
+            public android.webkit.WebResourceResponse shouldInterceptRequest(
+                    WebView view, WebResourceRequest request) {
+                // 阶段三快照缓存：在线代理落盘、离线回放（详见 SnapshotCache）
+                return SnapshotCache.intercept(getApplicationContext(), request, getServerUrl());
+            }
+
+            @Override
             public void onPageFinished(WebView view, String url) {
                 if (url != null && url.equals(erroredUrl)) {
                     erroredUrl = null;  // 失败页自身的 finished 回调，不代表加载成功
                     return;
                 }
                 if (url != null && url.startsWith("http")) {
-                    showingErrorPage = false;
+                    showingLocalPage = false;
+                    lastError = null;
+                    handler.removeCallbacks(probeRunnable);  // 在线了，停 30s 自动探测
+                    if (clearHistoryOnNextLoad) {
+                        clearHistoryOnNextLoad = false;
+                        view.clearHistory();  // 返回键不该退回本地启动页
+                    }
+                    maybeRefreshBootstrap();
+                    if (OfflineStore.queueSize(MainActivity.this) > 0) {
+                        OfflineStore.scheduleFlush(MainActivity.this);
+                    }
                 }
             }
 
@@ -126,9 +162,13 @@ public class MainActivity extends Activity {
             public void onReceivedError(WebView view, WebResourceRequest request,
                                         WebResourceError error) {
                 if (request.isForMainFrame()) {
-                    lastAttemptedUrl = request.getUrl().toString();
-                    erroredUrl = lastAttemptedUrl;
-                    showErrorPage(String.valueOf(error.getDescription()));
+                    String failedUrl = request.getUrl().toString();
+                    if (failedUrl.startsWith("file://")) {
+                        return;  // 本地页自身失败没有回落目标，防递归
+                    }
+                    lastAttemptedUrl = failedUrl;
+                    erroredUrl = failedUrl;
+                    showLocalPage(String.valueOf(error.getDescription()));
                 }
             }
         });
@@ -181,7 +221,12 @@ public class MainActivity extends Activity {
         if (!prefs.contains(KEY_SERVER_URL)) {
             showAddressDialog(true);
         } else {
-            loadServer();
+            showLocalPage(null);   // 秒开本地页（毫秒出屏，永不白屏）
+            probeAndConnect();     // 在线则自动切服务器页，体感只是闪一下启动屏
+        }
+        // 上次离线的积压记录：联网即补发
+        if (OfflineStore.queueSize(this) > 0) {
+            OfflineStore.scheduleFlush(this);
         }
 
         // 上次开着秤监听且权限还在：随应用启动恢复前台服务
@@ -212,8 +257,76 @@ public class MainActivity extends Activity {
     }
 
     private void loadServer() {
+        clearHistoryOnNextLoad = showingLocalPage;
         lastAttemptedUrl = getServerUrl();
         webView.loadUrl(lastAttemptedUrl);
+    }
+
+    // ---- 本地启动页 + /healthz 探测（docs/offline-plan.md 阶段二） ----
+
+    private void showLocalPage(String reason) {
+        showingLocalPage = true;
+        lastError = reason;
+        webView.loadUrl(LOCAL_PAGE_URL);
+        handler.removeCallbacks(probeRunnable);
+        handler.postDelayed(probeRunnable, PROBE_INTERVAL_MS);  // 30s 自动重试
+    }
+
+    /** 后台探测 /healthz：通了就切服务器页并补发队列；不通留在本地页等下轮。 */
+    private void probeAndConnect() {
+        handler.removeCallbacks(probeRunnable);
+        final String server = getServerUrl();
+        io.execute(() -> {
+            final boolean ok = probeHealthz(server);
+            handler.post(() -> {
+                if (isFinishing() || isDestroyed()) {
+                    return;
+                }
+                if (ok) {
+                    if (showingLocalPage) {
+                        loadServer();
+                    }
+                    io.execute(() -> {
+                        int n = OfflineStore.drain(MainActivity.this);
+                        if (n > 0) {
+                            OfflineStore.notifySynced(MainActivity.this, n);
+                        }
+                    });
+                } else if (showingLocalPage) {
+                    webView.evaluateJavascript(
+                            "window.onProbeResult&&window.onProbeResult(false)", null);
+                    handler.postDelayed(probeRunnable, PROBE_INTERVAL_MS);
+                }
+            });
+        });
+    }
+
+    private static boolean probeHealthz(String server) {
+        HttpURLConnection conn = null;
+        try {
+            conn = (HttpURLConnection) new URL(server + "/healthz").openConnection();
+            conn.setConnectTimeout(4000);
+            conn.setReadTimeout(4000);
+            return conn.getResponseCode() == 200;
+        } catch (Exception e) {
+            return false;
+        } finally {
+            if (conn != null) {
+                conn.disconnect();
+            }
+        }
+    }
+
+    /** 成功加载服务器页面后刷新 bootstrap 缓存（≥1 小时才重拉，页页刷不划算）。 */
+    private void maybeRefreshBootstrap() {
+        if (OfflineStore.bootstrapAgeMs(this) < BOOTSTRAP_REFRESH_MS) {
+            return;
+        }
+        io.execute(() -> OfflineStore.fetchBootstrap(getApplicationContext()));
+    }
+
+    private static String localDate() {
+        return new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new Date());
     }
 
     // ---- server address dialog -------------------------------------------
@@ -397,35 +510,7 @@ public class MainActivity extends Activity {
         return url;
     }
 
-    // ---- inline error page ------------------------------------------------
-
-    private void showErrorPage(String reason) {
-        showingErrorPage = true;
-        String html = "<!doctype html><html><head><meta charset='utf-8'>"
-                + "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-                + "<style>body{margin:0;height:100vh;display:flex;flex-direction:column;"
-                + "align-items:center;justify-content:center;background:#0f172a;color:#e2e8f0;"
-                + "font-family:sans-serif;text-align:center;padding:24px;box-sizing:border-box}"
-                + "h2{color:#34d399;margin:0 0 8px}p{color:#94a3b8;font-size:14px;margin:0 0 24px;"
-                + "word-break:break-all}button{background:#34d399;color:#0f172a;border:0;"
-                + "border-radius:10px;padding:12px 28px;font-size:16px;font-weight:bold;margin:6px}"
-                + "button.alt{background:transparent;color:#34d399;border:1px solid #34d399}"
-                + "</style></head><body>"
-                + "<h2>无法连接服务器</h2>"
-                + "<p>" + htmlEscape(lastAttemptedUrl == null ? getServerUrl() : lastAttemptedUrl)
-                + "<br>" + htmlEscape(reason) + "</p>"
-                + "<div><button onclick='ShellBridge.retry()'>重试</button>"
-                + "<button class='alt' onclick='ShellBridge.changeAddress()'>改地址</button></div>"
-                + "</body></html>";
-        webView.loadDataWithBaseURL(null, html, "text/html", "utf-8", null);
-    }
-
-    private static String htmlEscape(String s) {
-        if (s == null) {
-            return "";
-        }
-        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
-    }
+    // ---- JS bridge（本地启动页 + 离线队列） --------------------------------
 
     private class ShellBridge {
         @JavascriptInterface
@@ -442,6 +527,58 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void changeAddress() {
             handler.post(() -> showAddressDialog(false));
+        }
+
+        /** 本地页手动重试：探测通了自动切服务器页，不通回调 window.onProbeResult(false)。 */
+        @JavascriptInterface
+        public void probeNow() {
+            handler.post(MainActivity.this::probeAndConnect);
+        }
+
+        /** 上次在线时缓存的 bootstrap JSON（习惯清单/训练类型/餐次），没有则空串。 */
+        @JavascriptInterface
+        public String getBootstrap() {
+            return OfflineStore.bootstrap(MainActivity.this);
+        }
+
+        @JavascriptInterface
+        public String getOfflineStatus() {
+            JSONObject o = new JSONObject();
+            try {
+                o.put("queued", OfflineStore.queueSize(MainActivity.this));
+                o.put("error", lastError == null ? "" : lastError);
+                o.put("server", getServerUrl());
+            } catch (JSONException ignored) {
+            }
+            return o.toString();
+        }
+
+        /** 入队一条离线记录（type: habit/diet/workout/metric）；返回队列长度，-1 失败。 */
+        @JavascriptInterface
+        public int enqueueRecord(String type, String payloadJson) {
+            if (!"habit".equals(type) && !"diet".equals(type)
+                    && !"workout".equals(type) && !"metric".equals(type)) {
+                return -1;
+            }
+            int n = OfflineStore.enqueue(MainActivity.this, type, localDate(), payloadJson);
+            if (n >= 0) {
+                OfflineStore.scheduleFlush(MainActivity.this);
+            }
+            return n;
+        }
+
+        /** 今日打卡暂存：声明式覆盖同日同习惯（doneCount<=0 = 撤销）；返回队列长度。 */
+        @JavascriptInterface
+        public int setQueuedHabit(int habitId, int doneCount) {
+            int n = OfflineStore.setQueuedHabit(MainActivity.this, habitId, localDate(), doneCount);
+            OfflineStore.scheduleFlush(MainActivity.this);
+            return n;
+        }
+
+        /** 今日已暂存打卡 {habit_id: done_count}，本地页渲染勾选态。 */
+        @JavascriptInterface
+        public String getQueuedHabits() {
+            return OfflineStore.queuedHabits(MainActivity.this, localDate());
         }
     }
 
@@ -488,7 +625,7 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
-        if (!showingErrorPage && webView.canGoBack()) {
+        if (!showingLocalPage && webView.canGoBack()) {
             webView.goBack();
         } else {
             super.onBackPressed();
@@ -508,10 +645,19 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         webView.onResume();
+        // 回前台：有积压就再排一次补发（KEEP 策略幂等）；停在本地页则立刻探测一次
+        if (OfflineStore.queueSize(this) > 0) {
+            OfflineStore.scheduleFlush(this);
+        }
+        if (showingLocalPage) {
+            probeAndConnect();
+        }
     }
 
     @Override
     protected void onDestroy() {
+        handler.removeCallbacks(probeRunnable);
+        io.shutdownNow();
         CookieManager.getInstance().flush();
         webView.destroy();
         super.onDestroy();
