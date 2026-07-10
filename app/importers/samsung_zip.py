@@ -738,9 +738,11 @@ class _Importer:
             return
         now = now_local()
         if self.max_ts is not None:
-            ins = pg_insert(SyncState).values(source="health_connect", watermark=self.max_ts)
-            self.db.execute(ins.on_conflict_do_update(
-                index_elements=["source"], set_={"watermark": ins.excluded.watermark}))
+            # 水位线写给两条实时通道：HC webhook 与三星直读都以此与 zip 历史一刀切
+            for channel in ("health_connect", "samsung_direct"):
+                ins = pg_insert(SyncState).values(source=channel, watermark=self.max_ts)
+                self.db.execute(ins.on_conflict_do_update(
+                    index_elements=["source"], set_={"watermark": ins.excluded.watermark}))
             self.report["watermark"] = self.max_ts.isoformat()
         ins = pg_insert(SyncState).values(
             source=SOURCE, last_success_at=now, consecutive_failures=0)

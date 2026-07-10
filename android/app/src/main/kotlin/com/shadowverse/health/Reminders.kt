@@ -49,8 +49,10 @@ object Reminders {
                 Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
             )
             .build()
+        // 必须 CANCEL_AND_REENQUEUE：UPDATE 策略保留首次入队时刻作为周期起点，
+        // 重算的 initialDelay 会相对旧起点解释，提醒时间随每次打开 App 漂移
         WorkManager.getInstance(ctx)
-            .enqueueUniquePeriodicWork(WORK_NAME, ExistingPeriodicWorkPolicy.UPDATE, req)
+            .enqueueUniquePeriodicWork(WORK_NAME, ExistingPeriodicWorkPolicy.CANCEL_AND_REENQUEUE, req)
     }
 
     @JvmStatic

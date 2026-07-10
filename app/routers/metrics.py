@@ -24,8 +24,9 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.deps import require_login, templates
-from app.models import AppSetting, BodyMetrics, DailyActivity, SleepSession
+from app.models import AppSetting, BodyMetrics, DailyActivity
 from app.services.autofill import get_or_create_day, mark_manual
+from app.services.sleep import sessions_by_date
 from app.timeutil import today_local
 
 router = APIRouter(dependencies=[Depends(require_login)])
@@ -122,7 +123,8 @@ def _fmt(value: Any) -> str:
 
 def _parse_date(raw: Any) -> date:
     try:
-        return date.fromisoformat(str(raw).strip())
+        # 不允许未来日期（与饮食页口径一致；未来行还会污染"最近一次值"预填）
+        return min(date.fromisoformat(str(raw).strip()), today_local())
     except (TypeError, ValueError):
         return today_local()
 
@@ -139,6 +141,9 @@ def _parse_form(form: Any) -> tuple[dict[str, Any], list[str]]:
         try:
             parsed: Any = int(text) if kind == "int" else Decimal(text)
         except (ValueError, InvalidOperation):
+            errors.append(label)
+            continue
+        if isinstance(parsed, Decimal) and not parsed.is_finite():  # NaN/inf 比较会炸，先拦
             errors.append(label)
             continue
         if not (Decimal(str(lo)) <= Decimal(str(parsed)) <= Decimal(str(hi))):
@@ -295,35 +300,29 @@ def _chart_context(db: Session, metric: str, days: int) -> dict[str, Any]:
             _line_dataset("舒张压", _bm_field_map(db, "bp_diastolic", start, today), day_list, _COLORS["bp_diastolic"])
         )
     elif metric == "sleep":
-        # body_metrics.sleep_hours 优先；NULL 的日子回退当日 sleep_sessions 合计
+        # body_metrics.sleep_hours 优先；NULL 的日子回退当夜会话合计（跨源去重防翻倍）
         by_day = _bm_field_map(db, "sleep_hours", start, today)
-        sess = db.execute(
-            select(SleepSession.wake_date, func.sum(SleepSession.total_sleep_min))
-            .where(
-                SleepSession.wake_date.between(start, today),
-                SleepSession.total_sleep_min.is_not(None),
-            )
-            .group_by(SleepSession.wake_date)
-        ).all()
-        for wake_date, total_min in sess:
+        for wake_date, sessions in sessions_by_date(db, start, today).items():
+            total_min = sum(s.total_sleep_min or 0 for s in sessions)
             if wake_date not in by_day and total_min:
                 by_day[wake_date] = (round(total_min / 60.0, 1), False)
         datasets.append(_line_dataset("睡眠时长 (h)", by_day, day_list, _COLORS["sleep"]))
     elif metric == "sleep_stages":
-        # 各分期按 wake_date 求和（一日多段合并），单位小时；整段 NULL 的分期不画
-        rows = db.execute(
-            select(
-                SleepSession.wake_date,
-                *(func.sum(getattr(SleepSession, field)) for field, *_ in _STAGE_DEFS),
-            )
-            .where(SleepSession.wake_date.between(start, today))
-            .group_by(SleepSession.wake_date)
-        ).all()
-        for idx, (_, label, color) in enumerate(_STAGE_DEFS):
+        # 各分期按夜求和（跨源去重后同 source 分段合并），单位小时；整夜 NULL 的分期不画
+        per_day: dict[date, dict[str, float]] = {}
+        for wake_date, sessions in sessions_by_date(db, start, today).items():
+            sums: dict[str, float] = {}
+            for field, *_ in _STAGE_DEFS:
+                vals = [getattr(s, field) for s in sessions if getattr(s, field) is not None]
+                if vals:
+                    sums[field] = float(sum(vals))
+            if sums:
+                per_day[wake_date] = sums
+        for field, label, color in _STAGE_DEFS:
             by_day = {
-                r[0]: (round(float(r[idx + 1]) / 60.0, 1), False)
-                for r in rows
-                if r[idx + 1] is not None
+                d: (round(v[field] / 60.0, 1), False)
+                for d, v in per_day.items()
+                if field in v
             }
             datasets.append(_line_dataset(f"{label} (h)", by_day, day_list, color))
     elif metric == "steps":

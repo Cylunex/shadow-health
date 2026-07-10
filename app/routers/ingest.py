@@ -39,6 +39,7 @@ from app.db import get_db
 from app.models import AppSetting, DailyActivity, ImportRaw, SleepSession, SyncState, WorkoutLog
 from app.services.autofill import autofill_fields
 from app.services.miscale import compute_body_metrics
+from app.services.sleep import total_sleep_min as sleep_total_min
 from app.timeutil import LOCAL_TZ, now_local
 
 MAX_BODY_BYTES = 5 * 1024 * 1024
@@ -205,9 +206,9 @@ def _extract_steps(rec: dict) -> tuple[date, int]:
     d = _local_date(ts, rec, "startZoneOffset", "zoneOffset", "endZoneOffset")
     for k in ("count", "steps", "stepCount", "step_count", "value"):
         c = _qty(rec.get(k))
-        if c is not None and c >= 0:
+        if c is not None and 0 <= c <= 200000:  # 上限防坏数据溢出毒化整批归一化
             return d, int(round(c))
-    raise ValueError("steps 记录缺少步数字段")
+    raise ValueError("steps 记录缺少合理步数字段")
 
 
 def _extract_weight(rec: dict) -> tuple[date, datetime, float]:
@@ -522,7 +523,8 @@ async def ingest_health_connect(request: Request, db: Session = Depends(get_db))
             except Exception as exc:
                 _mark(db, rtype, ext_id, "failed", str(exc)[:500])
 
-        # steps：按日增量累加进 daily_activity（区间记录求和）
+        # steps：按日增量累加进 daily_activity（区间记录求和）。
+        # 该日已被三星直读接管（SET 当日总数）时不累加，防双通道双计。
         for d in sorted(day_steps):
             ins = pg_insert(DailyActivity).values(log_date=d, steps=day_steps[d], source=SOURCE)
             db.execute(ins.on_conflict_do_update(
@@ -532,17 +534,15 @@ async def ingest_health_connect(request: Request, db: Session = Depends(get_db))
                     "source": ins.excluded.source,
                     "updated_at": text("now()"),
                 },
+                where=DailyActivity.__table__.c.source != "samsung_direct",
             ))
         # weight：同日最后一次 → body_metrics 字段级回填（手动值不覆盖）
         for d in sorted(weight_by_day):
             autofill_fields(db, d, SOURCE, {"weight_kg": weight_by_day[d][1]})
-        # sleep：受影响 wake_date 汇总回填 sleep_hours（同夜多会话取总和）
+        # sleep：受影响 wake_date 汇总回填 sleep_hours（跨源去重：只取优先 source，防翻倍）
         for d in sorted(sleep_dates):
-            total = db.execute(
-                select(func.coalesce(func.sum(SleepSession.total_sleep_min), 0))
-                .where(SleepSession.wake_date == d)
-            ).scalar_one()
-            if total and total > 0:
+            total = sleep_total_min(db, d)
+            if total > 0:
                 autofill_fields(db, d, SOURCE, {"sleep_hours": round(total / 60.0, 1)})
 
         # 6. 成功：sync_state 记 last_success_at、清零失败计数（不触碰 watermark）
@@ -554,9 +554,12 @@ async def ingest_health_connect(request: Request, db: Session = Depends(get_db))
         state.last_error = None
         state.consecutive_failures = 0
         db.commit()
-    except Exception as exc:  # 归一化整体失败：raw 已落盘可重放，只记状态
+    except Exception as exc:  # 归一化整体失败：本批 raw 标 failed（导入中心可见），只记状态
         db.rollback()
         try:
+            # 标记本批新行为 failed：重发因 xmax 门控不会重新归一化，必须留下可见痕迹
+            for rtype, ext_id in new_keys:
+                _mark(db, rtype, ext_id, "failed", f"批次归一化失败：{str(exc)[:400]}")
             state = db.get(SyncState, SOURCE)
             if state is None:
                 state = SyncState(source=SOURCE)
@@ -651,6 +654,9 @@ async def ingest_miscale(request: Request, db: Session = Depends(get_db)) -> Res
             ts = now
         z = _qty(item.get("impedance"))
         impedance = float(z) if z is not None and 0 < z < 3000 else None
+        # 秤 RTC 失效时监听器/服务端都以"当前时间取整到分钟"兜底，双端 key 才能对齐
+        if ts == now:
+            ts = now.replace(second=0, microsecond=0)
         ext_id = f"{ts.astimezone(LOCAL_TZ):%Y%m%dT%H%M%S}-{round(w * 200)}"
         parsed[ext_id] = {"ts": ts, "weight": round(float(w), 2), "impedance": impedance}
 
@@ -709,9 +715,11 @@ async def ingest_miscale(request: Request, db: Session = Depends(get_db)) -> Res
         state.last_error = None
         state.consecutive_failures = 0
         db.commit()
-    except Exception as exc:  # raw 已落盘可重放；绝不 5xx
+    except Exception as exc:  # 批次失败：raw 标 failed 留痕（重发不会重新归一化）；绝不 5xx
         db.rollback()
         try:
+            for ext_id in new_ids:
+                _mark_miscale(db, ext_id, "failed", f"批次归一化失败：{str(exc)[:400]}")
             state = db.get(SyncState, MISCALE_SOURCE)
             if state is None:
                 state = SyncState(source=MISCALE_SOURCE)
@@ -826,7 +834,8 @@ async def ingest_samsung_direct(request: Request, db: Session = Depends(get_db))
         rec_ts = datetime.combine(d, datetime.min.time(), tzinfo=LOCAL_TZ)
         _collect("daily", f"daily-{d.isoformat()}-{digest}", rec_ts, data)
 
-    # -- sleep_sessions：按 (source, external_id) upsert
+    # -- sleep_sessions：按 (source, 稳定 id) upsert；raw 去重键掺内容哈希，
+    #    上游修订（三星醒后常修正时长）重推时才会重新归一化并覆盖
     for item in payload.get("sleep_sessions") or []:
         if not isinstance(item, dict):
             continue
@@ -836,16 +845,21 @@ async def ingest_samsung_direct(request: Request, db: Session = Depends(get_db))
         ext = str(item.get("external_id") or "").strip()
         if start is None or end is None or end <= start or not ext:
             continue
-        _collect("sleep", f"sd-{ext}", end, {
+        data = {
+            "sid": f"sd-{ext}",
             "start": start.isoformat(), "end": end.isoformat(),
             "awake_min": _sd_int(item.get("awake_min"), 0, 1440),
             "light_min": _sd_int(item.get("light_min"), 0, 1440),
             "deep_min": _sd_int(item.get("deep_min"), 0, 1440),
             "rem_min": _sd_int(item.get("rem_min"), 0, 1440),
             "total_sleep_min": _sd_int(item.get("total_sleep_min"), 0, 1440),
-        })
+        }
+        digest = hashlib.sha1(
+            json.dumps(data, sort_keys=True, default=str).encode()
+        ).hexdigest()[:12]
+        _collect("sleep", f"sd-{ext}-{digest}", end, data)
 
-    # -- exercises：按 (source, external_id) upsert 进 workout_logs
+    # -- exercises：按 (source, 稳定 id) upsert 进 workout_logs；raw 键同样掺内容哈希
     for item in payload.get("exercises") or []:
         if not isinstance(item, dict):
             continue
@@ -859,13 +873,18 @@ async def ingest_samsung_direct(request: Request, db: Session = Depends(get_db))
         if duration is None and end is not None and end > start:
             duration = round((end - start).total_seconds() / 60)
         session_type = str(item.get("type") or "other").strip().lower()[:50] or "other"
-        _collect("exercise", f"sd-{ext}", start, {
+        data = {
+            "sid": f"sd-{ext}",
             "start": start.isoformat(), "type": session_type, "duration_min": duration,
             "distance_km": _sd_num(item.get("distance_km"), 0.01, 1000, 2),
             "calories": _sd_int(item.get("calories"), 1, 20000),
             "avg_hr": _sd_int(item.get("avg_hr"), 20, 250),
             "max_hr": _sd_int(item.get("max_hr"), 20, 250),
-        })
+        }
+        digest = hashlib.sha1(
+            json.dumps(data, sort_keys=True, default=str).encode()
+        ).hexdigest()[:12]
+        _collect("exercise", f"sd-{ext}-{digest}", start, data)
 
     # -- body：手表 BIA 体成分 → body_metrics 字段级回填（同日取最后一次）
     for item in payload.get("body") or []:
@@ -972,7 +991,7 @@ async def ingest_samsung_direct(request: Request, db: Session = Depends(get_db))
                             )
                             total = stage_sum or round((end - start).total_seconds() / 60)
                         ins = pg_insert(SleepSession).values(
-                            source=SAMSUNG_DIRECT_SOURCE, external_id=e["ext_id"],
+                            source=SAMSUNG_DIRECT_SOURCE, external_id=data["sid"],
                             start_at=start, end_at=end, wake_date=wake_date,
                             awake_min=data["awake_min"], light_min=data["light_min"],
                             deep_min=data["deep_min"], rem_min=data["rem_min"],
@@ -998,7 +1017,7 @@ async def ingest_samsung_direct(request: Request, db: Session = Depends(get_db))
                             avg_hr=data["avg_hr"],
                             max_hr=data["max_hr"],
                             source=SAMSUNG_DIRECT_SOURCE,
-                            external_id=e["ext_id"],
+                            external_id=data["sid"],
                         )
                         db.execute(ins.on_conflict_do_update(
                             index_elements=["source", "external_id"],
@@ -1027,11 +1046,8 @@ async def ingest_samsung_direct(request: Request, db: Session = Depends(get_db))
                 f: data[f] for f in _SD_BODY_FIELDS if data[f] is not None
             })
         for d in sorted(sleep_dates):
-            total = db.execute(
-                select(func.coalesce(func.sum(SleepSession.total_sleep_min), 0))
-                .where(SleepSession.wake_date == d)
-            ).scalar_one()
-            if total and total > 0:
+            total = sleep_total_min(db, d)  # 跨源去重，防 zip/HC/直读并存翻倍
+            if total > 0:
                 autofill_fields(db, d, SAMSUNG_DIRECT_SOURCE, {"sleep_hours": round(total / 60.0, 1)})
 
         if state is None:
@@ -1041,9 +1057,11 @@ async def ingest_samsung_direct(request: Request, db: Session = Depends(get_db))
         state.last_error = None
         state.consecutive_failures = 0
         db.commit()
-    except Exception as exc:
+    except Exception as exc:  # 批次失败：raw 标 failed 留痕（重发不会重新归一化）
         db.rollback()
         try:
+            for rtype, ext_id in new_keys:
+                _mark_sd(rtype, ext_id, "failed", f"批次归一化失败：{str(exc)[:400]}")
             state = db.get(SyncState, SAMSUNG_DIRECT_SOURCE)
             if state is None:
                 state = SyncState(source=SAMSUNG_DIRECT_SOURCE)

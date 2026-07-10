@@ -87,6 +87,8 @@ def _parse_decimal(raw: Any, label: str, hi: float) -> Decimal | None:
         v = Decimal(s)
     except InvalidOperation:
         raise ValueError(f"{label}格式不正确")
+    if not v.is_finite():  # Decimal("nan"/"inf") 能构造成功，比较时才炸，先拦
+        raise ValueError(f"{label}格式不正确")
     if not (Decimal(0) <= v <= Decimal(str(hi))):
         raise ValueError(f"{label}超出合理范围（0-{hi:g}）")
     return v.quantize(Decimal("0.1"))

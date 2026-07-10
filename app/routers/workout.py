@@ -68,7 +68,8 @@ HEATMAP_MONTHS_OPTIONS = (3, 6, 12)
 # ---------- 表单解析 ----------
 def _parse_date(raw: Any) -> date:
     try:
-        return date.fromisoformat(str(raw).strip())
+        # 不允许未来日期（与饮食页口径一致）
+        return min(date.fromisoformat(str(raw).strip()), today_local())
     except (TypeError, ValueError):
         return today_local()
 
@@ -97,6 +98,9 @@ def _form_decimal(
     try:
         value = Decimal(str(raw).strip())
     except InvalidOperation:
+        errors.append(f"{label}格式不对")
+        return None
+    if not value.is_finite():  # NaN/inf 比较会炸，先拦
         errors.append(f"{label}格式不对")
         return None
     if not (Decimal(str(lo)) <= value <= Decimal(str(hi))):

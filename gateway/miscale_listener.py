@@ -5,7 +5,7 @@
 服务端按 (RTC 时间戳 + 体重) 去重——与手机端监听器同时在线也只记一条。
 
 协议（13 字节，参考 ESPHome xiaomi_miscale / openScale）：
-  [0]     单位：0x02=kg（原始值 ×0.005）；0x03=lbs（×0.0045）
+  [0]     单位：0x02=kg（原始值 ×0.005）；非 kg 帧跳过（换算系数无法可靠验证）
   [1]     标志位：bit1=带阻抗；bit5=已稳定；bit7=离秤
   [2:4]   年（LE） [4]月 [5]日 [6]时 [7]分 [8]秒   —— 秤的 RTC（本地时间）
   [9:11]  阻抗 Ω（LE；0 或 >=3000 视为无效）
@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import sys
 import time
@@ -43,6 +44,12 @@ SETTLE_S = 12
 SENT_TTL_S = 600
 
 
+def _round_half_up(x: float) -> int:
+    """半进位舍入：与 Android 端 Math.round 一致（Python 内建 round 是银行家舍入，
+    在恰好半值时与 Java 分叉，会导致双端去重键不一致）。"""
+    return math.floor(x + 0.5)
+
+
 @dataclass
 class Measurement:
     ts: datetime          # 秤 RTC 时间（本地钟）
@@ -51,7 +58,7 @@ class Measurement:
 
     @property
     def key(self) -> str:
-        return f"{self.ts:%Y%m%dT%H%M%S}-{round(self.weight_kg * 200)}"
+        return f"{self.ts:%Y%m%dT%H%M%S}-{_round_half_up(self.weight_kg * 200)}"
 
 
 def parse_adv(data: bytes) -> Measurement | None:
@@ -66,13 +73,11 @@ def parse_adv(data: bytes) -> Measurement | None:
         return None
 
     raw_weight = int.from_bytes(data[11:13], "little")
-    if unit == 0x03:
-        weight = raw_weight * 0.0045 * 0.45359237  # 原始 ×0.0045 得 lbs，再换算 kg
-    elif unit == 0x02:
-        weight = raw_weight * 0.005
-    else:
-        log.debug("未知单位字节 0x%02x，raw=%s", unit, data.hex())
+    if unit != 0x02:
+        # 非 kg 模式：换算系数无法可靠验证，宁可跳过并记日志，不落错误数据
+        log.warning("跳过非 kg 单位帧 unit=0x%02x raw=%s", unit, data.hex())
         return None
+    weight = raw_weight * 0.005
     if not (10 <= weight <= 300):
         return None
 
@@ -82,18 +87,20 @@ def parse_adv(data: bytes) -> Measurement | None:
         if 0 < z < 3000:
             impedance = z
 
+    # RTC 兜底取整到分钟：失效期同一测量的连播帧（乃至手机/网关双端）才能生成同一去重键
+    fallback = datetime.now().replace(second=0, microsecond=0)
     try:
         ts = datetime(
             int.from_bytes(data[2:4], "little"),
             data[4], data[5], data[6], data[7], data[8],
         )
     except ValueError:
-        ts = datetime.now()
-    # RTC 掉电/没对过时的兜底：偏差超过 3 天用系统时间
+        ts = fallback
     if abs(ts - datetime.now()) > timedelta(days=3):
-        ts = datetime.now()
+        ts = fallback
 
-    return Measurement(ts=ts, weight_kg=round(weight, 2), impedance=impedance)
+    # 半进位保留两位：与 Android 端 Math.round(weight*100)/100.0 一致
+    return Measurement(ts=ts, weight_kg=_round_half_up(weight * 100) / 100.0, impedance=impedance)
 
 
 def post_measurement(url: str, token: str, m: Measurement) -> bool:
@@ -206,6 +213,11 @@ def selftest() -> None:
     assert m4 is not None and abs(m4.ts - datetime.now()) < timedelta(minutes=1), m4
     # 去重键一致性（同一测量不同帧）
     assert m.key == parse_adv(frame(0x02, 0b00100010, y, mo, d, 7, 31, 22, 512, 14370)).key
+    # 半值舍入与 Android 端一致：raw=14425 → 72.125 kg → 半进位 72.13（银行家舍入会得 72.12）
+    m5 = parse_adv(frame(0x02, 0b00100010, y, mo, d, 7, 31, 22, 512, 14425))
+    assert m5.weight_kg == 72.13 and m5.key.endswith("-14426"), m5
+    # 非 kg 单位帧应跳过
+    assert parse_adv(frame(0x03, 0b00100010, y, mo, d, 7, 31, 22, 512, 14370)) is None
     print("selftest OK:", m)
 
 

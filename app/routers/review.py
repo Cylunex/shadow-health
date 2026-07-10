@@ -97,15 +97,30 @@ def _aggregate_week(db: Session, week_start: date) -> dict[str, Any]:
         round(float(total_protein) / diet_days) if diet_days and total_protein is not None else None
     )
 
-    # 训练：次数与总时长（全 source 合并）+ 有氧分钟
+    # 训练：次数与总时长（全 source 合并）+ 有氧分钟 + sRPE 负荷
     wlogs = db.execute(
-        select(WorkoutLog.session_type, WorkoutLog.duration_min).where(
+        select(WorkoutLog.session_type, WorkoutLog.duration_min, WorkoutLog.rpe).where(
             WorkoutLog.log_date.between(week_start, week_end)
         )
     ).all()
     workout_count = len(wlogs)
     workout_min = sum(r[1] or 0 for r in wlogs)
     cardio_min = sum(r[1] or 0 for r in wlogs if _is_cardio(r[0]))
+    training_load = sum((r[2] or 0) * (r[1] or 0) for r in wlogs)
+    unrated_min = sum(r[1] or 0 for r in wlogs if not r[2])
+
+    # 围度变化：周内首末非空差值（有数据的部位才进快照）
+    girth_changes: dict[str, float | None] = {}
+    for field in ("waist_cm", "chest_cm", "arm_cm", "thigh_cm", "hip_cm"):
+        col = getattr(BodyMetrics, field)
+        pts = db.execute(
+            select(col)
+            .where(BodyMetrics.log_date.between(week_start, week_end), col.is_not(None))
+            .order_by(BodyMetrics.log_date)
+        ).all()
+        girth_changes[field.replace("_cm", "_change")] = (
+            round(float(pts[-1][0]) - float(pts[0][0]), 1) if len(pts) >= 2 else None
+        )
 
     # 习惯打卡率：active daily 习惯的达标习惯日 / (习惯数×7)
     habits = db.execute(
@@ -154,6 +169,9 @@ def _aggregate_week(db: Session, week_start: date) -> dict[str, Any]:
         "workout_count": workout_count,
         "workout_min": workout_min,
         "cardio_min": cardio_min,
+        "training_load": training_load,
+        "unrated_min": unrated_min,
+        **girth_changes,
         "target_weekly_cardio_min": target_cardio,
         "habit_rate": habit_rate,
         "habit_count": len(habits),
@@ -259,6 +277,26 @@ def _snapshot_cards(snap: dict[str, Any]) -> list[dict[str, Any]]:
         "value": f"{g('workout_count') or 0} 次",
         "sub": f"合计 {g('workout_min') or 0} 分钟（全部来源）",
     })
+    if g("training_load"):
+        unrated = g("unrated_min") or 0
+        cards.append({
+            "label": "训练负荷 (sRPE)",
+            "value": f"{g('training_load')}",
+            "sub": f"另有 {unrated} 分钟未评级" if unrated else "RPE×分钟",
+        })
+    girth_labels = (
+        ("waist_change", "腰围"), ("chest_change", "胸围"), ("hip_change", "臀围"),
+        ("thigh_change", "大腿围"), ("arm_change", "臂围"),
+    )
+    girth_parts = [
+        f"{label} {g(key):+.1f}" for key, label in girth_labels if g(key) is not None
+    ]
+    if girth_parts:
+        cards.append({
+            "label": "围度变化 (cm)",
+            "value": " · ".join(girth_parts[:2]),
+            "sub": " · ".join(girth_parts[2:]) or "周内首末差",
+        })
 
     cardio = g("cardio_min") or 0
     target = g("target_weekly_cardio_min")

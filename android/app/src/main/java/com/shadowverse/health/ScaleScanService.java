@@ -12,8 +12,10 @@ import android.bluetooth.le.ScanCallback;
 import android.bluetooth.le.ScanFilter;
 import android.bluetooth.le.ScanResult;
 import android.bluetooth.le.ScanSettings;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.ServiceInfo;
 import android.os.Build;
@@ -46,7 +48,7 @@ import java.util.concurrent.Executors;
  * (RTC 时间戳 + 体重) 去重，和 NAS 网关同时在线也只记一条。
  *
  * 协议与 gateway/miscale_listener.py 完全一致：
- *   [0] 单位 0x02=kg(×0.005) / 0x03=lbs(×0.0045→kg)
+ *   [0] 单位 0x02=kg(×0.005)；非 kg 帧跳过（换算系数无法可靠验证）
  *   [1] 标志 bit1=带阻抗 bit5=已稳定 bit7=离秤
  *   [2:4] 年(LE) [4]月 [5]日 [6]时 [7]分 [8]秒（秤 RTC，本地时间）
  *   [9:11] 阻抗Ω(LE, 0<z<3000 有效)  [11:13] 体重原始值(LE)
@@ -68,8 +70,11 @@ public class ScaleScanService extends Service {
     private ScanCallback scanCallback;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ExecutorService io = Executors.newSingleThreadExecutor();
+    // pending/sent 只在主线程访问：BLE 回调与 IO 回调统一 handler.post 回主线程
     private final Map<String, Measurement> pending = new HashMap<>();
     private final Map<String, Long> sent = new HashMap<>();
+    private volatile boolean stopped;
+    private BroadcastReceiver btStateReceiver;
 
     private static class Measurement {
         final String key;
@@ -97,6 +102,22 @@ public class ScaleScanService extends Service {
             ch.setDescription("后台接收体脂秤蓝牙广播");
             nm.createNotificationChannel(ch);
         }
+        // 跟随蓝牙开关：启动时蓝牙没开，开启后自动开扫（系统受保护广播，无导出要求）
+        btStateReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                int state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, -1);
+                if (state == BluetoothAdapter.STATE_ON) {
+                    startScan();
+                    updateNotification("等待上秤…");
+                } else if (state == BluetoothAdapter.STATE_TURNING_OFF
+                        || state == BluetoothAdapter.STATE_OFF) {
+                    stopScan();
+                    updateNotification("蓝牙未开启");
+                }
+            }
+        };
+        registerReceiver(btStateReceiver, new IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED));
     }
 
     @Override
@@ -126,6 +147,9 @@ public class ScaleScanService extends Service {
     }
 
     private void updateNotification(String text) {
+        if (stopped) {
+            return;  // onDestroy 后的 in-flight 回调不得复活常驻通知
+        }
         NotificationManager nm = getSystemService(NotificationManager.class);
         nm.notify(NOTIFICATION_ID, buildNotification(text));
     }
@@ -156,7 +180,7 @@ public class ScaleScanService extends Service {
                 }
                 byte[] data = result.getScanRecord().getServiceData(UUID_BODY_COMPOSITION);
                 if (data != null) {
-                    handleFrame(data);
+                    handler.post(() -> handleFrame(data));  // 状态统一主线程访问
                 }
             }
 
@@ -216,14 +240,12 @@ public class ScaleScanService extends Service {
         }
 
         int rawWeight = ((d[12] & 0xFF) << 8) | (d[11] & 0xFF);
-        double weight;
-        if (unit == 0x02) {
-            weight = rawWeight * 0.005;
-        } else if (unit == 0x03) {
-            weight = rawWeight * 0.0045 * 0.45359237;
-        } else {
+        if (unit != 0x02) {
+            // 非 kg 模式：换算系数无法可靠验证，宁可跳过并记日志，不落错误数据
+            Log.w(TAG, String.format(Locale.US, "跳过非 kg 单位帧 unit=0x%02x", unit));
             return;
         }
+        double weight = rawWeight * 0.005;
         if (weight < 10 || weight > 300) {
             return;
         }
@@ -238,12 +260,15 @@ public class ScaleScanService extends Service {
         }
 
         Calendar cal = Calendar.getInstance();
+        // 兜底默认值取整到分钟：RTC 失效时同一测量的连播帧（乃至手机/网关双端）才能生成同一去重键
+        cal.set(Calendar.SECOND, 0);
+        cal.set(Calendar.MILLISECOND, 0);
         int year = ((d[3] & 0xFF) << 8) | (d[2] & 0xFF);
         try {
             Calendar rtc = Calendar.getInstance();
             rtc.set(year, (d[4] & 0xFF) - 1, d[5] & 0xFF, d[6] & 0xFF, d[7] & 0xFF, d[8] & 0xFF);
-            // RTC 掉电/没对过时的兜底：偏差超过 3 天用系统时间
-            if (Math.abs(rtc.getTimeInMillis() - cal.getTimeInMillis()) < 3L * 86400_000) {
+            // RTC 掉电/没对过时的兜底：偏差超过 3 天用系统时间（上面已取整）
+            if (Math.abs(rtc.getTimeInMillis() - System.currentTimeMillis()) < 3L * 86400_000) {
                 cal = rtc;
             }
         } catch (Exception ignored) {
@@ -316,10 +341,13 @@ public class ScaleScanService extends Service {
                     ? String.format(Locale.US, "已记录 %.2f kg%s", m.weightKg,
                         m.impedance != null ? "（含体成分）" : "")
                     : "上报失败，检查服务器/Token";
-            if (!ok) {
-                sent.remove(key); // 允许下次广播重试
-            }
-            handler.post(() -> updateNotification(text));
+            final boolean finalOk = ok;
+            handler.post(() -> {
+                if (!finalOk) {
+                    sent.remove(key); // 允许下次广播重试（主线程访问，防并发损坏）
+                }
+                updateNotification(text);
+            });
         });
     }
 
@@ -355,9 +383,19 @@ public class ScaleScanService extends Service {
 
     @Override
     public void onDestroy() {
+        stopped = true;
         stopScan();
+        if (btStateReceiver != null) {
+            try {
+                unregisterReceiver(btStateReceiver);
+            } catch (Exception ignored) {
+            }
+            btStateReceiver = null;
+        }
         handler.removeCallbacksAndMessages(null);
         io.shutdownNow();
+        NotificationManager nm = getSystemService(NotificationManager.class);
+        nm.cancel(NOTIFICATION_ID);
         super.onDestroy();
     }
 

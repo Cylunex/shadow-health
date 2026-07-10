@@ -17,6 +17,10 @@ __pycache__
 # 开发机专用工具与产物（tailwindcss.exe 等 Windows 二进制）
 tools
 android
+mobile-poc
+docs
+# gateway 有独立构建上下文（docker-compose.miscale.yml build: ./gateway），不进 app 镜像
+gateway
 
 # 运行时数据（容器内用 volume 挂载 ./uploads）
 uploads

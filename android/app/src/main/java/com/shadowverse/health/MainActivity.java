@@ -60,6 +60,7 @@ public class MainActivity extends Activity {
     private Runnable pendingLongPress;
     private String lastAttemptedUrl;
     private boolean showingErrorPage;
+    private String erroredUrl;  // 加载失败的 URL 也会触发 onPageFinished，需忽略以免复位错误页标志
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -104,6 +105,10 @@ public class MainActivity extends Activity {
 
             @Override
             public void onPageFinished(WebView view, String url) {
+                if (url != null && url.equals(erroredUrl)) {
+                    erroredUrl = null;  // 失败页自身的 finished 回调，不代表加载成功
+                    return;
+                }
                 if (url != null && url.startsWith("http")) {
                     showingErrorPage = false;
                 }
@@ -114,6 +119,7 @@ public class MainActivity extends Activity {
                                         WebResourceError error) {
                 if (request.isForMainFrame()) {
                     lastAttemptedUrl = request.getUrl().toString();
+                    erroredUrl = lastAttemptedUrl;
                     showErrorPage(String.valueOf(error.getDescription()));
                 }
             }
@@ -290,6 +296,12 @@ public class MainActivity extends Activity {
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
         super.onRequestPermissionsResult(requestCode, permissions, results);
         if (requestCode != REQ_SCALE_PERMS) {
+            return;
+        }
+        if (permissions.length == 0) {
+            // 系统取消了权限请求（来电/分屏等）：按未授予处理，不能默认放行
+            prefs.edit().putBoolean(KEY_SCALE_SCAN, false).apply();
+            Toast.makeText(this, "权限请求被中断，秤监听未开启", Toast.LENGTH_LONG).show();
             return;
         }
         boolean scanGranted = true;

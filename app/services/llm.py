@@ -103,6 +103,27 @@ def build_context(db: Session, days: int = 30) -> str:
         if anchor:
             lines.append(f"- （{label}锚点）{anchor.log_date}: {_fmt(anchor.weight_kg)}kg")
 
+    # 围度（区间内首末对比，只列有数据的部位）
+    girth_lines: list[str] = []
+    for field, label in (
+        ("waist_cm", "腰围"), ("chest_cm", "胸围"), ("hip_cm", "臀围"),
+        ("thigh_cm", "大腿围"), ("arm_cm", "臂围"),
+    ):
+        col = getattr(BodyMetrics, field)
+        pts = db.execute(
+            select(BodyMetrics.log_date, col)
+            .where(BodyMetrics.log_date >= since, col.is_not(None))
+            .order_by(BodyMetrics.log_date)
+        ).all()
+        if pts:
+            seg = f"- {label}: {pts[0][0]} {_fmt(pts[0][1])}cm → {pts[-1][0]} {_fmt(pts[-1][1])}cm"
+            if len(pts) >= 2:
+                seg += f"（变化 {float(pts[-1][1]) - float(pts[0][1]):+.1f}cm）"
+            girth_lines.append(seg)
+    if girth_lines:
+        lines.append("\n## 围度")
+        lines.extend(girth_lines)
+
     # 睡眠（body_metrics.sleep_hours 已含自动回填）
     sleep_days, sleep_avg = db.execute(
         select(func.count(), func.avg(BodyMetrics.sleep_hours)).where(
@@ -129,16 +150,18 @@ def build_context(db: Session, days: int = 30) -> str:
         f"达标(≥{target_steps}) {ok_days} 天；日最低心率均值 {_fmt(act[4], 0)}"
     )
 
-    # 训练
+    # 训练（含 sRPE 负荷 = RPE × 分钟，未评级分钟单列）
     wl = db.execute(
-        select(WorkoutLog.session_type, WorkoutLog.duration_min, WorkoutLog.log_date)
+        select(WorkoutLog.session_type, WorkoutLog.duration_min, WorkoutLog.log_date, WorkoutLog.rpe)
         .where(WorkoutLog.log_date >= since)
     ).all()
     total_min = sum(r[1] or 0 for r in wl)
     types = Counter(r[0] or "?" for r in wl)
+    load = sum((r[3] or 0) * (r[1] or 0) for r in wl)
+    unrated_min = sum(r[1] or 0 for r in wl if not r[3])
     lines.append(
         f"\n## 训练：{len(wl)} 次，共 {total_min} 分钟（≈{_fmt(total_min / max(days / 7, 1), 0)} 分钟/周）；"
-        f"类型分布 {dict(types.most_common(8))}"
+        f"sRPE 负荷 {load}（未评级 {unrated_min} 分钟）；类型分布 {dict(types.most_common(8))}"
     )
 
     # 饮食（近 14 天更有代表性）
