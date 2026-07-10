@@ -32,7 +32,7 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.responses import RedirectResponse, StreamingResponse
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -310,6 +310,35 @@ def _job_ctx(job: ImportJob) -> dict[str, Any]:
     }
 
 
+def _raw_stats(db: Session) -> list[dict[str, Any]]:
+    """import_raw 各源解析状态汇总（数据源明细：留档/已归一化/跳过/失败一目了然）。"""
+    from app.models import ImportRaw
+
+    rows = db.execute(
+        select(
+            ImportRaw.source,
+            ImportRaw.record_type,
+            ImportRaw.parse_status,
+            func.count(),
+        ).group_by(ImportRaw.source, ImportRaw.record_type, ImportRaw.parse_status)
+    ).all()
+    by_key: dict[tuple[str, str], dict[str, int]] = {}
+    for source, rtype, status, n in rows:
+        by_key.setdefault((source, rtype), {})[status] = n
+    out = []
+    for (source, rtype), st in sorted(by_key.items()):
+        out.append({
+            "label": _SOURCE_LABELS.get(source, source),
+            "rtype": rtype,
+            "parsed": st.get("parsed", 0),
+            "skipped": st.get("skipped", 0),
+            "failed": st.get("failed", 0),
+            "pending": st.get("pending", 0),
+            "total": sum(st.values()),
+        })
+    return out
+
+
 def _imports_context(
     db: Session, wizard_open: bool = False, wizard_error: str | None = None
 ) -> dict[str, Any]:
@@ -319,6 +348,7 @@ def _imports_context(
     return {
         "jobs": [_job_ctx(j) for j in jobs],
         "sync_rows": _sync_rows(db),
+        "raw_stats": _raw_stats(db),
         "wizard_open": wizard_open,
         "wizard_error": wizard_error,
     }

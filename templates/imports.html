@@ -24,6 +24,37 @@
     {% include "fragments/settings_sync_status.html" %}
   </section>
 
+  {% if raw_stats %}
+  <section class="card">
+    <h2 class="card-title">数据源明细</h2>
+    <div class="overflow-x-auto -mx-4 px-4">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="text-left text-xs text-slate-500">
+            <th class="py-1.5 pr-3 font-normal">来源 / 类型</th>
+            <th class="py-1.5 pr-3 font-normal text-right">归一化</th>
+            <th class="py-1.5 pr-3 font-normal text-right">跳过</th>
+            <th class="py-1.5 pr-3 font-normal text-right">失败</th>
+            <th class="py-1.5 font-normal text-right">留档</th>
+          </tr>
+        </thead>
+        <tbody class="tabular-nums">
+          {% for r in raw_stats %}
+          <tr class="border-t border-slate-800/60">
+            <td class="py-1.5 pr-3 text-slate-300">{{ r.label }} <span class="text-slate-600">{{ r.rtype }}</span></td>
+            <td class="py-1.5 pr-3 text-right text-emerald-400">{{ r.parsed }}</td>
+            <td class="py-1.5 pr-3 text-right text-slate-400">{{ r.skipped }}</td>
+            <td class="py-1.5 pr-3 text-right {{ 'text-red-400' if r.failed else 'text-slate-600' }}">{{ r.failed }}</td>
+            <td class="py-1.5 text-right text-slate-500">{{ r.total }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="mt-2 text-xs text-slate-600">「跳过」= 水位线内与历史导入重叠的记录（防重复）；「失败」行可在数据库 import_raw.parse_error 查原因。</p>
+  </section>
+  {% endif %}
+
   <section class="card">
     <h2 class="card-title">导入历史</h2>
     {% if not jobs %}

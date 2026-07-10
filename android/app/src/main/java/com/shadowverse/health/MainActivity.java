@@ -135,6 +135,19 @@ public class MainActivity extends Activity {
         if (prefs.getBoolean(SamsungSync.PREF_ENABLED, false)) {
             SamsungSync.schedule(getApplicationContext());
         }
+        // 每日提醒开着：重申周期任务（对齐下一个 20:30）
+        if (prefs.getBoolean(Reminders.PREF_ENABLED, false)) {
+            Reminders.schedule(getApplicationContext());
+        }
+    }
+
+    /** 提醒需要通知权限（Android 13+），未授予则请求；被拒不拦路（任务照跑，只是不显示）。 */
+    private void ensureNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= 33
+                && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 43);
+        }
     }
 
     private String getServerUrl() {
@@ -168,6 +181,10 @@ public class MainActivity extends Activity {
         samsungBox.setText("同步三星健康数据（手表）");
         samsungBox.setChecked(prefs.getBoolean(SamsungSync.PREF_ENABLED, false));
 
+        final CheckBox reminderBox = new CheckBox(this);
+        reminderBox.setText("每日提醒（20:30 打卡/目标缺口）");
+        reminderBox.setChecked(prefs.getBoolean(Reminders.PREF_ENABLED, false));
+
         TextView hint = new TextView(this);
         hint.setText("秤监听需要蓝牙权限；三星同步需先在三星健康开发者模式里开 Data Read"
                 + "（版本号连点 10 次解锁）。国产 ROM 记得允许自启动，否则后台会被清理。");
@@ -181,6 +198,7 @@ public class MainActivity extends Activity {
         col.addView(tokenInput);
         col.addView(scanBox);
         col.addView(samsungBox);
+        col.addView(reminderBox);
         col.addView(hint);
 
         AlertDialog.Builder b = new AlertDialog.Builder(this)
@@ -192,11 +210,13 @@ public class MainActivity extends Activity {
                     boolean scanOn = scanBox.isChecked();
                     boolean samsungOn = samsungBox.isChecked();
                     boolean samsungWas = prefs.getBoolean(SamsungSync.PREF_ENABLED, false);
+                    boolean reminderOn = reminderBox.isChecked();
                     prefs.edit()
                             .putString(KEY_SERVER_URL, url)
                             .putString(KEY_INGEST_TOKEN, tokenInput.getText().toString().trim())
                             .putBoolean(KEY_SCALE_SCAN, scanOn)
                             .putBoolean(SamsungSync.PREF_ENABLED, samsungOn)
+                            .putBoolean(Reminders.PREF_ENABLED, reminderOn)
                             .apply();
                     loadServer();
                     applyScaleScanSetting(scanOn);
@@ -206,6 +226,12 @@ public class MainActivity extends Activity {
                         SamsungSync.syncNow(getApplicationContext());
                     } else if (samsungWas) {
                         SamsungSync.disable(getApplicationContext());
+                    }
+                    if (reminderOn) {
+                        Reminders.schedule(getApplicationContext());
+                        ensureNotificationPermission();
+                    } else {
+                        Reminders.cancel(getApplicationContext());
                     }
                 })
                 .setNeutralButton("恢复默认", (d, w) -> {
