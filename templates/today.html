@@ -9,36 +9,31 @@
     <p class="mt-1 text-sm text-slate-400 tabular-nums">{{ today.year }} 年 {{ today.month }} 月 {{ today.day }} 日 · {{ weekday_cn }}</p>
   </section>
 
-  <!-- 2. 今日步数进度条（daily_activity + app_settings.target_steps） -->
+  <!-- 2. 今日三环（步数 / 训练分钟 / 打卡完成，Apple Fitness 式激励） -->
   <section class="card">
-    <h2 class="card-title">今日步数</h2>
-    {% if steps is not none %}
-    <div class="flex items-end justify-between gap-3">
-      <div class="leading-none">
-        <span class="stat-num text-3xl">{{ '{:,}'.format(steps) }}</span>
-        <span class="ml-1 text-xs text-slate-500">步</span>
+    <h2 class="card-title">今日三环</h2>
+    <div class="grid grid-cols-3 gap-2">
+      {% for r in rings %}
+      <div class="flex flex-col items-center gap-1.5">
+        <div class="relative w-20 h-20">
+          <svg viewBox="0 0 36 36" class="w-20 h-20 -rotate-90">
+            <circle cx="18" cy="18" r="15.5" fill="none" stroke="rgba(51,65,85,0.45)" stroke-width="3.6"/>
+            <circle cx="18" cy="18" r="15.5" fill="none" stroke="{{ r.color }}" stroke-width="3.6"
+                    stroke-linecap="round" pathLength="100"
+                    stroke-dasharray="{{ r.pct }} 100"
+                    {% if r.pct >= 100 %}style="filter: drop-shadow(0 0 4px {{ r.color }})"{% endif %}/>
+          </svg>
+          <div class="absolute inset-0 flex flex-col items-center justify-center leading-none">
+            <span class="text-sm font-bold tabular-nums text-slate-100">{{ r.value }}</span>
+            <span class="mt-0.5 text-[10px] text-slate-500">{{ r.label }}</span>
+          </div>
+        </div>
+        <span class="text-[10px] text-slate-500 tabular-nums">{{ r.sub }}</span>
       </div>
-      <span class="pb-0.5 text-xs text-slate-500 tabular-nums">目标 {{ '{:,}'.format(target_steps) }}</span>
+      {% endfor %}
     </div>
-    <div class="progress-track mt-3">
-      <div class="progress-fill" style="width: {{ steps_pct }}%"></div>
-    </div>
-    <p class="mt-2 text-xs tabular-nums">
-      {% if steps_pct >= 100 %}
-      <span class="badge-accent">今日目标已达成 🎉</span>
-      {% else %}
-      <span class="text-slate-500">已完成 {{ steps_pct }}%</span>
-      {% endif %}
-    </p>
-    {% else %}
-    <div class="flex flex-col items-center gap-2 py-5 text-center">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
-           stroke-linecap="round" stroke-linejoin="round" class="w-9 h-9 text-slate-600">
-        <path d="M3 3v16a2 2 0 0 0 2 2h16M7 14l4-4 3 3 5-6"/>
-      </svg>
-      <p class="text-sm text-slate-500">暂无步数数据</p>
-      <p class="text-xs text-slate-600">导入或同步运动数据后，这里会显示今日进度</p>
-    </div>
+    {% if rings[0].pct >= 100 and rings[1].pct >= 100 and rings[2].pct >= 100 %}
+    <p class="mt-3 text-center text-xs"><span class="badge-accent">三环合围，今日圆满 🎉</span></p>
     {% endif %}
   </section>
 

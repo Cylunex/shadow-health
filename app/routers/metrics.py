@@ -285,6 +285,39 @@ def _target_line(db: Session, metric: str) -> dict[str, Any] | None:
     return {"value": float(value), "label": f"目标 {_fmt(value)} {unit}"}
 
 
+def _weight_trend_hint(db: Session, target: float) -> str | None:
+    """按近 30 天体重最小二乘斜率估算达标时间（≥5 个点、跨度 ≥7 天才有意义）。"""
+    today = today_local()
+    pts = db.execute(
+        select(BodyMetrics.log_date, BodyMetrics.weight_kg).where(
+            BodyMetrics.log_date >= today - timedelta(days=29),
+            BodyMetrics.weight_kg.is_not(None),
+        ).order_by(BodyMetrics.log_date)
+    ).all()
+    if len(pts) < 5 or (pts[-1][0] - pts[0][0]).days < 7:
+        return None
+    xs = [(d - pts[0][0]).days for d, _ in pts]
+    ys = [float(w) for _, w in pts]
+    n = len(pts)
+    mean_x, mean_y = sum(xs) / n, sum(ys) / n
+    denom = sum((x - mean_x) ** 2 for x in xs)
+    if denom == 0:
+        return None
+    slope = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys)) / denom  # kg/天
+    current = ys[-1]
+    gap = target - current  # 负=还需减，正=还需增
+    if abs(gap) < 0.3:
+        return "已在目标附近，保持住"
+    if abs(slope) < 0.005:  # <35g/周，趋势基本走平
+        return "近 30 天体重走平，按此趋势难以达标"
+    if (gap < 0) != (slope < 0):
+        return "近 30 天趋势与目标方向相反，注意调整"
+    weeks = abs(gap / (slope * 7))
+    if weeks > 99:
+        return None
+    return f"按近 30 天趋势约 {round(weeks)} 周达标"
+
+
 def _chart_context(db: Session, metric: str, days: int) -> dict[str, Any]:
     today = today_local()
     start = today - timedelta(days=days - 1)
@@ -357,6 +390,9 @@ def _chart_context(db: Session, metric: str, days: int) -> dict[str, Any]:
         "target": target,
     }
     has_data = any(v is not None for ds in datasets for v in ds["data"])
+    trend_hint = (
+        _weight_trend_hint(db, target["value"]) if metric == "weight" and target else None
+    )
     return {
         "chart": {
             "metric": metric,
@@ -364,6 +400,7 @@ def _chart_context(db: Session, metric: str, days: int) -> dict[str, Any]:
             "payload_json": json.dumps(payload, ensure_ascii=False),
             "has_data": has_data,
             "target_label": target["label"] if target else None,
+            "trend_hint": trend_hint,
             "metric_options": _CHART_METRICS,
             "days_options": _CHART_DAYS,
         }

@@ -72,7 +72,18 @@
         <input type="text" inputmode="decimal" name="protein_g" id="diet-protein" autocomplete="off" placeholder="可选"
                class="field disabled:opacity-40">
       </label>
+      <label class="block">
+        <span class="field-label">脂肪 (g)</span>
+        <input type="text" inputmode="decimal" name="fat_g" autocomplete="off" placeholder="可选"
+               class="field disabled:opacity-40">
+      </label>
+      <label class="block">
+        <span class="field-label">碳水 (g)</span>
+        <input type="text" inputmode="decimal" name="carb_g" autocomplete="off" placeholder="可选"
+               class="field disabled:opacity-40">
+      </label>
     </div>
+    <p class="text-xs text-slate-600 -mt-1">选食物库条目时四项营养按用量自动算，无需手填。</p>
 
     <div id="diet-form-msg" class="text-xs empty:hidden"></div>
     <button type="submit" class="btn-primary w-full">记一笔</button>

@@ -21,7 +21,7 @@
                class="field text-sm">
       </label>
       {% if log.food_id is not none %}
-      <div class="col-span-2 self-end pb-3 text-xs text-slate-500">热量/蛋白按用量自动重算</div>
+      <div class="col-span-2 self-end pb-3 text-xs text-slate-500">四项营养按用量自动重算</div>
       {% else %}
       <label class="block">
         <span class="field-label">热量 (kcal)</span>
@@ -31,6 +31,16 @@
       <label class="block">
         <span class="field-label">蛋白 (g)</span>
         <input type="text" inputmode="decimal" name="protein_g" value="{{ fmt(log.protein_g) }}" autocomplete="off"
+               class="field text-sm">
+      </label>
+      <label class="block">
+        <span class="field-label">脂肪 (g)</span>
+        <input type="text" inputmode="decimal" name="fat_g" value="{{ fmt(log.fat_g) }}" autocomplete="off"
+               class="field text-sm">
+      </label>
+      <label class="block">
+        <span class="field-label">碳水 (g)</span>
+        <input type="text" inputmode="decimal" name="carb_g" value="{{ fmt(log.carb_g) }}" autocomplete="off"
                class="field text-sm">
       </label>
       {% endif %}

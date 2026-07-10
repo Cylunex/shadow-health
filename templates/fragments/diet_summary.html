@@ -29,4 +29,13 @@
       <div class="progress-fill" style="width: {{ protein_pct }}%"></div>
     </div>
   </div>
+  <div class="flex items-center justify-between gap-2 text-xs text-slate-500">
+    <span class="tabular-nums">脂肪 {{ fmt(total_fat) }} g · 碳水 {{ fmt(total_carb) }} g</span>
+    {% if diet_streak >= 2 %}
+    <span class="inline-flex items-center gap-1 text-amber-400/90">
+      <svg viewBox="0 0 24 24" fill="currentColor" class="w-3.5 h-3.5"><path d="M12 23c-4.97 0-8-3.06-8-7.35 0-2.44 1.36-4.72 2.61-6.19a22 22 0 0 1 2.72-2.71c.72 1.09 1.53 1.96 2.42 2.61.06-2.53.86-5.13 2.41-7.36 1.35 1.06 6.84 5.72 6.84 13.65C21 19.94 16.97 23 12 23z"/></svg>
+      连续记录 {{ diet_streak }} 天
+    </span>
+    {% endif %}
+  </div>
 </div>

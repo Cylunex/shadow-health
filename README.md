@@ -44,6 +44,8 @@ macOS/Linux 可直接 `npx -y tailwindcss@3.4.17 -c tailwind.config.js -i static
 
 ## 部署（局域网 Debian 主机）
 
+> **照单执行版部署手册见 [docs/deploy.md](docs/deploy.md)**（含生产库初始化 SQL、.env 清单、验收清单）。以下为背景说明。
+
 镜像基于 `python:3.12-slim`（Debian bookworm），全部依赖走 `uv.lock` 锁定的 pip 包（含 `tzdata`，
 slim 镜像无系统 zoneinfo，`ZoneInfo("Asia/Shanghai")` 依赖它），无平台特定二进制，Debian x86_64 直接可用。
 

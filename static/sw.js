@@ -4,7 +4,7 @@
  * 非 GET（POST/PUT/DELETE…）一律 passthrough 不缓存。
  * 升级方式：改 SW_VERSION 即可让旧缓存在 activate 时被清掉。
  */
-const SW_VERSION = 'v6';
+const SW_VERSION = 'v7';
 const CACHE_NAME = 'shadow-health-' + SW_VERSION;
 const OFFLINE_URL = '/static/offline.html';
 const PRECACHE = [

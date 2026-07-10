@@ -25,12 +25,12 @@ def _rank(source: str | None) -> int:
         return len(SOURCE_PRIORITY)
 
 
-def sessions_by_date(db: Session, start: date, end: date) -> dict[date, list[SleepSession]]:
-    """wake_date -> 该夜优先 source 的全部会话。"""
-    rows = db.execute(
-        select(SleepSession).where(SleepSession.wake_date.between(start, end))
-    ).scalars().all()
-    by_day: dict[date, list[SleepSession]] = {}
+def pick_preferred(rows: list) -> dict[date, list]:
+    """纯函数：按 wake_date 分组并只保留优先 source 的会话（同 source 多条保留）。
+
+    入参对象只需有 .wake_date 与 .source 属性（便于单测）。
+    """
+    by_day: dict[date, list] = {}
     for s in rows:
         cur = by_day.get(s.wake_date)
         if not cur:
@@ -42,6 +42,14 @@ def sessions_by_date(db: Session, start: date, end: date) -> dict[date, list[Sle
         elif new_rank == old_rank:
             cur.append(s)
     return by_day
+
+
+def sessions_by_date(db: Session, start: date, end: date) -> dict[date, list[SleepSession]]:
+    """wake_date -> 该夜优先 source 的全部会话。"""
+    rows = db.execute(
+        select(SleepSession).where(SleepSession.wake_date.between(start, end))
+    ).scalars().all()
+    return pick_preferred(list(rows))
 
 
 def total_sleep_min(db: Session, d: date) -> int:

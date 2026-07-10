@@ -1,22 +1,26 @@
 """今日面板（设计文档 §四 "/" 行）。
 
-自己只查 daily_activity + app_settings 两张表；
+自查 daily_activity / workout_logs / habits + app_settings（三环聚合）；
 计划卡/习惯/指标/饮食各区块通过 HTMX 片段由对应模块提供。
 """
 from __future__ import annotations
 
+from datetime import date
+
 from fastapi import APIRouter, Depends, Request
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.deps import require_login, templates
-from app.models import AppSetting, DailyActivity
+from app.models import AppSetting, DailyActivity, Habit, HabitLog, WorkoutLog
 from app.timeutil import now_local, today_local
 
 router = APIRouter(dependencies=[Depends(require_login)])
 
 WEEKDAY_CN = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
 DEFAULT_TARGET_STEPS = 8000  # 设计文档 §5.6：target_steps 默认 8000（源 06）
+DAILY_WORKOUT_TARGET_MIN = 30  # 三环之「训练环」日目标（Apple Fitness 同款默认值）
 
 
 def _greeting(hour: int) -> str:
@@ -49,6 +53,50 @@ def _target_steps(db: Session) -> int:
     return DEFAULT_TARGET_STEPS
 
 
+def _rings(db: Session, today: date, steps: int | None, target_steps: int) -> list[dict]:
+    """今日三环（Apple Fitness 式激励）：步数 / 训练分钟 / 打卡完成。"""
+    workout_min = db.execute(
+        select(func.coalesce(func.sum(WorkoutLog.duration_min), 0)).where(
+            WorkoutLog.log_date == today
+        )
+    ).scalar_one()
+    habits = db.execute(
+        select(Habit.id, Habit.target_per_period).where(
+            Habit.active.is_(True), Habit.period == "daily"
+        )
+    ).all()
+    targets = {hid: t or 1 for hid, t in habits}
+    done = 0
+    if targets:
+        logs = db.execute(
+            select(HabitLog.habit_id, HabitLog.done_count).where(
+                HabitLog.log_date == today, HabitLog.habit_id.in_(list(targets))
+            )
+        ).all()
+        done = sum(1 for hid, c in logs if c >= targets[hid])
+
+    def pct(v: float, target: float) -> int:
+        return min(100, round(v * 100 / target)) if target else 0
+
+    return [
+        {
+            "label": "步数", "color": "#34d399",
+            "pct": pct(steps or 0, target_steps),
+            "value": f"{steps or 0:,}", "sub": f"目标 {target_steps:,}",
+        },
+        {
+            "label": "训练", "color": "#38bdf8",
+            "pct": pct(int(workout_min), DAILY_WORKOUT_TARGET_MIN),
+            "value": str(int(workout_min)), "sub": f"目标 {DAILY_WORKOUT_TARGET_MIN} 分钟",
+        },
+        {
+            "label": "打卡", "color": "#a78bfa",
+            "pct": pct(done, len(targets)),
+            "value": str(done), "sub": f"共 {len(targets)} 项",
+        },
+    ]
+
+
 @router.get("/")
 def today_page(request: Request, db: Session = Depends(get_db)):
     today = today_local()
@@ -65,5 +113,6 @@ def today_page(request: Request, db: Session = Depends(get_db)):
         "steps": steps,
         "target_steps": target_steps,
         "steps_pct": steps_pct,
+        "rings": _rings(db, today, steps, target_steps),
     }
     return templates.TemplateResponse(request, "today.html", ctx)

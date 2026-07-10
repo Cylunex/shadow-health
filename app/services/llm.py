@@ -260,9 +260,9 @@ def _call(system: str, user_content: str | list, max_tokens: int = 8000) -> str:
 MEAL_PHOTO_PROMPT = """你是营养估算助手。观察这张餐食照片，识别其中的食物并按照片中实际可见份量估算营养（中式家常口径；无法判断时按常见一人份）。
 
 只返回一个 JSON 对象（不要 markdown 代码块、不要多余文字），格式：
-{"items": [{"name": "食物名(≤12字中文)", "amount_g": 估算克数, "kcal": 该份量总热量, "protein_g": 该份量总蛋白克数}], "note": "一句话说明份量假设或不确定性"}
+{"items": [{"name": "食物名(≤12字中文)", "amount_g": 估算克数, "kcal": 该份量总热量, "protein_g": 蛋白克数, "fat_g": 脂肪克数, "carb_g": 碳水克数}], "note": "一句话说明份量假设或不确定性"}
 
-注意：kcal/protein_g 是照片中这一份的总值，不是每100g；识别不出食物时 items 给空数组并在 note 说明。"""
+注意：营养值均为照片中这一份的总值，不是每100g；识别不出食物时 items 给空数组并在 note 说明。"""
 
 # Claude API 支持的图片格式（HEIC 不支持）
 VISION_MEDIA_TYPES = ("image/jpeg", "image/png", "image/webp", "image/gif")
@@ -316,6 +316,8 @@ def analyze_meal_photo(image_bytes: bytes, media_type: str) -> dict[str, Any]:
             "amount_g": _num(it.get("amount_g"), 1, 5000),
             "kcal": _num(it.get("kcal"), 0, 5000),
             "protein_g": _num(it.get("protein_g"), 0, 500),
+            "fat_g": _num(it.get("fat_g"), 0, 500),
+            "carb_g": _num(it.get("carb_g"), 0, 1000),
         })
     return {"items": items, "note": str(data.get("note") or "").strip()[:200]}
 

@@ -41,6 +41,9 @@
     <canvas id="metrics-chart-canvas"></canvas>
   </div>
   <p class="text-xs text-slate-500 text-center">● 手动录入 · △ 自动同步{% if chart.target_label %} · <span class="text-amber-400/90">┄ {{ chart.target_label }}</span>{% endif %}</p>
+  {% if chart.trend_hint %}
+  <p class="text-xs text-emerald-400/80 text-center -mt-1">{{ chart.trend_hint }}</p>
+  {% endif %}
 
   <script type="application/json" id="metrics-chart-data">{{ chart.payload_json | safe }}</script>
   <script>

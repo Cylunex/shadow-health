@@ -121,16 +121,19 @@ def _setting_number(db: Session, key: str) -> float | None:
         return None
 
 
-def _food_macros(food: Food, amount_g: Decimal | None) -> tuple[Decimal | None, Decimal | None]:
-    """foods × amount_g → (kcal, protein_g) 冗余值；食物库缺值时对应项为 None。"""
+def _food_macros(
+    food: Food, amount_g: Decimal | None
+) -> tuple[Decimal | None, Decimal | None, Decimal | None, Decimal | None]:
+    """foods × amount_g → (kcal, protein, fat, carb) 冗余值；食物库缺值时对应项为 None。"""
     if amount_g is None:
-        return None, None
-    kcal = protein = None
-    if food.kcal_per_100g is not None:
-        kcal = (Decimal(food.kcal_per_100g) * amount_g / 100).quantize(Decimal("0.1"))
-    if food.protein_g is not None:
-        protein = (Decimal(food.protein_g) * amount_g / 100).quantize(Decimal("0.1"))
-    return kcal, protein
+        return None, None, None, None
+
+    def scale(per100: Any) -> Decimal | None:
+        if per100 is None:
+            return None
+        return (Decimal(per100) * amount_g / 100).quantize(Decimal("0.1"))
+
+    return scale(food.kcal_per_100g), scale(food.protein_g), scale(food.fat_g), scale(food.carb_g)
 
 
 def _last_amount(db: Session, food_id: int) -> Decimal:
@@ -191,11 +194,31 @@ def _day_ctx(db: Session, d: date) -> dict:
     return {"d": d, "meal_groups": meal_groups, "ai_on": llm.is_configured(), "fmt": _fmt}
 
 
+def _diet_streak(db: Session, d: date) -> int:
+    """连续记录天数（截至 d；d 当天还没记不破连击，从前一天起算）。"""
+    days = {
+        r[0]
+        for r in db.execute(
+            select(func.distinct(DietLog.log_date)).where(
+                DietLog.log_date <= d, DietLog.log_date > d - timedelta(days=366)
+            )
+        )
+    }
+    cur = d if d in days else d - timedelta(days=1)
+    n = 0
+    while cur in days:
+        n += 1
+        cur -= timedelta(days=1)
+    return n
+
+
 def _summary_ctx(db: Session, d: date) -> dict:
-    total_kcal, total_protein = db.execute(
+    total_kcal, total_protein, total_fat, total_carb = db.execute(
         select(
             func.coalesce(func.sum(DietLog.kcal), 0),
             func.coalesce(func.sum(DietLog.protein_g), 0),
+            func.coalesce(func.sum(DietLog.fat_g), 0),
+            func.coalesce(func.sum(DietLog.carb_g), 0),
         ).where(DietLog.log_date == d)
     ).one()
     target_kcal = _setting_number(db, "target_kcal")
@@ -210,12 +233,15 @@ def _summary_ctx(db: Session, d: date) -> dict:
         "d": d,
         "total_kcal": total_kcal,
         "total_protein": total_protein,
+        "total_fat": total_fat,
+        "total_carb": total_carb,
         "target_kcal": target_kcal,
         "target_protein": target_protein,
         "kcal_pct": pct(total_kcal, target_kcal),
         "protein_pct": pct(total_protein, target_protein),
         "kcal_over": bool(target_kcal) and float(total_kcal) > float(target_kcal or 0),
         "protein_ok": bool(target_protein) and float(total_protein) >= float(target_protein or 0),
+        "diet_streak": _diet_streak(db, d),
         "fmt": _fmt,
     }
 
@@ -304,6 +330,8 @@ async def diet_log_create(request: Request, db: Session = Depends(get_db)):
         amount = _parse_decimal(form.get("amount_g"), "用量", 5000)
         kcal = _parse_decimal(form.get("kcal"), "热量", 20000)
         protein = _parse_decimal(form.get("protein_g"), "蛋白质", 1000)
+        fat = _parse_decimal(form.get("fat_g"), "脂肪", 1000)
+        carb = _parse_decimal(form.get("carb_g"), "碳水", 2000)
     except ValueError as exc:
         return _form_msg(request, error=str(exc))
 
@@ -317,10 +345,10 @@ async def diet_log_create(request: Request, db: Session = Depends(get_db)):
             return _form_msg(request, error="所选食物不存在，请重新搜索选择")
         if amount is None:  # 正常会预填上次用量；被清空时兜底
             amount = _last_amount(db, food.id)
-        kcal, protein = _food_macros(food, amount)
+        kcal, protein, fat, carb = _food_macros(food, amount)
         log = DietLog(
             log_date=log_date, meal=meal, food_id=food.id,
-            amount_g=amount, kcal=kcal, protein_g=protein,
+            amount_g=amount, kcal=kcal, protein_g=protein, fat_g=fat, carb_g=carb,
         )
         name = food.name
     else:
@@ -329,7 +357,7 @@ async def diet_log_create(request: Request, db: Session = Depends(get_db)):
             return _form_msg(request, error="请输入吃了什么，或从联想中选择食物")
         log = DietLog(
             log_date=log_date, meal=meal, free_text=free_text,
-            amount_g=amount, kcal=kcal, protein_g=protein,
+            amount_g=amount, kcal=kcal, protein_g=protein, fat_g=fat, carb_g=carb,
         )
         name = free_text
     db.add(log)
@@ -359,6 +387,8 @@ async def diet_log_update(log_id: int, request: Request, db: Session = Depends(g
         amount = _parse_decimal(form.get("amount_g"), "用量", 5000)
         kcal = _parse_decimal(form.get("kcal"), "热量", 20000)
         protein = _parse_decimal(form.get("protein_g"), "蛋白质", 1000)
+        fat = _parse_decimal(form.get("fat_g"), "脂肪", 1000)
+        carb = _parse_decimal(form.get("carb_g"), "碳水", 2000)
     except ValueError as exc:
         return templates.TemplateResponse(
             request, "fragments/diet_log_edit.html", _edit_ctx(db, log, error=str(exc))
@@ -370,7 +400,7 @@ async def diet_log_update(log_id: int, request: Request, db: Session = Depends(g
         if amount is not None:
             log.amount_g = amount
         if food is not None:  # 冗余值一律按用量重算，保持与食物库一致
-            log.kcal, log.protein_g = _food_macros(food, log.amount_g)
+            log.kcal, log.protein_g, log.fat_g, log.carb_g = _food_macros(food, log.amount_g)
     else:
         free_text = str(form.get("free_text") or "").strip()
         if free_text:
@@ -378,6 +408,8 @@ async def diet_log_update(log_id: int, request: Request, db: Session = Depends(g
         log.amount_g = amount
         log.kcal = kcal
         log.protein_g = protein
+        log.fat_g = fat
+        log.carb_g = carb
     db.flush()
     return templates.TemplateResponse(
         request, "fragments/diet_log_row.html", _row_ctx(db, log), headers=dict(HX_TRIGGER)
@@ -405,11 +437,11 @@ async def diet_quick(food_id: int, request: Request, db: Session = Depends(get_d
     form = await request.form()
     log_date = min(_parse_date(form.get("d")), today_local())
     amount = _last_amount(db, food.id)
-    kcal, protein = _food_macros(food, amount)
+    kcal, protein, fat, carb = _food_macros(food, amount)
     db.add(
         DietLog(
             log_date=log_date, meal=_default_meal(), food_id=food.id,
-            amount_g=amount, kcal=kcal, protein_g=protein,
+            amount_g=amount, kcal=kcal, protein_g=protein, fat_g=fat, carb_g=carb,
         )
     )
     db.flush()
@@ -677,6 +709,8 @@ def diet_photo_analyze(photo_id: int, request: Request, db: Session = Depends(ge
             amount_g=it["amount_g"],
             kcal=it["kcal"],
             protein_g=it["protein_g"],
+            fat_g=it.get("fat_g"),
+            carb_g=it.get("carb_g"),
         ))
         total_kcal += it["kcal"] or 0
     db.flush()

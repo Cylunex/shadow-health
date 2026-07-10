@@ -164,6 +164,8 @@ class DietLog(TimestampMixin, Base):
     amount_g: Mapped[float | None] = mapped_column(Numeric(6, 1))
     kcal: Mapped[float | None] = mapped_column(Numeric(6, 1))
     protein_g: Mapped[float | None] = mapped_column(Numeric(5, 1))
+    fat_g: Mapped[float | None] = mapped_column(Numeric(5, 1))
+    carb_g: Mapped[float | None] = mapped_column(Numeric(6, 1))
 
 
 class DietPhoto(Base):
