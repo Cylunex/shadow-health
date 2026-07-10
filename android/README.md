@@ -45,8 +45,10 @@ JAVA_HOME=/opt/homebrew/opt/openjdk@17 ./gradlew --no-daemon assembleDebug   # m
 默认地址 `http://192.168.1.100:8080`。三种方式打开设置框：**首次启动**自动弹出；
 任意页面**三指按住约 0.7 秒**；实体/虚拟**菜单键**。
 
-设置项：服务器地址 · `INGEST_TOKEN`（同服务器 .env，两条采集通道共用）·
-体脂秤监听开关 · 三星健康同步开关。地址等存 SharedPreferences，重装后需重设。
+设置项：服务器地址 · `INGEST_TOKEN`（同服务器 .env，各通道共用）·
+体脂秤监听开关 · 三星健康同步开关 · 每日提醒开关（20:30 拉服务端
+`/api/reminders/digest`，有打卡/蛋白/步数/周有氧缺口才弹通知，全达成不打扰）。
+地址等存 SharedPreferences，重装后需重设。
 
 其他行为：返回键 = 网页后退（无历史则退出）；登录 Cookie 持久化，重启不掉登录态。
 
