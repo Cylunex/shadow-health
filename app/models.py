@@ -325,6 +325,19 @@ class WeeklyReview(TimestampMixin, Base):
     metrics_snapshot: Mapped[dict | None] = mapped_column(JSONB)
 
 
+class MonthlyReview(TimestampMixin, Base):
+    __tablename__ = "monthly_reviews"
+    __table_args__ = (
+        CheckConstraint("extract(day FROM month_start) = 1", name="ck_month_first_day"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    month_start: Mapped[date] = mapped_column(Date, nullable=False, unique=True)
+    summary: Mapped[str | None] = mapped_column(Text)
+    metrics_snapshot: Mapped[dict | None] = mapped_column(JSONB)
+
+
 # ---------- 3.6 设置与导入基础设施 ----------
 class AppSetting(Base):
     __tablename__ = "app_settings"

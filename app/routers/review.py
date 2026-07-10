@@ -1,7 +1,7 @@
 """周报：列表（惰性生成）+ 快照展示 + 手写复盘（设计文档 §3.5 weekly_reviews、§四 /review 行）。
 
 端点：
-- GET /review               周报列表（倒序）；访问时惰性生成上一完整周（周一~周日）快照
+- GET /review               重定向到报告中心周报 tab（列表已并入 /report?t=weekly，report.py）
 - GET /review/{week_start}  快照展示（只读）+ summary 手写复盘表单；缺失的历史完整周按需生成
 - PUT /review/{week_start}  保存 summary，返回复盘表单片段
 
@@ -19,6 +19,7 @@ from datetime import date, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import RedirectResponse
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
@@ -321,16 +322,9 @@ def _snapshot_cards(snap: dict[str, Any]) -> list[dict[str, Any]]:
 
 # ---------- 路由 ----------
 @router.get("")
-def review_list(request: Request, db: Session = Depends(get_db)):
-    _ensure_last_week(db)
-    reviews = (
-        db.execute(select(WeeklyReview).order_by(WeeklyReview.week_start.desc()))
-        .scalars()
-        .all()
-    )
-    return templates.TemplateResponse(
-        request, "review.html", {"rows": [_list_row(r) for r in reviews]}
-    )
+def review_list():
+    """列表已并入报告中心（/report 周报 tab），旧入口重定向保关系。"""
+    return RedirectResponse("/report?t=weekly", status_code=303)
 
 
 @router.get("/{week_start}")

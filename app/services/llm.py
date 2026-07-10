@@ -24,6 +24,7 @@ from app.models import (
     DietLog,
     Habit,
     HabitLog,
+    MonthlyReview,
     WeeklyReview,
     WorkoutLog,
 )
@@ -209,6 +210,23 @@ def build_context(db: Session, days: int = 30) -> str:
                 f"日均{snap.get('avg_kcal', '-')}kcal，训练{snap.get('workout_count', '-')}次/"
                 f"{snap.get('workout_min', '-')}min（有氧{snap.get('cardio_min', '-')}min），"
                 f"打卡率{snap.get('habit_rate', '-')}%，日均步数{snap.get('avg_steps', '-')}"
+            )
+
+    # 月报快照（最近 3 份）
+    months = db.execute(
+        select(MonthlyReview).order_by(MonthlyReview.month_start.desc()).limit(3)
+    ).scalars().all()
+    if months:
+        lines.append("\n## 月报快照（新→旧）")
+        for r in months:
+            snap = r.metrics_snapshot or {}
+            lines.append(
+                f"- {r.month_start.year}年{r.month_start.month}月：体重变化{snap.get('weight_change', '-')}kg，"
+                f"体脂变化{snap.get('body_fat_change', '-')}%，训练{snap.get('workout_count', '-')}次/"
+                f"{snap.get('workout_min', '-')}min，有氧达标{snap.get('cardio_weeks_ok', '-')}/"
+                f"{snap.get('cardio_weeks_total', '-')}周，打卡率{snap.get('habit_rate', '-')}%，"
+                f"饮食记录{snap.get('diet_days', '-')}天（日均{snap.get('avg_kcal', '-')}kcal），"
+                f"日均步数{snap.get('avg_steps', '-')}（达标{snap.get('steps_ok_days', '-')}天）"
             )
 
     return "\n".join(lines)

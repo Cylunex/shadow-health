@@ -3,10 +3,15 @@
 {% block content %}
 <div class="space-y-5">
 
-  <!-- 1. 问候行 + 当前日期 -->
+  <!-- 1. 问候行 + 当前日期（点日期进当日日报） -->
   <section class="px-1 pt-1 fade-in">
     <h2 class="text-2xl font-bold tracking-tight">{{ greeting }}</h2>
-    <p class="mt-1 text-sm text-slate-400 tabular-nums">{{ today.year }} 年 {{ today.month }} 月 {{ today.day }} 日 · {{ weekday_cn }}</p>
+    <a href="/report/daily" class="mt-1 inline-flex min-h-[44px] items-center gap-1 text-sm text-slate-400 tabular-nums active:text-slate-200 transition-colors">
+      {{ today.year }} 年 {{ today.month }} 月 {{ today.day }} 日 · {{ weekday_cn }}
+      <span class="inline-flex items-center gap-0.5 text-xs text-emerald-400">日报
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3 h-3"><path d="m9 6 6 6-6 6"/></svg>
+      </span>
+    </a>
   </section>
 
   <!-- 2. 今日三环（步数 / 训练分钟 / 打卡完成，Apple Fitness 式激励） -->

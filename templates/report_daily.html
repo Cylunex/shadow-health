@@ -1,0 +1,166 @@
+{% extends "base.html" %}
+{% block title %}日报 {{ d.isoformat() }} · shadow-health{% endblock %}
+{% block page_title %}日报{% endblock %}
+{% block content %}
+<div class="space-y-5">
+
+  <div class="flex items-center justify-between gap-2">
+    <a href="/report" class="inline-flex items-center gap-0.5 text-sm text-slate-400 py-2.5 pr-3 min-h-[44px] hover:text-slate-200 transition-colors">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="m15 18-6-6 6-6"/></svg>
+      报告中心
+    </a>
+  </div>
+
+  {# 翻天导航（饮食页同款一体化胶囊 ‹ 日期 ›） #}
+  <div class="flex items-center justify-between gap-3">
+    <a href="/report/daily?d={{ prev_d.isoformat() }}" aria-label="前一天"
+       class="shrink-0 w-11 min-h-[44px] flex items-center justify-center rounded-full text-lg bg-slate-800/60 border border-slate-700/60 text-slate-300 hover:border-slate-500 active:scale-95 transition-all">‹</a>
+    <div class="text-center leading-tight">
+      <div class="text-sm font-semibold tabular-nums text-slate-100">{{ d.strftime('%Y-%m-%d') }} · {{ weekday_cn }}{% if is_today %}<span class="text-emerald-400"> · 今天</span>{% endif %}</div>
+      {% if not is_today %}<a href="/report/daily" class="text-xs text-emerald-400 active:text-emerald-300">回到今天</a>{% endif %}
+    </div>
+    {% if is_today %}
+    <span class="shrink-0 w-11 min-h-[44px] flex items-center justify-center rounded-full text-lg bg-slate-900/40 border border-slate-800/50 text-slate-700">›</span>
+    {% else %}
+    <a href="/report/daily?d={{ next_d.isoformat() }}" aria-label="后一天"
+       class="shrink-0 w-11 min-h-[44px] flex items-center justify-center rounded-full text-lg bg-slate-800/60 border border-slate-700/60 text-slate-300 hover:border-slate-500 active:scale-95 transition-all">›</a>
+    {% endif %}
+  </div>
+
+  {# 当日三环（今日页同款） #}
+  <section class="card">
+    <h2 class="card-title">{{ '今日三环' if is_today else '当日三环' }}</h2>
+    <div class="grid grid-cols-3 gap-2">
+      {% for r in rings %}
+      <div class="flex flex-col items-center gap-1.5">
+        <div class="relative w-20 h-20">
+          <svg viewBox="0 0 36 36" class="w-20 h-20 -rotate-90">
+            <circle cx="18" cy="18" r="15.5" fill="none" stroke="rgba(51,65,85,0.45)" stroke-width="3.6"/>
+            <circle cx="18" cy="18" r="15.5" fill="none" stroke="{{ r.color }}" stroke-width="3.6"
+                    stroke-linecap="round" pathLength="100"
+                    stroke-dasharray="{{ r.pct }} 100"
+                    {% if r.pct >= 100 %}style="filter: drop-shadow(0 0 4px {{ r.color }})"{% endif %}/>
+          </svg>
+          <div class="absolute inset-0 flex flex-col items-center justify-center leading-none">
+            <span class="text-sm font-bold tabular-nums text-slate-100">{{ r.value }}</span>
+            <span class="mt-0.5 text-[10px] text-slate-500">{{ r.label }}</span>
+          </div>
+        </div>
+        <span class="text-[10px] text-slate-500 tabular-nums">{{ r.sub }}</span>
+      </div>
+      {% endfor %}
+    </div>
+    {% if activity and (activity.distance_m or activity.active_kcal or activity.hr_avg) %}
+    <p class="mt-3 text-xs text-slate-500 tabular-nums text-center">
+      {%- if activity.distance_m %}距离 {{ '%.1f' | format(activity.distance_m / 1000) }} km{% endif -%}
+      {%- if activity.active_kcal %} · 活动 {{ fmt(activity.active_kcal) }} kcal{% endif -%}
+      {%- if activity.hr_avg %} · 心率 {{ activity.hr_min or '—' }}/{{ activity.hr_avg }}/{{ activity.hr_max or '—' }}{% endif -%}
+    </p>
+    {% endif %}
+  </section>
+
+  {# 饮食四项 vs 目标（饮食页同款汇总片段） #}
+  <section class="card">
+    <div class="mb-3 flex items-center justify-between">
+      <h2 class="card-title mb-0">饮食</h2>
+      <a href="/diet?d={{ d.isoformat() }}" class="inline-flex min-h-[44px] items-center px-2 -mr-2 text-xs font-medium text-emerald-400 active:text-emerald-300">明细 →</a>
+    </div>
+    {% include "fragments/diet_summary.html" %}
+  </section>
+
+  {# 训练明细 + 负荷 #}
+  <section class="card">
+    <h2 class="card-title">训练</h2>
+    <ul>
+      {% for log in wlogs %}
+      <li class="flex items-center justify-between gap-3 text-sm py-2 border-b border-slate-800/70 last:border-0">
+        <span class="text-slate-200 min-w-0 truncate">
+          {{ log.session_type or '训练' }}
+          {% if log.source != 'manual' %}<span class="badge ml-1">{{ source_labels.get(log.source, log.source) }}</span>{% endif %}
+        </span>
+        <span class="text-xs text-slate-400 shrink-0 tabular-nums">
+          {%- if log.duration_min %}{{ log.duration_min }} 分{% endif -%}
+          {%- if log.distance_km %} · {{ '%g' | format(log.distance_km | float) }} km{% endif -%}
+          {%- if log.rpe %} · RPE {{ log.rpe }}{% endif -%}
+        </span>
+      </li>
+      {% else %}
+      <li class="flex items-center gap-2 text-sm text-slate-500 py-2">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
+             stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 text-slate-600">
+          <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/>
+        </svg>
+        当日无训练记录，休息也是训练的一部分
+      </li>
+      {% endfor %}
+    </ul>
+    {% if wlogs %}
+    <p class="mt-2 text-xs text-slate-500 tabular-nums">
+      合计 {{ workout_min }} 分钟{% if training_load %} · 负荷 (sRPE) {{ training_load }}{% endif %}
+    </p>
+    {% endif %}
+  </section>
+
+  {# 打卡清单 #}
+  <section class="card">
+    <div class="mb-3 flex items-center justify-between">
+      <h2 class="card-title mb-0">打卡</h2>
+      {% if habit_items %}
+      <span class="text-xs text-slate-500 tabular-nums">{{ habit_done }} / {{ habit_items | length }}</span>
+      {% endif %}
+    </div>
+    <ul>
+      {% for it in habit_items %}
+      <li class="flex items-center justify-between gap-3 text-sm py-2 border-b border-slate-800/70 last:border-0">
+        <span class="inline-flex items-center gap-2 min-w-0">
+          {% if it.done %}
+          <span class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-400">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="w-3 h-3"><path d="M20 6 9 17l-5-5"/></svg>
+          </span>
+          {% else %}
+          <span class="h-5 w-5 shrink-0 rounded-full border border-slate-700"></span>
+          {% endif %}
+          <span class="truncate {% if it.done %}text-slate-200{% else %}text-slate-500{% endif %}">{{ it.name }}</span>
+        </span>
+        {% if it.target > 1 %}
+        <span class="text-xs text-slate-500 shrink-0 tabular-nums">{{ it.count }}/{{ it.target }}</span>
+        {% endif %}
+      </li>
+      {% else %}
+      <li class="text-sm text-slate-500 py-2">没有启用中的每日习惯</li>
+      {% endfor %}
+    </ul>
+  </section>
+
+  {# 身体与睡眠 #}
+  <section class="card">
+    <h2 class="card-title">身体与睡眠</h2>
+    {% if body_items %}
+    <div class="grid grid-cols-2 gap-2">
+      {% for it in body_items %}
+      <div class="rounded-xl border border-slate-800/70 bg-slate-900/60 px-3.5 py-3">
+        <div class="text-xs text-slate-500">{{ it.label }}</div>
+        <div class="mt-1 text-lg font-bold tabular-nums text-slate-100">{{ it.value }}</div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+    {% if sleep_label %}
+    <div class="{% if body_items %}mt-2 {% endif %}rounded-xl border border-slate-800/70 bg-slate-900/60 px-3.5 py-3">
+      <div class="text-xs text-slate-500">睡眠</div>
+      <div class="mt-1 text-lg font-bold tabular-nums text-slate-100">{{ sleep_label }}</div>
+      {% if sleep_stages %}<div class="mt-0.5 text-xs text-slate-500 tabular-nums">{{ sleep_stages }}</div>{% endif %}
+    </div>
+    {% elif sleep_hours_fallback %}
+    <div class="{% if body_items %}mt-2 {% endif %}rounded-xl border border-slate-800/70 bg-slate-900/60 px-3.5 py-3">
+      <div class="text-xs text-slate-500">睡眠</div>
+      <div class="mt-1 text-lg font-bold tabular-nums text-slate-100">{{ fmt(sleep_hours_fallback) }} 小时</div>
+      <div class="mt-0.5 text-xs text-slate-500">手记/回填</div>
+    </div>
+    {% elif not body_items %}
+    <p class="text-sm text-slate-500">当日无身体指标与睡眠记录</p>
+    {% endif %}
+  </section>
+
+</div>
+{% endblock %}

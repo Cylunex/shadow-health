@@ -15,27 +15,20 @@
 - 开发环境：Mac 临时 PG(55433) + `uv run uvicorn`（launch.json）；真实数据在生产 PG
   （172.22.169.180:55432，**角色未建**，见 deploy.md §1）
 
-## ▶ 下一任务：日报 + 月报（用户 2026-07-10 提出，未开工）
+## ✅ 已完成：日报 + 月报 + 报告中心（2026-07-10）
 
-周报已存在（`weekly_reviews` 惰性生成 + 快照卡 + 手写复盘，app/routers/review.py），
-照它的模式扩两端：
-
-**日报**：
-- 无需新表——聚合某日即可：三环、饮食四项 vs 目标、训练明细+负荷、打卡清单、
-  体重/体成分、睡眠（跨源去重走 services/sleep.py！）
-- 路由建议 `GET /report/daily?d=`；今日页与提醒 digest（app/routers/reminders.py）
-  已有大半聚合逻辑可抽公共函数复用
-- 入口：今日页顶部日期点击 → 当日日报；饮食页同款翻天导航
-
-**月报**：
-- 建 `monthly_reviews` 表（month_start 唯一，CHECK 每月 1 号；照 WeeklyReview 抄）+
-  迁移 08；惰性生成上一完整月（照 review.py 的 `_ensure_last_week` 模式）
-- 快照维度：体重/体脂/围度首末变化、总训练次数/分钟/负荷、有氧达标周数、
-  打卡率、饮食记录天数/日均四项、步数日均与达标天数、连击最高
-- 手写复盘 + 供 LLM 快照引用（llm.build_context 已读 weekly_reviews，同样接入月报）
-
-**报告中心**：更多页「周报」入口升级为「报告」，页内 日/周/月 三个 tab
-（HTMX 片段切换，样式参考 metrics 图表的 chips）。
+- **报告中心** `GET /report?t=daily|weekly|monthly`（app/routers/report.py，
+  tab 片段 `GET /fragments/report/tabs`）；更多页入口「周报」→「报告」，
+  旧 `/review` 列表 303 到 `/report?t=weekly`（周报详情 `/review/{week_start}` 不变）
+- **日报** `GET /report/daily?d=`：无表纯聚合——三环（复用 today._rings）、
+  饮食四项 vs 目标（复用 diet._summary_ctx + diet_summary 片段）、训练明细+sRPE 负荷、
+  打卡清单、体重/体成分、睡眠跨源去重（services/sleep）；入口：今日页日期行、
+  报告中心日报 tab（近 14 天批量聚合）；饮食页同款翻天导航
+- **月报** `monthly_reviews` 表（迁移 08，含 updated_at 触发器）+
+  `GET/PUT /report/monthly/{month_start}`，惰性生成上一完整月（照周报模式）；
+  快照口径见 report.py 模块 docstring（有氧达标周 = 周一落在本月的整周）；
+  llm.build_context 已接入最近 3 份月报快照
+- 回归：tests/test_monthly_report.py 锁月份边界/周归属/连击口径（42 个测试全绿）
 
 ## 其余待办（优先级序）
 

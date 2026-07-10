@@ -1,0 +1,81 @@
+{# 报告中心 tab 片段：日/周/月 chips 切换整体替换（样式照 metrics 图表 chips）；ctx = t, tabs, rows #}
+<div id="report-tabs" class="space-y-3">
+  <div class="flex gap-2">
+    {% for key, label in tabs %}
+    <button type="button"
+            hx-get="/fragments/report/tabs?t={{ key }}"
+            hx-target="#report-tabs" hx-swap="outerHTML"
+            class="chip flex-1 min-h-[44px] {% if key == t %}chip-active{% endif %}">
+      {{ label }}
+    </button>
+    {% endfor %}
+  </div>
+
+  {% if not rows %}
+  <div class="card flex flex-col items-center gap-3 py-10 text-center fade-in">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="w-9 h-9 text-slate-700">
+      <rect width="18" height="18" x="3" y="4" rx="2"/><path d="M8 2v4M16 2v4M3 10h18"/><path d="m9 16 2 2 4-4"/>
+    </svg>
+    <p class="text-sm text-slate-500 max-w-xs">
+      {% if t == 'weekly' %}还没有周报——过完第一个完整周（周一~周日）后，访问本页会自动生成快照。
+      {% elif t == 'monthly' %}还没有月报——过完第一个完整月后，访问本页会自动生成快照。
+      {% else %}最近还没有记录。{% endif %}
+    </p>
+  </div>
+  {% endif %}
+
+  {% if t == 'daily' %}
+  {% for r in rows %}
+  <a href="/report/daily?d={{ r.d }}"
+     class="card block min-h-[44px] transition-colors hover:border-slate-700 active:bg-slate-800/70">
+    <div class="flex items-center justify-between gap-2">
+      <span class="font-semibold text-sm tabular-nums text-slate-100">{{ r.label }} · {{ r.weekday }}</span>
+      {% if r.is_today %}<span class="shrink-0 badge-accent">今天</span>{% endif %}
+    </div>
+    {% if r.chips %}
+    <div class="mt-2.5 flex flex-wrap gap-1.5">
+      {% for c in r.chips %}<span class="badge tabular-nums">{{ c }}</span>{% endfor %}
+    </div>
+    {% else %}
+    <p class="mt-2 text-xs text-slate-600">当日无记录</p>
+    {% endif %}
+  </a>
+  {% endfor %}
+
+  {% elif t == 'weekly' %}
+  {% for r in rows %}
+  <a href="/review/{{ r.week_start }}"
+     class="card block min-h-[44px] transition-colors hover:border-slate-700 active:bg-slate-800/70">
+    <div class="flex items-center justify-between gap-2">
+      <span class="font-semibold text-sm tabular-nums text-slate-100">{{ r.label }}</span>
+      <span class="shrink-0 {% if r.has_summary %}badge-accent{% else %}badge{% endif %}">
+        {{ '已复盘' if r.has_summary else '待复盘' }}
+      </span>
+    </div>
+    {% if r.chips %}
+    <div class="mt-2.5 flex flex-wrap gap-1.5">
+      {% for c in r.chips %}<span class="badge tabular-nums">{{ c }}</span>{% endfor %}
+    </div>
+    {% endif %}
+  </a>
+  {% endfor %}
+
+  {% else %}
+  {% for r in rows %}
+  <a href="/report/monthly/{{ r.month_start }}"
+     class="card block min-h-[44px] transition-colors hover:border-slate-700 active:bg-slate-800/70">
+    <div class="flex items-center justify-between gap-2">
+      <span class="font-semibold text-sm tabular-nums text-slate-100">{{ r.label }}</span>
+      <span class="shrink-0 {% if r.has_summary %}badge-accent{% else %}badge{% endif %}">
+        {{ '已复盘' if r.has_summary else '待复盘' }}
+      </span>
+    </div>
+    {% if r.chips %}
+    <div class="mt-2.5 flex flex-wrap gap-1.5">
+      {% for c in r.chips %}<span class="badge tabular-nums">{{ c }}</span>{% endfor %}
+    </div>
+    {% endif %}
+  </a>
+  {% endfor %}
+  {% endif %}
+</div>
