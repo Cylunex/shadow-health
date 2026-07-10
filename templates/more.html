@@ -3,6 +3,37 @@
 {% block content %}
 <div class="space-y-5">
 
+  {# ---- 累计成就（对标 Keep 的里程碑激励） ---- #}
+  <section class="card">
+    <h2 class="card-title">累计成就</h2>
+    <div class="grid grid-cols-3 gap-3 text-center">
+      <div>
+        <p class="text-2xl font-bold tabular-nums text-emerald-400">{{ stats.workout_count }}</p>
+        <p class="mt-0.5 text-xs text-slate-500">训练次数</p>
+      </div>
+      <div>
+        <p class="text-2xl font-bold tabular-nums text-emerald-400">{{ stats.workout_min }}</p>
+        <p class="mt-0.5 text-xs text-slate-500">训练分钟</p>
+      </div>
+      <div>
+        <p class="text-2xl font-bold tabular-nums text-emerald-400">{{ stats.workout_km }}</p>
+        <p class="mt-0.5 text-xs text-slate-500">累计公里</p>
+      </div>
+      <div>
+        <p class="text-2xl font-bold tabular-nums text-sky-400">{{ stats.habit_count }}</p>
+        <p class="mt-0.5 text-xs text-slate-500">打卡次数</p>
+      </div>
+      <div>
+        <p class="text-2xl font-bold tabular-nums text-sky-400">{{ stats.best_streak }}</p>
+        <p class="mt-0.5 text-xs text-slate-500">最长连击 (天)</p>
+      </div>
+      <div>
+        <p class="text-2xl font-bold tabular-nums text-sky-400">{{ stats.record_days }}</p>
+        <p class="mt-0.5 text-xs text-slate-500">记录天数</p>
+      </div>
+    </div>
+  </section>
+
   <div class="space-y-2.5">
     {% set items = [('/ai', 'AI 分析', '数据分析报告 · 智能问答',
                      'M12 3v3m6.4-.4-2.1 2.1M21 12h-3m.4 6.4-2.1-2.1M12 18v3m-6.4-.4 2.1-2.1M3 12h3m-.4-6.4 2.1 2.1M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z'),

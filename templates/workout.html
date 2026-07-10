@@ -14,7 +14,12 @@
 
   {# ---- 手动记录 ---- #}
   <section class="card">
-    <h2 class="card-title">手动记一笔</h2>
+    <div class="mb-3 flex items-center justify-between">
+      <h2 class="card-title mb-0">手动记一笔</h2>
+      <a href="/workout/timer" class="inline-flex min-h-[44px] items-center gap-1 px-2 -mr-2 text-xs font-medium text-emerald-400 active:text-emerald-300">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2M9 2h6"/></svg>
+        计时器 →</a>
+    </div>
     {% include "fragments/workout_manual_form.html" %}
   </section>
 

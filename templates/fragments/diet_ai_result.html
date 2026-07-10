@@ -1,0 +1,15 @@
+{# AI 识别结果条：渲染进 #diet-ai-msg（在 diet.html 里、#diet-day 之外，日列表刷新后仍可见）
+   成功响应带 HX-Trigger: diet-changed，新记录行随即出现在餐次列表 #}
+{% if ok %}
+<div class="fade-in rounded-xl bg-emerald-600/15 border border-emerald-600/40 text-emerald-300 text-sm px-3.5 py-2.5">
+  <div class="flex items-start gap-2">
+    <svg class="w-4 h-4 shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+    <div>
+      <p>{{ ok }}</p>
+      {% if note %}<p class="mt-0.5 text-xs text-emerald-400/70">{{ note }}；估算值可点记录行修正</p>{% endif %}
+    </div>
+  </div>
+</div>
+{% elif error %}
+<div class="fade-in rounded-xl bg-red-600/15 border border-red-600/40 text-red-400 text-sm px-3.5 py-2.5">{{ error }}</div>
+{% endif %}

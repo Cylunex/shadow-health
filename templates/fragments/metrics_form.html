@@ -90,7 +90,7 @@
   <details class="group rounded-xl border border-slate-800/70 bg-slate-900/40 open:bg-slate-900/60 transition-colors">
     <summary class="min-h-[44px] flex items-center gap-2 px-3.5 text-sm text-slate-400 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">
       <svg class="w-3.5 h-3.5 shrink-0 text-slate-500 transition-transform group-open:rotate-90" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
-      更多指标（体成分 / 心率 / 血氧）
+      更多指标（体成分 / 心率 / 围度）
     </summary>
     <div class="grid grid-cols-2 gap-3 p-3.5 pt-1">
       {{ num_input('resting_hr', '静息心率 (次/分)', mode='numeric') }}
@@ -100,6 +100,10 @@
       {{ num_input('bmr_kcal', '基础代谢 (kcal)', mode='numeric') }}
       {{ num_input('body_water_kg', '体水分 (kg)') }}
       {{ num_input('visceral_fat_level', '内脏脂肪等级', mode='numeric') }}
+      {{ num_input('chest_cm', '胸围 (cm)') }}
+      {{ num_input('arm_cm', '臂围 (cm)') }}
+      {{ num_input('thigh_cm', '大腿围 (cm)') }}
+      {{ num_input('hip_cm', '臀围 (cm)') }}
     </div>
   </details>
 

@@ -101,10 +101,50 @@ async def login_submit(request: Request):
 
 @app.get("/more")
 def more_page(request: Request):
+    from sqlalchemy import func, select
+
+    from app.db import SessionLocal
     from app.deps import require_login
+    from app.models import BodyMetrics, DietLog, Habit, HabitLog, WorkoutLog
+    from app.routers.habits import _logs_map, _streak
+    from app.timeutil import today_local
 
     require_login(request)
-    return templates.TemplateResponse(request, "more.html", {})
+    db = SessionLocal()
+    try:
+        w_count, w_min, w_km = db.execute(
+            select(
+                func.count(),
+                func.coalesce(func.sum(WorkoutLog.duration_min), 0),
+                func.coalesce(func.sum(WorkoutLog.distance_km), 0),
+            )
+        ).one()
+        habit_count = db.execute(
+            select(func.coalesce(func.sum(HabitLog.done_count), 0))
+        ).scalar_one()
+        diet_count = db.execute(select(func.count()).select_from(DietLog)).scalar_one()
+        record_days = db.execute(
+            select(func.count()).select_from(BodyMetrics)
+        ).scalar_one()
+        today = today_local()
+        habits = db.execute(select(Habit).where(Habit.active.is_(True))).scalars().all()
+        logs = _logs_map(db, [h.id for h in habits])
+        best_streak = max(
+            (_streak(h, logs[h.id], today)[0] for h in habits if h.period == "daily"),
+            default=0,
+        )
+        stats = {
+            "workout_count": w_count,
+            "workout_min": int(w_min),
+            "workout_km": round(float(w_km), 1),
+            "habit_count": int(habit_count),
+            "diet_count": diet_count,
+            "record_days": record_days,
+            "best_streak": best_streak,
+        }
+    finally:
+        db.close()
+    return templates.TemplateResponse(request, "more.html", {"stats": stats})
 
 
 @app.post("/logout")

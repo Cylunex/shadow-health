@@ -534,6 +534,12 @@ def workout_page(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse(request, "workout.html", ctx)
 
 
+@router.get("/workout/timer")
+def timer_page(request: Request):
+    """训练计时器（纯前端：动作/休息/组数循环、蜂鸣提示、屏幕常亮）。"""
+    return templates.TemplateResponse(request, "workout_timer.html", {})
+
+
 @router.get("/workout/plans")
 def plans_page(request: Request, db: Session = Depends(get_db)):
     today = today_local()

@@ -58,6 +58,10 @@ _FIELD_DEFS: list[tuple[str, str, str, float, float]] = [
     ("bmr_kcal", "基础代谢", "int", 300, 10000),
     ("body_water_kg", "体水分", "decimal", 1, 300),
     ("visceral_fat_level", "内脏脂肪等级", "int", 1, 60),
+    ("chest_cm", "胸围", "decimal", 30, 300),
+    ("arm_cm", "臂围", "decimal", 10, 100),
+    ("thigh_cm", "大腿围", "decimal", 20, 150),
+    ("hip_cm", "臀围", "decimal", 30, 300),
 ]
 _NUM_FIELDS = [f[0] for f in _FIELD_DEFS]
 # 无当日记录时预填「最近一次值」的慢变化字段
@@ -71,7 +75,7 @@ _CHART_METRICS: list[tuple[str, str]] = [
     ("sleep", "睡眠"),
     ("sleep_stages", "睡眠分期"),
     ("steps", "步数"),
-    ("waist", "腰围"),
+    ("girth", "围度"),
 ]
 _METRIC_KEYS = {m for m, _ in _CHART_METRICS}
 # 各指标主色（emerald 主调，血压第二条线用 sky）
@@ -90,6 +94,14 @@ _STAGE_DEFS = [
     ("light_min", "浅睡", "#a78bfa"),
     ("rem_min", "REM", "#38bdf8"),
     ("awake_min", "清醒", "#64748b"),
+]
+# 围度多线：(字段, 图例, 颜色)
+_GIRTH_DEFS = [
+    ("waist_cm", "腰围", "#38bdf8"),
+    ("chest_cm", "胸围", "#34d399"),
+    ("hip_cm", "臀围", "#a78bfa"),
+    ("thigh_cm", "大腿围", "#fbbf24"),
+    ("arm_cm", "臂围", "#f472b6"),
 ]
 # 有目标值可画参考线的指标：metric -> (app_settings key, 单位)
 _TARGET_KEYS = {"weight": ("target_weight_kg", "kg"), "steps": ("target_steps", "步")}
@@ -322,11 +334,16 @@ def _chart_context(db: Session, metric: str, days: int) -> dict[str, Any]:
         ).all()
         by_day = {r[0]: (float(r[1]), False) for r in rows}
         datasets.append(_line_dataset("步数", by_day, day_list, _COLORS["steps"]))
+    elif metric == "girth":
+        # 多线围度：只画区间内有数据的部位
+        for field, label, color in _GIRTH_DEFS:
+            by_day = _bm_field_map(db, field, start, today)
+            if by_day:
+                datasets.append(_line_dataset(f"{label} (cm)", by_day, day_list, color))
     else:
         field, label = {
             "weight": ("weight_kg", "体重 (kg)"),
             "body_fat": ("body_fat_pct", "体脂率 (%)"),
-            "waist": ("waist_cm", "腰围 (cm)"),
         }[metric]
         datasets.append(_line_dataset(label, _bm_field_map(db, field, start, today), day_list, _COLORS[metric]))
 

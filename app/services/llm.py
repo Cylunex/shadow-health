@@ -196,7 +196,8 @@ class LLMError(Exception):
     """带用户可读中文信息的 LLM 调用错误。"""
 
 
-def _call(system: str, user_content: str, max_tokens: int = 8000) -> str:
+def _call(system: str, user_content: str | list, max_tokens: int = 8000) -> str:
+    """user_content 传 str 为纯文本；传 list 为内容块数组（支持 image 块）。"""
     import anthropic
 
     if not is_configured():
@@ -230,6 +231,70 @@ def _call(system: str, user_content: str, max_tokens: int = 8000) -> str:
     if not text:
         raise LLMError("模型没有返回内容，请重试。")
     return text
+
+
+# ---------- 餐食照片营养估算（对标 Keep 拍照识别） ----------
+MEAL_PHOTO_PROMPT = """你是营养估算助手。观察这张餐食照片，识别其中的食物并按照片中实际可见份量估算营养（中式家常口径；无法判断时按常见一人份）。
+
+只返回一个 JSON 对象（不要 markdown 代码块、不要多余文字），格式：
+{"items": [{"name": "食物名(≤12字中文)", "amount_g": 估算克数, "kcal": 该份量总热量, "protein_g": 该份量总蛋白克数}], "note": "一句话说明份量假设或不确定性"}
+
+注意：kcal/protein_g 是照片中这一份的总值，不是每100g；识别不出食物时 items 给空数组并在 note 说明。"""
+
+# Claude API 支持的图片格式（HEIC 不支持）
+VISION_MEDIA_TYPES = ("image/jpeg", "image/png", "image/webp", "image/gif")
+
+
+def analyze_meal_photo(image_bytes: bytes, media_type: str) -> dict[str, Any]:
+    """餐食照片 → {"items": [...], "note": str}；解析失败抛 LLMError。"""
+    import base64
+    import json
+
+    if media_type not in VISION_MEDIA_TYPES:
+        raise LLMError("该图片格式暂不支持识别（支持 jpg/png/webp/gif）。")
+    if len(image_bytes) > 5 * 1024 * 1024:
+        raise LLMError("图片超过 5MB，API 不接受——拍照时选较低分辨率或压缩后再传。")
+    content = [
+        {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": media_type,
+                "data": base64.b64encode(image_bytes).decode(),
+            },
+        },
+        {"type": "text", "text": "估算这张餐食照片的营养，按要求返回 JSON。"},
+    ]
+    text = _call(MEAL_PHOTO_PROMPT, content, max_tokens=3000)
+    start, end = text.find("{"), text.rfind("}")
+    if start == -1 or end <= start:
+        raise LLMError("识别结果不是有效 JSON，请重试。")
+    try:
+        data = json.loads(text[start:end + 1])
+    except ValueError:
+        raise LLMError("识别结果解析失败，请重试。")
+
+    def _num(v: Any, lo: float, hi: float) -> float | None:
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            return None
+        return round(f, 1) if lo <= f <= hi else None
+
+    items: list[dict[str, Any]] = []
+    for it in data.get("items") or []:
+        if not isinstance(it, dict):
+            continue
+        name = str(it.get("name") or "").strip()[:20]
+        if not name:
+            continue
+        items.append({
+            "name": name,
+            "amount_g": _num(it.get("amount_g"), 1, 5000),
+            "kcal": _num(it.get("kcal"), 0, 5000),
+            "protein_g": _num(it.get("protein_g"), 0, 500),
+        })
+    return {"items": items, "note": str(data.get("note") or "").strip()[:200]}
 
 
 def analyze(db: Session, days: int = 30) -> str:

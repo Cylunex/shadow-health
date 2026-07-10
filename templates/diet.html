@@ -81,6 +81,9 @@
   {# 最近常吃 chips（近 30 天 top8，一击记录） #}
   {% include "fragments/diet_chips.html" %}
 
+  {# AI 识别结果条（在 #diet-day 外，日列表被动刷新后消息仍在） #}
+  <div id="diet-ai-msg"></div>
+
   {# 四餐分组列表 #}
   {% include "fragments/diet_day.html" %}
 

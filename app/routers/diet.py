@@ -184,7 +184,9 @@ def _day_ctx(db: Session, d: date) -> dict:
         }
         for meal, items in by_meal.items()
     ]
-    return {"d": d, "meal_groups": meal_groups, "fmt": _fmt}
+    from app.services import llm
+
+    return {"d": d, "meal_groups": meal_groups, "ai_on": llm.is_configured(), "fmt": _fmt}
 
 
 def _summary_ctx(db: Session, d: date) -> dict:
@@ -627,6 +629,60 @@ def diet_photo_delete(photo_id: int, db: Session = Depends(get_db)):
     db.delete(photo)
     db.flush()
     return Response(status_code=200, content="", headers=dict(HX_TRIGGER))
+
+
+@router.post("/diet/photos/{photo_id}/analyze")
+def diet_photo_analyze(photo_id: int, request: Request, db: Session = Depends(get_db)):
+    """AI 识别餐食照片（Claude Vision）：估算各食物营养 → 生成该餐次的饮食记录。
+
+    识别结果按自由文本记录（kcal/protein 为该份量总值），可行内编辑修正。
+    成功带 HX-Trigger: diet-changed，餐次列表立刻出现新行。
+    """
+    from app.services import llm
+
+    photo = _load_photo(db, photo_id)
+
+    def _msg(error: str | None = None, ok: str | None = None, note: str = ""):
+        headers = dict(HX_TRIGGER) if ok else None
+        return templates.TemplateResponse(
+            request,
+            "fragments/diet_ai_result.html",
+            {"error": error, "ok": ok, "note": note},
+            headers=headers,
+        )
+
+    if not llm.is_configured():
+        return _msg(error="未配置 ANTHROPIC_API_KEY，AI 识别不可用（.env 里填入后重启）。")
+    path = get_settings().photo_dir / photo.filename
+    if not path.is_file():
+        return _msg(error="照片文件缺失。")
+    try:
+        result = llm.analyze_meal_photo(
+            path.read_bytes(), photo.content_type or "image/jpeg"
+        )
+    except llm.LLMError as exc:
+        return _msg(error=str(exc))
+
+    items = result["items"]
+    if not items:
+        return _msg(error=f"没识别出食物。{result['note']}")
+    total_kcal = 0.0
+    for it in items:
+        db.add(DietLog(
+            log_date=photo.log_date,
+            meal=photo.meal,
+            free_text=it["name"],
+            amount_g=it["amount_g"],
+            kcal=it["kcal"],
+            protein_g=it["protein_g"],
+        ))
+        total_kcal += it["kcal"] or 0
+    db.flush()
+    names = "、".join(it["name"] for it in items[:5]) + ("…" if len(items) > 5 else "")
+    return _msg(
+        ok=f"已识别 {len(items)} 项计入{photo.meal}：{names}（约 {round(total_kcal)} kcal）",
+        note=result["note"],
+    )
 
 
 # ---------- 搜索联想 ----------
