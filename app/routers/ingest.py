@@ -735,3 +735,323 @@ def _mark_miscale(db: Session, ext_id: str, status: str, error: str | None = Non
         )
         .values(parse_status=status, parse_error=error, parse_version=PARSER_VERSION)
     )
+
+
+# ---------- 三星健康 Data SDK 直读通道（docs/mobile-sync.md） ----------
+#
+# 与 HC 通道的关键差异：Android 端读到的是**已归一化的聚合值**（当日步数总数、
+# 完整睡眠会话等），不是增量区间记录，所以 daily 走 SET 语义（不能累加）。
+# 契约（Android 端 SamsungSyncWorker 发送）：
+# {
+#   "daily":          [{"date","steps"?,"distance_m"?,"active_kcal"?,"hr_min"?,"hr_avg"?,"hr_max"?}],
+#   "sleep_sessions": [{"external_id","start","end","light_min"?,"deep_min"?,"rem_min"?,
+#                        "awake_min"?,"total_sleep_min"?}],
+#   "exercises":      [{"external_id","start","end"?,"type"?,"duration_min"?,"distance_km"?,
+#                        "calories"?,"avg_hr"?,"max_hr"?}],
+#   "body":           [{"ts","weight_kg"?,"body_fat_pct"?,"skeletal_muscle_kg"?,"muscle_mass_kg"?,
+#                        "body_water_kg"?,"bmr_kcal"?}]
+# }
+# daily 的 external_id 含内容哈希：同日数值变化（步数增长）会作为新 raw 行重新归一化，
+# 数值未变的重发则照常去重。水位线：记录时间 <= sync_state('samsung_direct').watermark
+# 的置 skipped（与 zip 历史一刀切，同 HC 口径）。
+
+SAMSUNG_DIRECT_SOURCE = "samsung_direct"
+
+_SD_DAILY_FIELDS = ("steps", "distance_m", "active_kcal", "hr_min", "hr_avg", "hr_max")
+_SD_BODY_FIELDS = (
+    "weight_kg", "body_fat_pct", "skeletal_muscle_kg", "muscle_mass_kg",
+    "body_water_kg", "bmr_kcal",
+)
+
+
+def _sd_date(v: Any) -> date | None:
+    try:
+        return date.fromisoformat(str(v).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _sd_int(v: Any, lo: float, hi: float) -> int | None:
+    n = _qty(v)
+    return round(n) if n is not None and lo <= n <= hi else None
+
+
+def _sd_num(v: Any, lo: float, hi: float, ndigits: int = 1) -> float | None:
+    n = _qty(v)
+    return round(n, ndigits) if n is not None and lo <= n <= hi else None
+
+
+@router.post("/samsung_direct")
+async def ingest_samsung_direct(request: Request, db: Session = Depends(get_db)) -> Response:
+    reject = _bearer_reject(request)
+    if reject is not None:
+        return reject
+    body = await request.body()
+    if len(body) > MAX_BODY_BYTES:
+        return JSONResponse({"error": "payload too large"}, status_code=413)
+    try:
+        payload = json.loads(body)
+    except (ValueError, UnicodeDecodeError):
+        return JSONResponse({"error": "invalid json"}, status_code=400)
+    if not isinstance(payload, dict):
+        return JSONResponse({"error": "unsupported payload"}, status_code=400)
+
+    now = now_local()
+    entries: list[dict[str, Any]] = []   # {rtype, ext_id, rec_ts, data}
+    received = 0
+
+    def _collect(rtype: str, ext_id: str, rec_ts: datetime | None, data: dict[str, Any]) -> None:
+        entries.append({"rtype": rtype, "ext_id": ext_id, "rec_ts": rec_ts, "data": data})
+
+    # -- daily：SET 语义；ext_id 带内容哈希，数值变化才重新归一化
+    for item in payload.get("daily") or []:
+        if not isinstance(item, dict):
+            continue
+        received += 1
+        d = _sd_date(item.get("date"))
+        if d is None or d > now.date():
+            continue
+        data: dict[str, Any] = {"date": d.isoformat()}
+        data["steps"] = _sd_int(item.get("steps"), 0, 200000)
+        data["distance_m"] = _sd_int(item.get("distance_m"), 0, 500000)
+        data["active_kcal"] = _sd_num(item.get("active_kcal"), 0, 20000)
+        data["hr_min"] = _sd_int(item.get("hr_min"), 20, 250)
+        data["hr_avg"] = _sd_int(item.get("hr_avg"), 20, 250)
+        data["hr_max"] = _sd_int(item.get("hr_max"), 20, 250)
+        if all(data[f] is None for f in _SD_DAILY_FIELDS):
+            continue
+        digest = hashlib.sha1(
+            json.dumps(data, sort_keys=True, default=str).encode()
+        ).hexdigest()[:12]
+        rec_ts = datetime.combine(d, datetime.min.time(), tzinfo=LOCAL_TZ)
+        _collect("daily", f"daily-{d.isoformat()}-{digest}", rec_ts, data)
+
+    # -- sleep_sessions：按 (source, external_id) upsert
+    for item in payload.get("sleep_sessions") or []:
+        if not isinstance(item, dict):
+            continue
+        received += 1
+        start = _parse_ts(item.get("start"))
+        end = _parse_ts(item.get("end"))
+        ext = str(item.get("external_id") or "").strip()
+        if start is None or end is None or end <= start or not ext:
+            continue
+        _collect("sleep", f"sd-{ext}", end, {
+            "start": start.isoformat(), "end": end.isoformat(),
+            "awake_min": _sd_int(item.get("awake_min"), 0, 1440),
+            "light_min": _sd_int(item.get("light_min"), 0, 1440),
+            "deep_min": _sd_int(item.get("deep_min"), 0, 1440),
+            "rem_min": _sd_int(item.get("rem_min"), 0, 1440),
+            "total_sleep_min": _sd_int(item.get("total_sleep_min"), 0, 1440),
+        })
+
+    # -- exercises：按 (source, external_id) upsert 进 workout_logs
+    for item in payload.get("exercises") or []:
+        if not isinstance(item, dict):
+            continue
+        received += 1
+        start = _parse_ts(item.get("start"))
+        ext = str(item.get("external_id") or "").strip()
+        if start is None or not ext:
+            continue
+        end = _parse_ts(item.get("end"))
+        duration = _sd_int(item.get("duration_min"), 1, 1440)
+        if duration is None and end is not None and end > start:
+            duration = round((end - start).total_seconds() / 60)
+        session_type = str(item.get("type") or "other").strip().lower()[:50] or "other"
+        _collect("exercise", f"sd-{ext}", start, {
+            "start": start.isoformat(), "type": session_type, "duration_min": duration,
+            "distance_km": _sd_num(item.get("distance_km"), 0.01, 1000, 2),
+            "calories": _sd_int(item.get("calories"), 1, 20000),
+            "avg_hr": _sd_int(item.get("avg_hr"), 20, 250),
+            "max_hr": _sd_int(item.get("max_hr"), 20, 250),
+        })
+
+    # -- body：手表 BIA 体成分 → body_metrics 字段级回填（同日取最后一次）
+    for item in payload.get("body") or []:
+        if not isinstance(item, dict):
+            continue
+        received += 1
+        ts = _parse_ts(item.get("ts"))
+        if ts is None:
+            continue
+        data = {"ts": ts.isoformat()}
+        data["weight_kg"] = _sd_num(item.get("weight_kg"), 10, 500, 2)
+        data["body_fat_pct"] = _sd_num(item.get("body_fat_pct"), 1, 75)
+        data["skeletal_muscle_kg"] = _sd_num(item.get("skeletal_muscle_kg"), 1, 300, 2)
+        data["muscle_mass_kg"] = _sd_num(item.get("muscle_mass_kg"), 1, 300, 2)
+        data["body_water_kg"] = _sd_num(item.get("body_water_kg"), 1, 300, 2)
+        data["bmr_kcal"] = _sd_int(item.get("bmr_kcal"), 300, 10000)
+        if all(data[f] is None for f in _SD_BODY_FIELDS):
+            continue
+        digest = hashlib.sha1(
+            json.dumps(data, sort_keys=True, default=str).encode()
+        ).hexdigest()[:12]
+        _collect("body", f"body-{ts:%Y%m%dT%H%M%S}-{digest}", ts, data)
+
+    if not entries:
+        return JSONResponse({"received": received, "new": 0})
+
+    # 留档 + 去重（重发只刷新 last_seen_at）
+    seen: set[tuple[str, str]] = set()
+    raw_rows = []
+    for e in entries:
+        k = (e["rtype"], e["ext_id"])
+        if k in seen:
+            continue
+        seen.add(k)
+        raw_rows.append({
+            "source": SAMSUNG_DIRECT_SOURCE,
+            "record_type": e["rtype"],
+            "external_id": e["ext_id"],
+            "raw": e["data"],
+            "parse_status": "pending",
+            "parse_version": 0,
+            "last_seen_at": now,
+        })
+    new_keys: set[tuple[str, str]] = set()
+    for i in range(0, len(raw_rows), RAW_BATCH):
+        ins = pg_insert(ImportRaw).values(raw_rows[i:i + RAW_BATCH])
+        stmt = ins.on_conflict_do_update(
+            index_elements=["source", "record_type", "external_id"],
+            set_={"last_seen_at": now},
+        ).returning(ImportRaw.record_type, ImportRaw.external_id, literal_column("(xmax = 0)"))
+        for rtype, ext_id, is_new in db.execute(stmt):
+            if is_new:
+                new_keys.add((rtype, ext_id))
+    db.commit()
+
+    def _mark_sd(rtype: str, ext_id: str, status: str, error: str | None = None) -> None:
+        db.execute(
+            update(ImportRaw)
+            .where(
+                ImportRaw.source == SAMSUNG_DIRECT_SOURCE,
+                ImportRaw.record_type == rtype,
+                ImportRaw.external_id == ext_id,
+            )
+            .values(parse_status=status, parse_error=error, parse_version=PARSER_VERSION)
+        )
+
+    try:
+        state = db.get(SyncState, SAMSUNG_DIRECT_SOURCE)
+        watermark = state.watermark if state is not None else None
+        sleep_dates: set[date] = set()
+        body_by_day: dict[date, tuple[datetime, dict[str, Any]]] = {}
+
+        for e in entries:
+            if (e["rtype"], e["ext_id"]) not in new_keys:
+                continue
+            rtype, ext_id, data = e["rtype"], e["ext_id"], e["data"]
+            if watermark is not None and e["rec_ts"] is not None and e["rec_ts"] <= watermark:
+                _mark_sd(rtype, ext_id, "skipped")
+                continue
+            try:
+                with db.begin_nested():
+                    if rtype == "daily":
+                        d = date.fromisoformat(data["date"])
+                        values = {f: data[f] for f in _SD_DAILY_FIELDS if data[f] is not None}
+                        ins = pg_insert(DailyActivity).values(
+                            log_date=d, source=SAMSUNG_DIRECT_SOURCE, **values
+                        )
+                        db.execute(ins.on_conflict_do_update(
+                            index_elements=["log_date"],
+                            set_={
+                                **{f: getattr(ins.excluded, f) for f in values},
+                                "source": ins.excluded.source,
+                                "updated_at": text("now()"),
+                            },
+                        ))
+                    elif rtype == "sleep":
+                        start = datetime.fromisoformat(data["start"])
+                        end = datetime.fromisoformat(data["end"])
+                        wake_date = end.astimezone(LOCAL_TZ).date()
+                        total = data["total_sleep_min"]
+                        if total is None:
+                            stage_sum = sum(
+                                data[f] or 0 for f in ("light_min", "deep_min", "rem_min")
+                            )
+                            total = stage_sum or round((end - start).total_seconds() / 60)
+                        ins = pg_insert(SleepSession).values(
+                            source=SAMSUNG_DIRECT_SOURCE, external_id=e["ext_id"],
+                            start_at=start, end_at=end, wake_date=wake_date,
+                            awake_min=data["awake_min"], light_min=data["light_min"],
+                            deep_min=data["deep_min"], rem_min=data["rem_min"],
+                            total_sleep_min=total,
+                        )
+                        db.execute(ins.on_conflict_do_update(
+                            index_elements=["source", "external_id"],
+                            set_={c: getattr(ins.excluded, c) for c in (
+                                "start_at", "end_at", "wake_date", "awake_min",
+                                "light_min", "deep_min", "rem_min", "total_sleep_min",
+                            )},
+                        ))
+                        sleep_dates.add(wake_date)
+                    elif rtype == "exercise":
+                        start = datetime.fromisoformat(data["start"])
+                        ins = pg_insert(WorkoutLog).values(
+                            log_date=start.astimezone(LOCAL_TZ).date(),
+                            started_at=start,
+                            session_type=data["type"],
+                            duration_min=data["duration_min"],
+                            distance_km=data["distance_km"],
+                            calories=data["calories"],
+                            avg_hr=data["avg_hr"],
+                            max_hr=data["max_hr"],
+                            source=SAMSUNG_DIRECT_SOURCE,
+                            external_id=e["ext_id"],
+                        )
+                        db.execute(ins.on_conflict_do_update(
+                            index_elements=["source", "external_id"],
+                            index_where=text("external_id IS NOT NULL"),
+                            set_={
+                                **{c: getattr(ins.excluded, c) for c in (
+                                    "log_date", "started_at", "session_type", "duration_min",
+                                    "distance_km", "calories", "avg_hr", "max_hr",
+                                )},
+                                "updated_at": text("now()"),
+                            },
+                        ))
+                    else:  # body
+                        ts = datetime.fromisoformat(data["ts"])
+                        d = ts.astimezone(LOCAL_TZ).date()
+                        prev = body_by_day.get(d)
+                        if prev is None or ts >= prev[0]:
+                            body_by_day[d] = (ts, data)
+                _mark_sd(rtype, ext_id, "parsed")
+            except Exception as exc:
+                _mark_sd(rtype, ext_id, "failed", str(exc)[:500])
+
+        for d in sorted(body_by_day):
+            _, data = body_by_day[d]
+            autofill_fields(db, d, SAMSUNG_DIRECT_SOURCE, {
+                f: data[f] for f in _SD_BODY_FIELDS if data[f] is not None
+            })
+        for d in sorted(sleep_dates):
+            total = db.execute(
+                select(func.coalesce(func.sum(SleepSession.total_sleep_min), 0))
+                .where(SleepSession.wake_date == d)
+            ).scalar_one()
+            if total and total > 0:
+                autofill_fields(db, d, SAMSUNG_DIRECT_SOURCE, {"sleep_hours": round(total / 60.0, 1)})
+
+        if state is None:
+            state = SyncState(source=SAMSUNG_DIRECT_SOURCE)
+            db.add(state)
+        state.last_success_at = now
+        state.last_error = None
+        state.consecutive_failures = 0
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        try:
+            state = db.get(SyncState, SAMSUNG_DIRECT_SOURCE)
+            if state is None:
+                state = SyncState(source=SAMSUNG_DIRECT_SOURCE)
+                db.add(state)
+            state.consecutive_failures = (state.consecutive_failures or 0) + 1
+            state.last_error = str(exc)[:2000]
+            db.commit()
+        except Exception:
+            db.rollback()
+
+    return JSONResponse({"received": received, "new": len(new_keys)})

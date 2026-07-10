@@ -34,6 +34,7 @@ router = APIRouter(dependencies=[Depends(require_login)])
 SOURCE_LABELS = {
     "samsung_zip": "三星",
     "health_connect": "HC",
+    "samsung_direct": "手表",
     "keep_api": "Keep",
     "keep_file": "Keep",
     "miscale": "体脂秤",

@@ -74,6 +74,7 @@ _TARGET_DEFS: list[tuple[str, str, str, float, float]] = [
 _SOURCE_LABELS = {
     "samsung_zip": "三星导出",
     "health_connect": "Health Connect",
+    "samsung_direct": "三星直读",
     "keep_file": "Keep 文件",
     "keep_api": "Keep API",
     "miscale": "体脂秤",

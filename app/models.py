@@ -234,7 +234,8 @@ class WorkoutLog(TimestampMixin, Base):
     __tablename__ = "workout_logs"
     __table_args__ = (
         CheckConstraint(
-            "source IN ('manual','keep','samsung_zip','health_connect')", name="ck_workout_source"
+            "source IN ('manual','keep','samsung_zip','health_connect','samsung_direct')",
+            name="ck_workout_source",
         ),
         CheckConstraint("source = 'manual' OR external_id IS NOT NULL", name="ck_ext_required"),
         CheckConstraint("rpe BETWEEN 1 AND 10", name="ck_rpe"),
@@ -334,7 +335,8 @@ class ImportRaw(Base):
     __tablename__ = "import_raw"
     __table_args__ = (
         CheckConstraint(
-            "source IN ('samsung_zip','health_connect','keep_api','keep_file')",
+            "source IN ('samsung_zip','health_connect','keep_api','keep_file',"
+            "'miscale','samsung_direct')",
             name="ck_import_source",
         ),
         CheckConstraint(

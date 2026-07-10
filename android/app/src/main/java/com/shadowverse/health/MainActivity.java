@@ -131,6 +131,10 @@ public class MainActivity extends Activity {
         if (prefs.getBoolean(KEY_SCALE_SCAN, false) && missingScalePermissions().isEmpty()) {
             startScaleService();
         }
+        // 三星健康同步开着：重申周期任务（UPDATE 策略幂等，无授权弹窗）
+        if (prefs.getBoolean(SamsungSync.PREF_ENABLED, false)) {
+            SamsungSync.schedule(getApplicationContext());
+        }
     }
 
     private String getServerUrl() {
@@ -160,9 +164,13 @@ public class MainActivity extends Activity {
         scanBox.setText("后台监听体脂秤（常驻通知）");
         scanBox.setChecked(prefs.getBoolean(KEY_SCALE_SCAN, false));
 
+        final CheckBox samsungBox = new CheckBox(this);
+        samsungBox.setText("同步三星健康数据（手表）");
+        samsungBox.setChecked(prefs.getBoolean(SamsungSync.PREF_ENABLED, false));
+
         TextView hint = new TextView(this);
-        hint.setText("秤监听需要蓝牙权限；小米/HyperOS 还需在应用设置里允许自启动，"
-                + "否则后台会被清理。");
+        hint.setText("秤监听需要蓝牙权限；三星同步需先在三星健康开发者模式里开 Data Read"
+                + "（版本号连点 10 次解锁）。国产 ROM 记得允许自启动，否则后台会被清理。");
         hint.setTextSize(12);
 
         LinearLayout col = new LinearLayout(this);
@@ -172,6 +180,7 @@ public class MainActivity extends Activity {
         col.addView(input);
         col.addView(tokenInput);
         col.addView(scanBox);
+        col.addView(samsungBox);
         col.addView(hint);
 
         AlertDialog.Builder b = new AlertDialog.Builder(this)
@@ -181,13 +190,23 @@ public class MainActivity extends Activity {
                 .setPositiveButton("保存并连接", (d, w) -> {
                     String url = normalizeUrl(input.getText().toString());
                     boolean scanOn = scanBox.isChecked();
+                    boolean samsungOn = samsungBox.isChecked();
+                    boolean samsungWas = prefs.getBoolean(SamsungSync.PREF_ENABLED, false);
                     prefs.edit()
                             .putString(KEY_SERVER_URL, url)
                             .putString(KEY_INGEST_TOKEN, tokenInput.getText().toString().trim())
                             .putBoolean(KEY_SCALE_SCAN, scanOn)
+                            .putBoolean(SamsungSync.PREF_ENABLED, samsungOn)
                             .apply();
                     loadServer();
                     applyScaleScanSetting(scanOn);
+                    if (samsungOn && !samsungWas) {
+                        SamsungSync.enable(this);   // 弹三星健康授权页 + 注册周期任务 + 立即同步
+                    } else if (samsungOn) {
+                        SamsungSync.syncNow(getApplicationContext());
+                    } else if (samsungWas) {
+                        SamsungSync.disable(getApplicationContext());
+                    }
                 })
                 .setNeutralButton("恢复默认", (d, w) -> {
                     prefs.edit().putString(KEY_SERVER_URL, DEFAULT_SERVER_URL).apply();

@@ -45,6 +45,7 @@ HX_TRIGGER = {"HX-Trigger": "workout-changed"}
 SOURCE_LABELS = {
     "samsung_zip": "三星",
     "health_connect": "HC",
+    "samsung_direct": "手表",
     "keep": "Keep",
 }
 STATUS_LABELS = {"active": "执行中", "done": "已完成", "abandoned": "已放弃"}

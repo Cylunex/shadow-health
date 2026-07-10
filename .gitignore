@@ -10,4 +10,13 @@ uploads/
 *.egg-info/
 .pytest_cache/
 dist/
+# Android Gradle 工程产物与本机配置
 android/build/
+android/app/build/
+android/.gradle/
+android/local.properties
+android/app/libs/*.aar
+mobile-poc/samsung-sdk/.gradle/
+.DS_Store
+# 手机安装包（构建产物，放 static/ 供局域网下载）
+static/*.apk
