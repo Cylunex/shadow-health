@@ -10,6 +10,7 @@
     <button type="button"
             hx-get="/fragments/metrics/chart?metric={{ key }}&days={{ chart.days }}"
             hx-target="#metrics-chart-frame" hx-swap="outerHTML"
+            hx-disabled-elt="this"
             class="chip shrink-0 min-h-[44px] whitespace-nowrap {% if key == chart.metric %}chip-active{% endif %}">
       {{ label }}
     </button>
@@ -21,6 +22,7 @@
     <button type="button"
             hx-get="/fragments/metrics/chart?metric={{ chart.metric }}&days={{ d }}"
             hx-target="#metrics-chart-frame" hx-swap="outerHTML"
+            hx-disabled-elt="this"
             class="chip flex-1 min-h-[44px] tabular-nums {% if d == chart.days %}chip-active{% endif %}">
       {{ d }} 天
     </button>

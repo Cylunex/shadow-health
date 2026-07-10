@@ -90,6 +90,20 @@
           <div class="h-10 w-14 rounded-full bg-slate-800/70"></div>
         </div>
       </div>
+      {# 拍照记一餐直达：选图即传，餐次按当前时间自动归类，成功出绿色 toast #}
+      <form hx-post="/diet/photos" hx-encoding="multipart/form-data" hx-swap="none"
+            hx-trigger="change from:find input[type='file']"
+            class="[&.htmx-request]:animate-pulse [&.htmx-request]:opacity-60">
+        <label class="btn-ghost flex w-full min-h-[48px] cursor-pointer items-center justify-center gap-2">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+               stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4">
+            <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/>
+            <circle cx="12" cy="13" r="3"/>
+          </svg>
+          拍照记一餐
+          <input type="file" name="file" accept="image/*" capture="environment" class="hidden">
+        </label>
+      </form>
     </div>
   </section>
 

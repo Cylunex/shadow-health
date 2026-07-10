@@ -29,6 +29,7 @@ hx-trigger="diet-changed from:body" 被动刷新。
 """
 from __future__ import annotations
 
+import json
 import secrets
 from datetime import date, time, timedelta
 from decimal import Decimal, InvalidOperation
@@ -43,12 +44,23 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.db import get_db
 from app.deps import require_login, templates
-from app.models import AppSetting, DietLog, DietPhoto, Food, Recipe
+from app.models import AppSetting, BodyMetrics, DailyActivity, DietLog, DietPhoto, Food, Recipe
 from app.timeutil import now_local, today_local
 
 router = APIRouter(dependencies=[Depends(require_login)])
 
 HX_TRIGGER = {"HX-Trigger": "diet-changed"}
+
+
+def _hx_trigger(msg: str | None = None) -> dict[str, str]:
+    """diet-changed 触发头；带 msg 时同时触发全局成功 toast（base.html 监听）。
+
+    JSON 走默认 ensure_ascii：HTTP 头必须 latin-1，中文以 \\uXXXX 转义、
+    htmx 客户端 JSON.parse 后原样展示。
+    """
+    if not msg:
+        return dict(HX_TRIGGER)
+    return {"HX-Trigger": json.dumps({"diet-changed": "", "toast": msg})}
 # 展示顺序按时段：早餐 → 午餐 → 加餐 → 晚餐（DB CHECK 词表一致）
 MEALS = ("早餐", "午餐", "加餐", "晚餐")
 # 药膳 effect_tags 受控词表（设计文档 §5.4）
@@ -229,6 +241,24 @@ def _summary_ctx(db: Session, d: date) -> dict:
             return 0
         return min(100, round(float(total) * 100 / target))
 
+    # 能量收支缺口 = 摄入 −（基础代谢 + 当日活动消耗）；BMR 取截至当日最近一次
+    # 体脂秤回填值（无秤数据不显示，不做身高性别估算）
+    bmr = db.execute(
+        select(BodyMetrics.bmr_kcal)
+        .where(BodyMetrics.log_date <= d, BodyMetrics.bmr_kcal.is_not(None))
+        .order_by(BodyMetrics.log_date.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    activity = db.get(DailyActivity, d)
+    active_kcal = (
+        float(activity.active_kcal)
+        if activity is not None and activity.active_kcal is not None else None
+    )
+    energy_gap = burn = None
+    if bmr is not None:
+        burn = round(bmr + (active_kcal or 0))
+        energy_gap = round(float(total_kcal) - burn)
+
     return {
         "d": d,
         "total_kcal": total_kcal,
@@ -242,22 +272,36 @@ def _summary_ctx(db: Session, d: date) -> dict:
         "kcal_over": bool(target_kcal) and float(total_kcal) > float(target_kcal or 0),
         "protein_ok": bool(target_protein) and float(total_protein) >= float(target_protein or 0),
         "diet_streak": _diet_streak(db, d),
+        "energy_gap": energy_gap,
+        "burn": burn,
+        "burn_has_active": active_kcal is not None,
         "fmt": _fmt,
     }
 
 
 def _chips_ctx(db: Session) -> dict:
-    """近 30 天记录频次 top8（仅 food_id 记录），附上次用量供一击记录。"""
+    """常吃 chips：当前时段餐次的近 30 天频次优先（早上先看到早餐常吃的），
+    不足 8 个再用全局频次补齐；附上次用量供一击记录。"""
     since = today_local() - timedelta(days=29)
-    rows = db.execute(
-        select(DietLog.food_id, func.count().label("n"))
-        .where(DietLog.food_id.is_not(None), DietLog.log_date >= since)
-        .group_by(DietLog.food_id)
-        .order_by(func.count().desc(), DietLog.food_id)
-        .limit(8)
-    ).all()
+    meal = _default_meal()
+
+    def top_ids(meal_only: bool, limit: int, exclude: set[int]) -> list[int]:
+        stmt = (
+            select(DietLog.food_id, func.count().label("n"))
+            .where(DietLog.food_id.is_not(None), DietLog.log_date >= since)
+            .group_by(DietLog.food_id)
+            .order_by(func.count().desc(), DietLog.food_id)
+            .limit(limit + len(exclude))
+        )
+        if meal_only:
+            stmt = stmt.where(DietLog.meal == meal)
+        return [fid for fid, _n in db.execute(stmt) if fid not in exclude][:limit]
+
+    ids = top_ids(True, 8, set())
+    if len(ids) < 8:
+        ids += top_ids(False, 8 - len(ids), set(ids))
     chips = []
-    for food_id, _n in rows:
+    for food_id in ids:
         food = db.get(Food, food_id)
         if food is None:
             continue
@@ -438,15 +482,61 @@ async def diet_quick(food_id: int, request: Request, db: Session = Depends(get_d
     log_date = min(_parse_date(form.get("d")), today_local())
     amount = _last_amount(db, food.id)
     kcal, protein, fat, carb = _food_macros(food, amount)
+    meal = _default_meal()
     db.add(
         DietLog(
-            log_date=log_date, meal=_default_meal(), food_id=food.id,
+            log_date=log_date, meal=meal, food_id=food.id,
             amount_g=amount, kcal=kcal, protein_g=protein, fat_g=fat, carb_g=carb,
         )
     )
     db.flush()
-    # chips 按钮 hx-swap="none"，只吃 HX-Trigger
-    return Response(status_code=200, content="", headers=dict(HX_TRIGGER))
+    # chips 按钮 hx-swap="none"，只吃 HX-Trigger；toast 给一击操作一个可见确认
+    return Response(
+        status_code=200, content="",
+        headers=_hx_trigger(f"已记录 {meal}·{food.name} {_fmt(amount)}g"),
+    )
+
+
+@router.post("/diet/meals/copy")
+async def diet_meal_copy(request: Request, db: Session = Depends(get_db)):
+    """整餐一键复制：找最近一个早于 d 且该餐次有记录的日子，整餐复制到 d。
+
+    food_id 行按当前食物库值 × 原用量重算营养（食物库改过就用新值）；
+    free_text 行原样复制。单人饮食高度重复，这是录入最大的省力点。
+    """
+    form = await request.form()
+    day = min(_parse_date(form.get("d")), today_local())
+    meal = str(form.get("meal") or "")
+    if meal not in MEALS:
+        raise HTTPException(status_code=400, detail="无效的餐次")
+    src_day = db.execute(
+        select(func.max(DietLog.log_date)).where(DietLog.meal == meal, DietLog.log_date < day)
+    ).scalar_one_or_none()
+    if src_day is None:
+        raise HTTPException(status_code=404, detail=f"没有更早的{meal}记录可复制")
+    rows = db.execute(
+        select(DietLog)
+        .where(DietLog.log_date == src_day, DietLog.meal == meal)
+        .order_by(DietLog.id)
+    ).scalars().all()
+    for r in rows:
+        food = db.get(Food, r.food_id) if r.food_id is not None else None
+        if food is not None:
+            kcal, protein, fat, carb = _food_macros(food, r.amount_g)
+            db.add(DietLog(
+                log_date=day, meal=meal, food_id=food.id, amount_g=r.amount_g,
+                kcal=kcal, protein_g=protein, fat_g=fat, carb_g=carb,
+            ))
+        else:
+            db.add(DietLog(
+                log_date=day, meal=meal, free_text=r.free_text or "—", amount_g=r.amount_g,
+                kcal=r.kcal, protein_g=r.protein_g, fat_g=r.fat_g, carb_g=r.carb_g,
+            ))
+    db.flush()
+    return Response(
+        status_code=200, content="",
+        headers=_hx_trigger(f"已复制 {src_day:%m-%d} 的{meal}（{len(rows)} 项）"),
+    )
 
 
 # ---------- 食物库管理 ----------
@@ -616,8 +706,13 @@ async def diet_photo_upload(
     meal: str = Form(""),
     file: UploadFile | None = File(None),
 ):
-    """餐次照片上传：文件存 photo_dir（生成名防穿越），行记 (log_date, meal, filename)。"""
+    """餐次照片上传：文件存 photo_dir（生成名防穿越），行记 (log_date, meal, filename)。
+
+    meal 缺省按当前时间预选——今日页「拍照记一餐」直达按钮不带餐次。
+    """
     log_date = min(_parse_date(d), today_local())
+    if not meal.strip():
+        meal = _default_meal()
     if meal not in MEALS:
         raise HTTPException(status_code=400, detail="无效的餐次")
     if file is None or not (file.filename or "").strip():
@@ -643,7 +738,10 @@ async def diet_photo_upload(
     )
     db.flush()
     # 上传表单 hx-swap="none"，day 片段经 HX-Trigger 被动刷新后出现新缩略图
-    return Response(status_code=200, content="", headers=dict(HX_TRIGGER))
+    return Response(
+        status_code=200, content="",
+        headers=_hx_trigger(f"照片已存入{meal}，饮食页可 AI 识别"),
+    )
 
 
 @router.get("/diet/photos/{photo_id}")
@@ -724,18 +822,32 @@ def diet_photo_analyze(photo_id: int, request: Request, db: Session = Depends(ge
 # ---------- 搜索联想 ----------
 @router.get("/diet/foods/search")
 def diet_food_search(request: Request, q: str = "", db: Session = Depends(get_db)):
-    """搜索联想（hx-trigger="input changed delay:300ms"），返回可点选项。"""
+    """搜索联想（hx-trigger="input changed delay:300ms"），返回可点选项。
+
+    按近 90 天使用频次优先排序（常吃的鸡胸肉排在名字更短的前面），
+    同频次再按名字长度。命中过的条目模板上带「常吃」徽标。
+    """
     q = q.strip()
     items: list[dict] = []
     if q:
         esc = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        foods = db.execute(
-            select(Food)
+        since = today_local() - timedelta(days=89)
+        usage = (
+            select(DietLog.food_id.label("fid"), func.count().label("n"))
+            .where(DietLog.food_id.is_not(None), DietLog.log_date >= since)
+            .group_by(DietLog.food_id)
+            .subquery()
+        )
+        rows = db.execute(
+            select(Food, func.coalesce(usage.c.n, 0))
+            .outerjoin(usage, Food.id == usage.c.fid)
             .where(Food.name.ilike(f"%{esc}%", escape="\\"))
-            .order_by(func.length(Food.name), Food.name)
+            .order_by(func.coalesce(usage.c.n, 0).desc(), func.length(Food.name), Food.name)
             .limit(8)
-        ).scalars().all()
-        items = [{"food": f, "last_amount": _last_amount(db, f.id)} for f in foods]
+        ).all()
+        items = [
+            {"food": f, "last_amount": _last_amount(db, f.id), "used": n} for f, n in rows
+        ]
     return templates.TemplateResponse(
         request, "fragments/diet_search.html", {"q": q, "items": items, "fmt": _fmt}
     )

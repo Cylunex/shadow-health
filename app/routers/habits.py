@@ -20,17 +20,19 @@ import operator
 import re
 from collections import defaultdict
 from datetime import date, timedelta
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.deps import require_login, templates
-from app.models import BodyMetrics, DailyActivity, Habit, HabitLog
+from app.models import BodyMetrics, DailyActivity, DietLog, Habit, HabitLog, WorkoutLog
 from app.routers.workout import HEATMAP_LEVEL_CLASSES, HEATMAP_MONTHS_OPTIONS
-from app.timeutil import today_local
+from app.services.sleep import sessions_by_date as _sleep_sessions_by_date
+from app.timeutil import LOCAL_TZ, today_local
 
 router = APIRouter(dependencies=[Depends(require_login)])
 
@@ -51,10 +53,17 @@ _METRIC_FIELDS = {
     "weight_kg", "body_fat_pct", "sleep_hours", "resting_hr", "spo2_pct",
     "waist_cm", "bp_systolic", "bp_diastolic", "energy_level", "sleep_quality",
 }
+# 派生字段（当日聚合，不对应单列）：
+# - workout_min        当日训练总分钟（0 = 真实未训练，可判未达标）
+# - diet_count         当日饮食记录笔数
+# - sleep_start_clock  当夜（wake_date=当日）最早入睡钟点：23:00→23、00:30→24.5
+#                      （凌晨读作 24+，"sleep_start_clock<23" 即「23 点前睡」）
+_DERIVED_FIELDS = {"workout_min", "diet_count", "sleep_start_clock"}
 
 
 def _rule_value(db: Session, field: str, day: date):
-    """auto_rule 左值取数：当日 daily_activity / body_metrics，无行或字段 NULL 返回 None。"""
+    """auto_rule 左值取数：当日 daily_activity / body_metrics / 派生聚合；
+    无行或字段 NULL 返回 None（退回手动）。"""
     if field in _ACTIVITY_FIELDS:
         row = db.get(DailyActivity, day)
         return getattr(row, field) if row is not None else None
@@ -63,6 +72,23 @@ def _rule_value(db: Session, field: str, day: date):
             select(BodyMetrics).where(BodyMetrics.log_date == day)
         ).scalar_one_or_none()
         return getattr(row, field) if row is not None else None
+    if field == "workout_min":
+        return float(db.execute(
+            select(func.coalesce(func.sum(WorkoutLog.duration_min), 0)).where(
+                WorkoutLog.log_date == day
+            )
+        ).scalar_one())
+    if field == "diet_count":
+        return float(db.execute(
+            select(func.count()).select_from(DietLog).where(DietLog.log_date == day)
+        ).scalar_one())
+    if field == "sleep_start_clock":
+        sessions = _sleep_sessions_by_date(db, day, day).get(day, [])
+        if not sessions:
+            return None
+        start = min(s.start_at for s in sessions).astimezone(LOCAL_TZ)
+        clock = start.hour + start.minute / 60
+        return clock + 24 if clock < 12 else clock
     return None
 
 
@@ -93,10 +119,13 @@ def _apply_auto_rules(
         ok = _eval_auto_rule(db, h.auto_rule, day)
         status[h.id] = ok
         if ok:
+            # daily 一次判定即当日满额；weekly 每天最多 +1（多天各一行，
+            # _week_sums 周内求和达标）——否则单天判定直接插满周目标
+            per_day = (h.target_per_period or 1) if h.period == "daily" else 1
             # RETURNING 判断是否真插入（冲突时无返回行；驱动 rowcount 对 ON CONFLICT 可能报 -1）
             new_id = db.execute(
                 pg_insert(HabitLog)
-                .values(habit_id=h.id, log_date=day, done_count=h.target_per_period or 1)
+                .values(habit_id=h.id, log_date=day, done_count=per_day)
                 .on_conflict_do_nothing(index_elements=["habit_id", "log_date"])
                 .returning(HabitLog.id)
             ).scalar_one_or_none()
@@ -205,15 +234,27 @@ def _get_habit(db: Session, habit_id: int) -> Habit:
     return habit
 
 
-def _render_item(request: Request, db: Session, habit: Habit):
-    """打卡写操作后回传该习惯条目片段（不重跑 auto 写入，避免撤销被立即覆盖）。"""
+def _parse_habit_date(raw: Any) -> date:
+    """打卡补记日期：默认今天；只允许最近 30 天内、不允许未来（日报页补卡入口用）。"""
     today = today_local()
+    try:
+        d = date.fromisoformat(str(raw).strip())
+    except (TypeError, ValueError):
+        return today
+    if d > today or d < today - timedelta(days=30):
+        return today
+    return d
+
+
+def _render_item(request: Request, db: Session, habit: Habit, day: date | None = None):
+    """打卡写操作后回传该习惯条目片段（不重跑 auto 写入，避免撤销被立即覆盖）。"""
+    day = day or today_local()
     logs = _logs_map(db, [habit.id])[habit.id]
-    auto_status = _eval_auto_rule(db, habit.auto_rule, today) if habit.auto_rule else None
+    auto_status = _eval_auto_rule(db, habit.auto_rule, day) if habit.auto_rule else None
     return templates.TemplateResponse(
         request,
         "fragments/habits_today_item.html",
-        {"habit": habit, "st": _item_state(habit, logs, today, auto_status)},
+        {"habit": habit, "st": _item_state(habit, logs, day, auto_status)},
         headers=dict(HX_TRIGGER),
     )
 
@@ -327,16 +368,18 @@ def habits_manage_fragment(request: Request, db: Session = Depends(get_db)):
 
 # ---------- 打卡写操作 ----------
 @router.post("/habits/{habit_id}/toggle")
-def habit_toggle(habit_id: int, request: Request, db: Session = Depends(get_db)):
+async def habit_toggle(habit_id: int, request: Request, db: Session = Depends(get_db)):
     """target=1 打卡：当日存在则撤销、不存在则插——再点一次即撤销。
 
+    可选表单参数 d = 补记日期（≤今天、最近 30 天内；日报页翻到昨天补卡用）。
     auto_rule 习惯的撤销不删行，而是留 done_count=0 的「否决」行占住唯一键：
     否则下次今日面板加载 _apply_auto_rules 会幂等补插，撤销被静默还原。
     """
     habit = _get_habit(db, habit_id)
-    today = today_local()
+    form = await request.form()
+    day = _parse_habit_date(form.get("d"))
     row = db.execute(
-        select(HabitLog).where(HabitLog.habit_id == habit_id, HabitLog.log_date == today)
+        select(HabitLog).where(HabitLog.habit_id == habit_id, HabitLog.log_date == day)
     ).scalar_one_or_none()
     if row is not None:
         if row.done_count == 0:
@@ -349,18 +392,19 @@ def habit_toggle(habit_id: int, request: Request, db: Session = Depends(get_db))
     else:
         db.execute(
             pg_insert(HabitLog)
-            .values(habit_id=habit_id, log_date=today, done_count=1)
+            .values(habit_id=habit_id, log_date=day, done_count=1)
             .on_conflict_do_nothing(index_elements=["habit_id", "log_date"])
         )
-    return _render_item(request, db, habit)
+    return _render_item(request, db, habit, day)
 
 
 @router.post("/habits/{habit_id}/increment")
-def habit_increment(habit_id: int, request: Request, db: Session = Depends(get_db)):
-    """target>1 计数打卡 +1：INSERT ON CONFLICT done_count+1。"""
+async def habit_increment(habit_id: int, request: Request, db: Session = Depends(get_db)):
+    """target>1 计数打卡 +1：INSERT ON CONFLICT done_count+1（d = 可选补记日期）。"""
     habit = _get_habit(db, habit_id)
-    today = today_local()
-    stmt = pg_insert(HabitLog).values(habit_id=habit_id, log_date=today, done_count=1)
+    form = await request.form()
+    day = _parse_habit_date(form.get("d"))
+    stmt = pg_insert(HabitLog).values(habit_id=habit_id, log_date=day, done_count=1)
     stmt = stmt.on_conflict_do_update(
         index_elements=["habit_id", "log_date"],
         set_={
@@ -369,16 +413,17 @@ def habit_increment(habit_id: int, request: Request, db: Session = Depends(get_d
         },
     )
     db.execute(stmt)
-    return _render_item(request, db, habit)
+    return _render_item(request, db, habit, day)
 
 
 @router.post("/habits/{habit_id}/decrement")
-def habit_decrement(habit_id: int, request: Request, db: Session = Depends(get_db)):
+async def habit_decrement(habit_id: int, request: Request, db: Session = Depends(get_db)):
     """target>1 计数打卡 -1：减到 0 删行（auto 习惯留否决行）；当日无行则 no-op。"""
     habit = _get_habit(db, habit_id)
-    today = today_local()
+    form = await request.form()
+    day = _parse_habit_date(form.get("d"))
     row = db.execute(
-        select(HabitLog).where(HabitLog.habit_id == habit_id, HabitLog.log_date == today)
+        select(HabitLog).where(HabitLog.habit_id == habit_id, HabitLog.log_date == day)
     ).scalar_one_or_none()
     if row is not None:
         if row.done_count <= 1:
@@ -389,7 +434,7 @@ def habit_decrement(habit_id: int, request: Request, db: Session = Depends(get_d
         else:
             row.done_count = row.done_count - 1
         db.flush()
-    return _render_item(request, db, habit)
+    return _render_item(request, db, habit, day)
 
 
 @router.post("/habits/{habit_id}/active")

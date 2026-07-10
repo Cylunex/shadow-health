@@ -66,9 +66,10 @@
     </div>
   </nav>
 
-  {# 全局错误提示条：htmx 对 4xx/5xx 默认不 swap，无此兜底则照片上传超限等失败完全静默 #}
+  {# 全局提示条：红=错误兜底（htmx 对 4xx/5xx 默认不 swap），绿=成功确认
+     （服务端在 HX-Trigger JSON 里带 toast 事件，如 chips 一击记录/整餐复制/传图） #}
   <div id="global-toast"
-       class="fixed left-1/2 -translate-x-1/2 z-50 hidden max-w-[92vw] rounded-xl border border-red-800/70 bg-red-950/95 px-4 py-2.5 text-sm text-red-300 shadow-lg"
+       class="fixed left-1/2 -translate-x-1/2 z-50 hidden max-w-[92vw] rounded-xl border px-4 py-2.5 text-sm shadow-lg"
        style="bottom: calc(88px + env(safe-area-inset-bottom))"></div>
 
   <script>
@@ -81,24 +82,31 @@
 
     (function () {
       var toastTimer = null;
-      function showToast(msg) {
+      var OK_CLS = ['border-emerald-700/70', 'bg-emerald-950/95', 'text-emerald-300'];
+      var ERR_CLS = ['border-red-800/70', 'bg-red-950/95', 'text-red-300'];
+      function showToast(msg, ok) {
         var el = document.getElementById('global-toast');
         if (!el) return;
+        el.classList.remove.apply(el.classList, OK_CLS.concat(ERR_CLS));
+        el.classList.add.apply(el.classList, ok ? OK_CLS : ERR_CLS);
         el.textContent = msg;
         el.classList.remove('hidden');
         clearTimeout(toastTimer);
-        toastTimer = setTimeout(function () { el.classList.add('hidden'); }, 5000);
+        toastTimer = setTimeout(function () { el.classList.add('hidden'); }, ok ? 2600 : 5000);
       }
+      document.body.addEventListener('toast', function (evt) {
+        if (evt.detail && evt.detail.value) { showToast(evt.detail.value, true); }
+      });
       document.body.addEventListener('htmx:responseError', function (evt) {
         var msg = '操作失败（' + evt.detail.xhr.status + '），请重试';
         try {
           var body = JSON.parse(evt.detail.xhr.responseText);
           if (body && body.detail && typeof body.detail === 'string') { msg = body.detail; }
         } catch (e) { /* 非 JSON 响应用默认文案 */ }
-        showToast(msg);
+        showToast(msg, false);
       });
       document.body.addEventListener('htmx:sendError', function () {
-        showToast('网络错误：连不上服务器，请检查局域网连接');
+        showToast('网络错误：连不上服务器，请检查局域网连接', false);
       });
     })();
   </script>

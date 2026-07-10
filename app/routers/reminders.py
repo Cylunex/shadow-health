@@ -46,11 +46,17 @@ def reminders_digest(request: Request, db: Session = Depends(get_db)) -> Respons
     today = today_local()
     week_start = today - timedelta(days=today.isoweekday() - 1)
 
-    # 今日未达标的 daily 习惯（与打卡页口径一致：done_count >= target）
-    habits = db.execute(
-        select(Habit).where(Habit.active.is_(True), Habit.period == "daily")
-        .order_by(Habit.sort, Habit.id)
+    # 先跑 auto_rule 判定（步数/睡眠/称重等自动打卡），否则已同步达标的习惯
+    # 会被误报成未打卡——通知可信度决定它会不会被用户关掉
+    from app.routers.habits import _apply_auto_rules
+
+    all_habits = db.execute(
+        select(Habit).where(Habit.active.is_(True)).order_by(Habit.sort, Habit.id)
     ).scalars().all()
+    _apply_auto_rules(db, all_habits, today)
+
+    # 今日未达标的 daily 习惯（与打卡页口径一致：done_count >= target）
+    habits = [h for h in all_habits if h.period == "daily"]
     done_by_habit = {
         hid: cnt
         for hid, cnt in db.execute(
@@ -61,10 +67,32 @@ def reminders_digest(request: Request, db: Session = Depends(get_db)) -> Respons
         h.name for h in habits if done_by_habit.get(h.id, 0) < (h.target_per_period or 1)
     ]
 
-    kcal, protein = db.execute(
+    # weekly 习惯缺口（周后半才提醒，前半周不催）：周内 done_count 求和 vs target
+    weekly_gaps: list[str] = []
+    weekly = [h for h in all_habits if h.period == "weekly"]
+    if weekly and today.isoweekday() >= 5:
+        sums = {
+            hid: total
+            for hid, total in db.execute(
+                select(HabitLog.habit_id, func.sum(HabitLog.done_count))
+                .where(
+                    HabitLog.habit_id.in_([h.id for h in weekly]),
+                    HabitLog.log_date.between(week_start, today),
+                )
+                .group_by(HabitLog.habit_id)
+            )
+        }
+        for h in weekly:
+            target = h.target_per_period or 1
+            got = int(sums.get(h.id, 0) or 0)
+            if got < target:
+                weekly_gaps.append(f"本周「{h.name}」还差 {target - got} 次")
+
+    kcal, protein, diet_n = db.execute(
         select(
             func.coalesce(func.sum(DietLog.kcal), 0),
             func.coalesce(func.sum(DietLog.protein_g), 0),
+            func.count(),
         ).where(DietLog.log_date == today)
     ).one()
     steps = db.execute(
@@ -88,12 +116,15 @@ def reminders_digest(request: Request, db: Session = Depends(get_db)) -> Respons
     if pending:
         head = "、".join(pending[:3]) + ("…" if len(pending) > 3 else "")
         parts.append(f"还有 {len(pending)} 项打卡：{head}")
+    if diet_n == 0:
+        parts.append("今天还没记饮食（连击要断了）")
     if t_protein and float(protein) < t_protein:
         parts.append(f"蛋白质还差 {round(t_protein - float(protein))}g")
     if t_steps and steps < t_steps:
         parts.append(f"步数 {steps}/{round(t_steps)}")
     if t_cardio and cardio_min < t_cardio:
         parts.append(f"本周有氧还差 {round(t_cardio - cardio_min)} 分钟")
+    parts.extend(weekly_gaps[:2])
 
     all_done = not parts
     payload: dict[str, Any] = {

@@ -31,6 +31,26 @@
   llm.build_context 已接入最近 3 份月报快照
 - 回归：tests/test_monthly_report.py 锁月份边界/周归属/连击口径（42 个测试全绿）
 
+## ✅ 批次四已全量落地（2026-07-10：F1-F8 全部功能 + U1-U10 全部优化）
+
+audit 文档全清。要点（详情见 audit-2026-07-10.md 各条）：
+- **饮食**：整餐一键复制（POST /diet/meals/copy）· 能量收支缺口行（diet_summary，
+  BMR+活动消耗）· 今日页拍照直达（meal 按时间预选）· 全局绿色成功 toast
+  （HX-Trigger JSON 带 toast 事件）· chips 按当前餐次排序 · 搜索按 90 天频次排序
+  （带「常吃」徽标）· 日期胶囊点开日历跳转（饮食页/日报页）
+- **训练**：计时器练完一键记入 + 跟练模式（/workout/timer?exercises=…，动作库
+  每分类「跟练这组」入口）· 模板打卡自动带上次同类型时长/RPE（detail.auto_filled）·
+  配速显示（deps.pace_str 模板全局）+ 指标页「跑步」趋势图（配速+距离双线）·
+  力量组次明细（表单折叠区 → detail.strength，**services/pr.py** 算 PR 与
+  3×15 进阶提示，动作库页展示）
+- **习惯**：auto_rule 派生字段 workout_min/diet_count/sleep_start_clock
+  （**迁移 10** 给存量「23点前睡/称重×2/量腰围×1」补规则；weekly 习惯 auto
+  每天最多 +1）· 打卡三端点支持 d 补记日期（≤30 天），日报页翻到昨天可点补卡
+- **提醒**：digest 先跑 auto_rule 再算缺口 + 「还没记饮食」+ 周后半 weekly 缺口
+- **其他**：/settings/backup 一键全量备份（全表 CSV + 照片 zip，唯一带照片出口）·
+  AI 分析改后台线程 + app_settings 任务态轮询（锁屏/切应用不再作废）·
+  chip 全局 htmx-request 加载态。SW v10。测试 65 个全绿。
+
 ## ✅ 审查缺陷已全部修复（2026-07-10，24 缺陷 + 存疑 2）
 
 docs/audit-2026-07-10.md 全部勾完。要点：月报冻结等末周结束（_month_frozen_after）+

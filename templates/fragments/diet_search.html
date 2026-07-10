@@ -7,6 +7,7 @@
             data-id="{{ it.food.id }}" data-name="{{ it.food.name }}" data-amount="{{ fmt(it.last_amount) }}"
             class="w-full flex items-center justify-between gap-2 px-3.5 min-h-[44px] text-left hover:bg-slate-800/70 active:bg-slate-800 transition-colors">
       <span class="text-sm text-slate-100">{{ it.food.name }}
+        {%- if it.used %} <span class="badge-accent ml-1">常吃</span>{% endif -%}
         {%- if it.food.category %} <span class="badge ml-1">{{ it.food.category }}</span>{% endif -%}
       </span>
       <span class="text-xs text-slate-400 tabular-nums shrink-0">

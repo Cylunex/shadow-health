@@ -37,6 +37,13 @@
       {% endfor %}
     </div>
     <p class="mt-3 text-xs text-slate-600">utf-8-sig 编码（带 BOM），Excel 可直接打开。</p>
+    {# 全量备份：唯一带照片的出口（pg_dump 每日备份不含照片文件） #}
+    <a href="/settings/backup" class="btn-primary mt-3 w-full">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/>
+      </svg>
+      一键全量备份（全部表 CSV + 照片 zip）
+    </a>
   </section>
 </div>
 {% endblock %}

@@ -38,4 +38,15 @@
     </span>
     {% endif %}
   </div>
+  {% if energy_gap is not none %}
+  {# 能量收支（MFP 式核心反馈）：负 = 缺口；减脂建议 −300 ~ −500 kcal/日 #}
+  <div class="flex items-center justify-between gap-2 text-xs tabular-nums"
+       title="减脂建议每日缺口 300–500 kcal">
+    <span class="text-slate-400">能量收支</span>
+    <span class="{% if -500 <= energy_gap <= -300 %}text-emerald-400{% elif energy_gap > 0 %}text-amber-400{% else %}text-slate-300{% endif %}">
+      {{ '%+d' % energy_gap }} kcal
+      <span class="text-slate-600">（摄入 {{ fmt(total_kcal) }} − 消耗 {{ burn }}{% if not burn_has_active %}·仅基础代谢{% endif %}）</span>
+    </span>
+  </div>
+  {% endif %}
 </div>

@@ -40,7 +40,9 @@ HABITS: list[dict] = [
     _h("睡前泡脚15分钟", time_hint="睡前", source_doc="04#计划一", sort=30),
     _h("按摩肾俞/涌泉", time_hint="睡前", source_doc="04#计划一", sort=31),
     _h("凯格尔", time_hint="睡前", source_doc="04#计划一", sort=32),
-    _h("23点前睡", time_hint="睡前", source_doc="04#计划一", sort=33),
+    # sleep_start_clock：当夜最早入睡钟点（凌晨读 24+），手表睡眠数据自动判定
+    _h("23点前睡", time_hint="睡前", auto_rule="sleep_start_clock<23",
+       source_doc="04#计划一", sort=33),
     _h("控烟酒", source_doc="04#计划一", sort=40),
     # ---- active=false：启动对应计划时 UI 提示一键激活（source_doc 关联） ----
     _h("放松呼吸/正念5-10分钟", source_doc="04#计划二", active=False, sort=50),
@@ -50,8 +52,11 @@ HABITS: list[dict] = [
     # ---- weekly 类（active=false） ----
     _h("深海鱼×2", period="weekly", target=2, source_doc="04#计划一", active=False, sort=60),
     _h("牡蛎/贝类×1", period="weekly", target=1, source_doc="04#计划一", active=False, sort=61),
-    _h("称重×2", period="weekly", target=2, source_doc="06§七", active=False, sort=62),
-    _h("量腰围×1", period="weekly", target=1, source_doc="06§七", active=False, sort=63),
+    # 体脂秤/围度记录自动判定（weekly：auto 每天最多 +1，周内求和达标）
+    _h("称重×2", period="weekly", target=2, auto_rule="weight_kg>=20",
+       source_doc="06§七", active=False, sort=62),
+    _h("量腰围×1", period="weekly", target=1, auto_rule="waist_cm>=30",
+       source_doc="06§七", active=False, sort=63),
 ]
 
 

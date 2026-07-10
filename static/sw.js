@@ -6,7 +6,7 @@
  * 注意：服务器对 /static 不发 Cache-Control，install/回源必须显式绕过浏览器
  * HTTP 缓存（cache: 'reload'/'no-cache'），否则新版本缓存会固化到旧资源。
  */
-const SW_VERSION = 'v9';
+const SW_VERSION = 'v10';
 const CACHE_NAME = 'shadow-health-' + SW_VERSION;
 const OFFLINE_URL = '/static/offline.html';
 const PRECACHE = [

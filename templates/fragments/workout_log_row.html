@@ -13,10 +13,16 @@
     <div class="text-xs text-slate-500 mt-0.5 flex gap-x-2 gap-y-0.5 flex-wrap tabular-nums">
       {% if log.duration_min %}<span>{{ log.duration_min }} 分钟</span>{% endif %}
       {% if log.distance_km %}<span>{{ '%g' | format(log.distance_km | float) }} km</span>{% endif %}
+      {% set pace = pace_str(log.duration_min, log.distance_km) %}
+      {% if pace %}<span class="text-emerald-400/80">{{ pace }}/km</span>{% endif %}
       {% if log.rpe %}<span>RPE {{ log.rpe }}</span>{% endif %}
       {% if log.plan_id and plan_names.get(log.plan_id) %}<span class="truncate max-w-[10rem]">{{ plan_names[log.plan_id] }}</span>{% endif %}
       {% if log.notes %}<span class="truncate max-w-[12rem]">{{ log.notes }}</span>{% endif %}
     </div>
+    {% set slines = strength_lines(log.detail) %}
+    {% if slines %}
+    <div class="mt-0.5 text-xs text-slate-400 tabular-nums">{{ slines | join(' · ') }}</div>
+    {% endif %}
   </div>
   {% if log.source == 'manual' %}
   <div class="flex gap-1.5 shrink-0">

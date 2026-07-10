@@ -153,6 +153,7 @@ def _habit_checklist(db: Session, d: date) -> tuple[list[dict[str, Any]], int]:
     }
     items = [
         {
+            "id": h.id,
             "name": h.name,
             "target": h.target_per_period or 1,
             "count": counts.get(h.id, 0),
@@ -218,6 +219,8 @@ def _daily_ctx(db: Session, d: date, today: date) -> dict[str, Any]:
         "source_labels": SOURCE_LABELS,
         "habit_items": habit_items,
         "habit_done": habit_done,
+        # 补卡窗口：与 habits._parse_habit_date 的 30 天限制一致
+        "backfill_ok": (today - d).days <= 30,
         "body_items": body_items,
         "sleep_min": sleep_min,
         "sleep_label": _fmt_sleep_min(sleep_min) if sleep_min else None,

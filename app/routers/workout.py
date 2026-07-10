@@ -36,6 +36,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.deps import require_login, templates
 from app.models import Exercise, PlanEnrollment, WorkoutLog, WorkoutPlan
+from app.services import pr
 from app.timeutil import today_local
 
 router = APIRouter(dependencies=[Depends(require_login)])
@@ -157,12 +158,18 @@ def _recent_ctx(db: Session) -> dict[str, Any]:
     return {"recent_rows": rows, "plan_names": _plan_names(db), "source_labels": SOURCE_LABELS}
 
 
-def _manual_form_ctx(saved: bool = False, errors: list[str] | None = None) -> dict[str, Any]:
+def _manual_form_ctx(
+    db: Session, saved: bool = False, errors: list[str] | None = None
+) -> dict[str, Any]:
     return {
         "form_log_date": today_local().isoformat(),
         "form_saved": saved,
         "form_errors": errors or [],
         "session_type_hints": SESSION_TYPE_HINTS,
+        # 组次明细的动作名联想（datalist）
+        "exercise_names": [
+            n for (n,) in db.execute(select(Exercise.name).order_by(Exercise.name))
+        ],
     }
 
 
@@ -533,7 +540,7 @@ def _load_ctx(db: Session) -> dict[str, Any]:
 def workout_page(request: Request, db: Session = Depends(get_db)):
     ctx: dict[str, Any] = {}
     ctx.update(_plan_cards_ctx(db))
-    ctx.update(_manual_form_ctx())
+    ctx.update(_manual_form_ctx(db))
     ctx.update(_recent_ctx(db))
     ctx.update(_load_ctx(db))
     ctx.update(_heatmap_ctx(db, 3))
@@ -541,9 +548,25 @@ def workout_page(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/workout/timer")
-def timer_page(request: Request):
-    """训练计时器（纯前端：动作/休息/组数循环、蜂鸣提示、屏幕常亮）。"""
-    return templates.TemplateResponse(request, "workout_timer.html", {})
+def timer_page(request: Request, exercises: str = "", db: Session = Depends(get_db)):
+    """训练计时器（纯前端：动作/休息/组数循环、蜂鸣提示、屏幕常亮）。
+
+    带 exercises=id1,id2,… 进入「跟练」模式：每组轮换显示当前动作名与要领
+    （动作库分类页「跟练这组」入口），Keep 式引导、纯本地符合断网原则。
+    """
+    guided: list[dict[str, str]] = []
+    for part in exercises.split(",")[:12]:
+        if part.strip().isdigit():
+            ex = db.get(Exercise, int(part.strip()))
+            if ex is not None:
+                guided.append({
+                    "name": ex.name,
+                    "desc": (ex.description or "").strip()[:80],
+                })
+    return templates.TemplateResponse(
+        request, "workout_timer.html",
+        {"guided_json": json.dumps(guided, ensure_ascii=False)},
+    )
 
 
 # 动作库分类的展示顺序（seed 受控词表）
@@ -552,19 +575,37 @@ _EXERCISE_CATEGORIES = ("下肢臀", "推", "拉", "核心", "有氧HIIT", "LISS
 
 @router.get("/workout/exercises")
 def exercises_page(request: Request, c: str = "", db: Session = Depends(get_db)):
-    """动作库：按分类浏览动作要领；同进阶链动作按 level 排出难度阶梯。"""
+    """动作库：按分类浏览动作要领 + 动作 PR + 进阶链达标提示。"""
     cat = c if c in _EXERCISE_CATEGORIES else None
-    stmt = select(Exercise).order_by(Exercise.category, Exercise.level, Exercise.id)
-    if cat:
-        stmt = stmt.where(Exercise.category == cat)
-    rows = db.execute(stmt).scalars().all()
+    all_rows = db.execute(
+        select(Exercise).order_by(Exercise.category, Exercise.level, Exercise.id)
+    ).scalars().all()
+    rows = [e for e in all_rows if cat is None or e.category == cat]
     # 按受控顺序分组
     grouped: list[tuple[str, list[Exercise]]] = []
     for name in _EXERCISE_CATEGORIES:
         items = [e for e in rows if e.category == name]
         if items:
             grouped.append((name, items))
-    ctx = {"grouped": grouped, "cat": cat, "categories": _EXERCISE_CATEGORIES}
+    # 动作 PR（组次明细扫描）+ 进阶提示：3×15 达标且同链存在 level+1 动作
+    prs = pr.exercise_prs(db)
+    by_group: dict[str, list[Exercise]] = defaultdict(list)
+    for e in all_rows:
+        if e.progression_group:
+            by_group[e.progression_group].append(e)
+    advance: dict[int, str] = {}
+    for e in all_rows:
+        p = prs.get(e.name)
+        if p and p["ready"] and e.progression_group:
+            nxt = next(
+                (x for x in by_group[e.progression_group] if x.level == e.level + 1), None
+            )
+            if nxt is not None:
+                advance[e.id] = nxt.name
+    ctx = {
+        "grouped": grouped, "cat": cat, "categories": _EXERCISE_CATEGORIES,
+        "prs": prs, "advance": advance,
+    }
     is_htmx = (
         request.headers.get("HX-Request") == "true"
         and request.headers.get("HX-History-Restore-Request") != "true"
@@ -674,8 +715,18 @@ async def log_create(request: Request, db: Session = Depends(get_db)):
             if enr is not None:
                 values["enrollment_id"] = enr.id
                 values["plan_id"] = enr.plan_id
+        detail: dict[str, Any] = {}
+        # 力量组次明细（手动表单折叠区序列化的 JSON，Hevy 式）
+        raw_strength = str(form.get("strength_json") or "").strip()
+        if raw_strength:
+            try:
+                items = pr.normalize_strength(json.loads(raw_strength))
+            except ValueError:
+                items = None
+            if items:
+                detail["strength"] = items
         if str(form.get("from_template") or "") == "1":
-            detail: dict[str, Any] = {"from_template": True}
+            detail["from_template"] = True
             for key in ("slot", "pelvic"):
                 v = str(form.get(key) or "").strip()
                 if v:
@@ -683,6 +734,28 @@ async def log_create(request: Request, db: Session = Depends(get_db)):
             raw_week = str(form.get("week_no") or "").strip()
             if raw_week.isdigit():
                 detail["week_no"] = int(raw_week)
+            # 模板打卡默认回填最近一次同类型的时长/RPE：一键完成的记录不再是
+            # 0 分钟，今日三环训练环与 sRPE 周负荷零额外点击变准
+            if values["duration_min"] is None or values["rpe"] is None:
+                last = db.execute(
+                    select(WorkoutLog.duration_min, WorkoutLog.rpe).where(
+                        WorkoutLog.session_type == values["session_type"],
+                        WorkoutLog.duration_min.is_not(None),
+                    )
+                    .order_by(WorkoutLog.log_date.desc(), WorkoutLog.id.desc())
+                    .limit(1)
+                ).first()
+                if last is not None:
+                    filled: list[str] = []
+                    if values["duration_min"] is None and last[0]:
+                        values["duration_min"] = last[0]
+                        filled.append("duration_min")
+                    if values["rpe"] is None and last[1]:
+                        values["rpe"] = last[1]
+                        filled.append("rpe")
+                    if filled:
+                        detail["auto_filled"] = filled
+        if detail:
             values["detail"] = detail
         db.add(WorkoutLog(source="manual", **values))
         db.flush()
@@ -696,7 +769,7 @@ async def log_create(request: Request, db: Session = Depends(get_db)):
         resp = templates.TemplateResponse(
             request,
             "fragments/workout_manual_form.html",
-            _manual_form_ctx(saved=saved, errors=errors),
+            _manual_form_ctx(db, saved=saved, errors=errors),
         )
     if saved:
         resp.headers.update(HX_TRIGGER)

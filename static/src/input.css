@@ -72,6 +72,10 @@
     background: linear-gradient(135deg, theme("colors.emerald.500"), theme("colors.teal.600"));
     box-shadow: 0 3px 10px -3px rgba(16, 185, 129, 0.55);
   }
+  /* chip 发起的 htmx 请求进行中：全站统一加载态 + 防连点（局域网偶发慢时点了有着落） */
+  .chip.htmx-request {
+    @apply pointer-events-none animate-pulse opacity-60;
+  }
 
   /* ---- 表单 ---- */
   .field {

@@ -1,13 +1,19 @@
 """AI 智能分析（LLM 模块）：数据分析报告 + 带上下文问答。
 
 端点：
-- GET  /ai            页面：最近一次分析 + 生成按钮 + 提问框
-- POST /ai/analyze    生成分析（days=7|30|90），结果缓存 app_settings['ai_analysis']
-- POST /ai/ask        自由问答（不缓存）
+- GET  /ai                  页面：最近一次分析 + 生成按钮 + 提问框
+- POST /ai/analyze          发起分析任务（days=7|30|90）：后台线程执行，立即返回轮询片段
+- GET  /ai/analyze/status   轮询任务状态：running=继续轮询 / done=渲染结果 / failed=错误
+- POST /ai/ask              自由问答（同步，不缓存——交互式短等待可接受）
 
-调用为同步长请求（数十秒），路由用普通 def 走线程池，前端 hx-indicator 转圈。
+分析耗时 1-2 分钟：同步长请求在手机 WebView 锁屏/切应用即作废，改为后台任务 +
+app_settings 状态轮询（照导入中心 job 模式），点完就走、回来看结果。
+状态存 app_settings['ai_analysis_job']；结果缓存 app_settings['ai_analysis']。
 """
 from __future__ import annotations
+
+import threading
+from datetime import datetime
 
 import markdown as md_lib
 from fastapi import APIRouter, Depends, Request
@@ -24,6 +30,8 @@ from app.timeutil import now_local
 router = APIRouter(prefix="/ai", dependencies=[Depends(require_login)])
 
 _CACHE_KEY = "ai_analysis"
+_JOB_KEY = "ai_analysis_job"
+_JOB_TIMEOUT_S = 600  # 超过视为中断（服务重启丢线程），提示重新生成
 _DAYS_OPTIONS = (7, 30, 90)
 
 
@@ -43,8 +51,71 @@ def _cached(db: Session) -> dict | None:
     }
 
 
+def _set_setting(db: Session, key: str, value: dict) -> None:
+    stmt = pg_insert(AppSetting).values(key=key, value=value)
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["key"],
+        set_={"value": stmt.excluded.value, "updated_at": text("now()")},
+    )
+    db.execute(stmt)
+
+
+def _job_state(db: Session) -> dict:
+    """任务状态；running 超时（服务重启丢线程）折算成 failed。"""
+    row = db.get(AppSetting, _JOB_KEY)
+    value = row.value if row is not None and isinstance(row.value, dict) else {}
+    if value.get("status") == "running":
+        try:
+            started = datetime.fromisoformat(str(value.get("started_at", "")))
+            if (now_local() - started).total_seconds() > _JOB_TIMEOUT_S:
+                return {"status": "failed", "error": "分析中断（超时或服务重启），请重新生成。"}
+        except ValueError:
+            return {"status": "failed", "error": "任务状态异常，请重新生成。"}
+    return value
+
+
+def _job_fragment(request: Request, db: Session, state: dict):
+    """轮询片段：running 自带 every 3s 轮询；终态渲染结果/错误（无 trigger 即停）。"""
+    return templates.TemplateResponse(
+        request,
+        "fragments/ai_job_status.html",
+        {
+            "running": state.get("status") == "running",
+            "days": state.get("days"),
+            "error": state.get("error") if state.get("status") == "failed" else None,
+            "analysis": _cached(db),
+        },
+    )
+
+
+def _run_analysis(days: int) -> None:
+    """后台线程：独立会话跑 LLM 分析，结果与终态写 app_settings。"""
+    from app.db import SessionLocal
+
+    db = SessionLocal()
+    try:
+        content = llm.analyze(db, days)
+        generated_at = now_local().strftime("%Y-%m-%d %H:%M")
+        _set_setting(db, _CACHE_KEY, {
+            "content": content, "generated_at": generated_at, "days": days,
+        })
+        _set_setting(db, _JOB_KEY, {"status": "done"})
+        db.commit()
+    except Exception as e:  # LLMError 或意外异常都要落终态，否则前端轮询到超时
+        db.rollback()
+        msg = str(e) if isinstance(e, llm.LLMError) else f"分析失败：{str(e)[:200]}"
+        try:
+            _set_setting(db, _JOB_KEY, {"status": "failed", "error": msg})
+            db.commit()
+        except Exception:
+            db.rollback()
+    finally:
+        db.close()
+
+
 @router.get("")
 def ai_page(request: Request, db: Session = Depends(get_db)):
+    state = _job_state(db)
     return templates.TemplateResponse(
         request,
         "ai.html",
@@ -52,6 +123,8 @@ def ai_page(request: Request, db: Session = Depends(get_db)):
             "configured": llm.is_configured(),
             "model": llm.model_name(),
             "analysis": _cached(db),
+            "job_running": state.get("status") == "running",
+            "job_days": state.get("days"),
             "days_options": _DAYS_OPTIONS,
         },
     )
@@ -67,33 +140,24 @@ async def ai_analyze(request: Request, db: Session = Depends(get_db)):
     if days not in _DAYS_OPTIONS:
         days = 30
 
-    try:
-        # 线程池外交给 anyio：FastAPI async 路由里跑同步长调用会卡事件循环，
-        # 用 run_in_threadpool 保持其他请求可响应
-        from starlette.concurrency import run_in_threadpool
+    state = _job_state(db)
+    if state.get("status") == "running":
+        return _job_fragment(request, db, state)  # 已在跑：直接接上轮询
+    if not llm.is_configured():
+        return _job_fragment(request, db, {
+            "status": "failed",
+            "error": "未配置 ANTHROPIC_API_KEY——在 .env 里填入后重启应用即可使用。",
+        })
+    state = {"status": "running", "days": days, "started_at": now_local().isoformat()}
+    _set_setting(db, _JOB_KEY, state)
+    db.commit()  # 后台线程用独立会话读状态，必须先落库
+    threading.Thread(target=_run_analysis, args=(days,), daemon=True).start()
+    return _job_fragment(request, db, state)
 
-        content = await run_in_threadpool(llm.analyze, db, days)
-    except llm.LLMError as e:
-        return templates.TemplateResponse(
-            request, "fragments/ai_analysis.html", {"error": str(e)}
-        )
 
-    generated_at = now_local().strftime("%Y-%m-%d %H:%M")
-    stmt = pg_insert(AppSetting).values(
-        key=_CACHE_KEY,
-        value={"content": content, "generated_at": generated_at, "days": days},
-    )
-    stmt = stmt.on_conflict_do_update(
-        index_elements=["key"],
-        set_={"value": stmt.excluded.value, "updated_at": text("now()")},
-    )
-    db.execute(stmt)
-
-    return templates.TemplateResponse(
-        request,
-        "fragments/ai_analysis.html",
-        {"analysis": {"html": _render_md(content), "generated_at": generated_at, "days": days}},
-    )
+@router.get("/analyze/status")
+def ai_analyze_status(request: Request, db: Session = Depends(get_db)):
+    return _job_fragment(request, db, _job_state(db))
 
 
 @router.post("/ask")

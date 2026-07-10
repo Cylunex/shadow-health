@@ -25,6 +25,8 @@
       <span class="text-xs text-slate-400 shrink-0 tabular-nums">
         {%- if log.duration_min %}{{ log.duration_min }} 分{% endif -%}
         {%- if log.distance_km %} · {{ '%g' | format(log.distance_km | float) }} km{% endif -%}
+        {%- set pace = pace_str(log.duration_min, log.distance_km) -%}
+        {%- if pace %} · {{ pace }}/km{% endif -%}
         {%- if log.rpe %} · RPE {{ log.rpe }}{% endif -%}
       </span>
     </li>

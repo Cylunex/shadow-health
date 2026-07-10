@@ -2,7 +2,12 @@
 <div id="exercises-list" class="space-y-4">
   {% for cname, items in grouped %}
   <section class="card">
-    <h2 class="card-title">{{ cname }}<span class="ml-1.5 text-xs font-normal text-slate-500">{{ items | length }} 个动作</span></h2>
+    <div class="mb-3 flex items-center justify-between">
+      <h2 class="card-title mb-0">{{ cname }}<span class="ml-1.5 text-xs font-normal text-slate-500">{{ items | length }} 个动作</span></h2>
+      {# 跟练这组：动作库 × 计时器打通，每组轮换显示动作与要领 #}
+      <a href="/workout/timer?exercises={{ items | map(attribute='id') | join(',') }}"
+         class="inline-flex min-h-[44px] items-center px-2 -mr-2 text-xs font-medium text-emerald-400 active:text-emerald-300">▶ 跟练这组</a>
+    </div>
     <ul class="space-y-2">
       {% for e in items %}
       <li class="rounded-xl border border-slate-800/70 bg-slate-900/50 px-3.5 py-2.5">
@@ -16,6 +21,15 @@
           {% if e.equipment %}<span class="badge">需要：{{ e.equipment }}</span>{% endif %}
         </div>
         <p class="mt-1 text-sm leading-relaxed text-slate-400">{{ e.description }}</p>
+        {% set p = prs.get(e.name) if prs is defined else none %}
+        {% if p %}
+        <p class="mt-1 text-xs text-emerald-400/90 tabular-nums">
+          PR 单组 {{ p.max_reps }} 次{% if p.max_weight %} · 最重 {{ '%g' | format(p.max_weight) }} kg{% endif %}{% if p.max_volume %} · 单组容量 {{ '%g' | format(p.max_volume) }} kg{% endif %} · 练过 {{ p.sessions }} 次
+        </p>
+        {% endif %}
+        {% if advance is defined and advance.get(e.id) %}
+        <p class="mt-0.5 text-xs text-amber-400">🏆 3×15 已达标，可试进阶：{{ advance[e.id] }}</p>
+        {% endif %}
       </li>
       {% endfor %}
     </ul>

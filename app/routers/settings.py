@@ -15,6 +15,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import os
 import re
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
@@ -31,7 +32,7 @@ from fastapi import (
     Request,
     UploadFile,
 )
-from fastapi.responses import RedirectResponse, StreamingResponse
+from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
@@ -48,6 +49,7 @@ from app.models import (
     Habit,
     HabitLog,
     ImportJob,
+    MonthlyReview,
     Recipe,
     SleepSession,
     SyncState,
@@ -89,6 +91,7 @@ _EXPORT_MODELS: dict[str, tuple[type, tuple[str, ...]]] = {
     "daily_activity": (DailyActivity, ("log_date",)),
     "sleep_sessions": (SleepSession, ("wake_date", "id")),
     "weekly_reviews": (WeeklyReview, ("week_start",)),
+    "monthly_reviews": (MonthlyReview, ("month_start",)),
     "habits": (Habit, ("sort", "id")),
     "foods": (Food, ("id",)),
     "recipes": (Recipe, ("id",)),
@@ -101,6 +104,7 @@ _EXPORT_LABELS = [
     ("daily_activity", "每日活动"),
     ("sleep_sessions", "睡眠会话"),
     ("weekly_reviews", "周报"),
+    ("monthly_reviews", "月报"),
     ("habits", "习惯定义"),
     ("foods", "食物库"),
     ("recipes", "药膳库"),
@@ -288,6 +292,52 @@ def settings_export(table: str = "", db: Session = Depends(get_db)):
         _iter(),
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/backup")
+def settings_backup(db: Session = Depends(get_db)):
+    """一键全量备份 zip：全部表 CSV + 餐次/体态照片。
+
+    照片不在 pg_dump 每日备份里，这是唯一带照片的全量出口。先写临时文件再回发
+    （照片可能数百 MB，不占内存；照片已压缩用 STORED 免重压），下载完成后台清理。
+    """
+    import tempfile
+    import zipfile
+
+    from starlette.background import BackgroundTask
+
+    fd, tmp_name = tempfile.mkstemp(suffix=".zip")
+    os.close(fd)
+    try:
+        with zipfile.ZipFile(tmp_name, "w", zipfile.ZIP_DEFLATED) as zf:
+            for table, (model, order_cols) in _EXPORT_MODELS.items():
+                columns = [c.key for c in model.__table__.columns]
+                rows = (
+                    db.execute(
+                        select(model).order_by(*(getattr(model, c) for c in order_cols))
+                    ).scalars().all()
+                )
+                buf = io.StringIO()
+                writer = csv.writer(buf)
+                writer.writerow(columns)
+                for r in rows:
+                    writer.writerow([_csv_cell(getattr(r, c)) for c in columns])
+                zf.writestr(f"csv/{table}.csv", "\ufeff" + buf.getvalue())
+            photo_dir = get_settings().photo_dir
+            if photo_dir.is_dir():
+                for p in sorted(photo_dir.iterdir()):
+                    if p.is_file():
+                        zf.write(p, f"photos/{p.name}", compress_type=zipfile.ZIP_STORED)
+    except Exception:
+        Path(tmp_name).unlink(missing_ok=True)
+        raise
+    filename = f"shadow-health-backup_{today_local():%Y%m%d}.zip"
+    return FileResponse(
+        tmp_name,
+        media_type="application/zip",
+        filename=filename,
+        background=BackgroundTask(lambda: Path(tmp_name).unlink(missing_ok=True)),
     )
 
 

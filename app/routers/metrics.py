@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.deps import require_login, templates
-from app.models import AppSetting, BodyMetrics, DailyActivity
+from app.models import AppSetting, BodyMetrics, DailyActivity, WorkoutLog
 from app.services.autofill import get_or_create_day, mark_manual
 from app.services.sleep import sessions_by_date
 from app.timeutil import today_local
@@ -76,8 +76,11 @@ _CHART_METRICS: list[tuple[str, str]] = [
     ("sleep", "睡眠"),
     ("sleep_stages", "睡眠分期"),
     ("steps", "步数"),
+    ("running", "跑步"),
     ("girth", "围度"),
 ]
+# 跑步图的 session_type 命中词（跑步/慢跑/running…；快走等走路类不算）
+_RUN_KEYWORDS = ("跑", "run")
 _METRIC_KEYS = {m for m, _ in _CHART_METRICS}
 # 各指标主色（emerald 主调，血压第二条线用 sky）
 _COLORS = {
@@ -367,6 +370,35 @@ def _chart_context(db: Session, metric: str, days: int) -> dict[str, Any]:
         ).all()
         by_day = {r[0]: (float(r[1]), False) for r in rows}
         datasets.append(_line_dataset("步数", by_day, day_list, _COLORS["steps"]))
+    elif metric == "running":
+        # 跑步：日配速折线 + 日跑量折线（同日多次跑合并求均配速）。
+        # 全 source（Keep 历史 + 手表直读 + 手动）；distance+duration 都有才计
+        rows = db.execute(
+            select(
+                WorkoutLog.log_date, WorkoutLog.session_type,
+                WorkoutLog.duration_min, WorkoutLog.distance_km,
+            ).where(
+                WorkoutLog.log_date.between(start, today),
+                WorkoutLog.duration_min.is_not(None),
+                WorkoutLog.distance_km.is_not(None),
+            )
+        ).all()
+        per: dict[date, tuple[float, float]] = {}  # d -> (km 合计, 分钟合计)
+        for d, stype, dur, km in rows:
+            s = (stype or "").lower()
+            if not any(k in s for k in _RUN_KEYWORDS):
+                continue
+            km_f = float(km)
+            if km_f <= 0 or not dur:
+                continue
+            k0, m0 = per.get(d, (0.0, 0.0))
+            per[d] = (k0 + km_f, m0 + dur)
+        pace_by_day = {
+            d: (round(m / k, 2), True) for d, (k, m) in per.items() if k >= 0.2
+        }
+        km_by_day = {d: (round(k, 2), True) for d, (k, _m) in per.items()}
+        datasets.append(_line_dataset("配速 (min/km)", pace_by_day, day_list, "#fbbf24"))
+        datasets.append(_line_dataset("距离 (km)", km_by_day, day_list, _COLORS["steps"]))
     elif metric == "girth":
         # 多线围度：只画区间内有数据的部位
         for field, label, color in _GIRTH_DEFS:
