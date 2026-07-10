@@ -23,8 +23,8 @@
   .habit{display:flex;align-items:center;gap:10px;padding:9px 4px;border-bottom:1px solid rgba(51,65,85,.35)}
   .habit:last-child{border-bottom:0}
   .habit .box{width:22px;height:22px;border-radius:6px;border:2px solid #475569;flex:none;
-              display:flex;align-items:center;justify-content:center;font-size:14px;color:#0f172a}
-  .habit.done .box{background:#34d399;border-color:#34d399}
+              display:flex;align-items:center;justify-content:center;font-size:14px;color:#94a3b8}
+  .habit.done .box{background:#34d399;border-color:#34d399;color:#0f172a}
   .habit .name{flex:1;font-size:15px}
   .habit .hint{font-size:11px;color:#64748b;margin-left:6px}
   .habit .cnt{font-size:12px;color:#94a3b8}
@@ -51,10 +51,14 @@
 <body>
 <header>
   <h1>📴 离线模式</h1>
-  <button class="retry" onclick="probeNow()">重试连接</button>
+  <div>
+    <button class="retry" onclick="probeNow()">重试连接</button>
+    <button class="retry" onclick="changeAddress()">改地址</button>
+  </div>
 </header>
 <div class="status">
   已暂存 <b id="qn">0</b> 条 · 连上服务器后自动补同步（每 30 秒自动重试）
+  <div id="srv"></div>
   <div class="err" id="err"></div>
 </div>
 
@@ -70,9 +74,9 @@
   <label for="dietText">吃了什么</label><input id="dietText" placeholder="如：牛肉面">
   <div class="row">
     <div><label for="dietKcal">热量 kcal（可选）</label>
-      <input id="dietKcal" type="number" inputmode="decimal" min="0"></div>
+      <input id="dietKcal" type="number" inputmode="decimal" min="0" max="20000"></div>
     <div><label for="dietProtein">蛋白质 g（可选）</label>
-      <input id="dietProtein" type="number" inputmode="decimal" min="0"></div>
+      <input id="dietProtein" type="number" inputmode="decimal" min="0" max="1000"></div>
   </div>
   <button class="save" onclick="saveDiet()">暂存饮食</button>
 </section>
@@ -129,28 +133,42 @@
     try {
       var st = JSON.parse(b.getOfflineStatus());
       $('qn').textContent = st.queued;
+      $('srv').textContent = st.server ? '服务器：' + st.server : '';
       $('err').textContent = st.error ? '上次连接失败：' + st.error : '';
     } catch (e) { /* 桥不可用时保持默认显示 */ }
   }
 
-  // ---- 打卡清单（bootstrap 缓存副本） ----
+  // ---- 打卡清单（bootstrap 缓存副本；textContent 构建，习惯名可含任意字符） ----
+  function el(tag, cls, text) {
+    var node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (text != null) node.textContent = text;
+    return node;
+  }
+
+  function habitCap(h) {
+    // weekly 离线按「今天做过一次」记；daily 计数习惯逐次 +1 到满额
+    return h.period === 'weekly' ? 1 : h.target;
+  }
+
   function renderHabits() {
     var box = $('habits');
     var habits = (bs && bs.habits) || [];
     if (!habits.length) return;  // 无缓存：保留提示文案
-    box.innerHTML = '';
+    box.textContent = '';
     habits.forEach(function (h) {
       var cnt = queuedHabits[h.id] || 0;
-      var row = document.createElement('div');
-      row.className = 'habit' + (cnt >= h.target ? ' done' : '');
-      var extra = '';
-      if (h.auto) extra += '<span class="hint">自动</span>';
-      if (h.period === 'weekly') extra += '<span class="hint">每周×' + h.target + '</span>';
-      else if (h.time_hint) extra += '<span class="hint">' + h.time_hint + '</span>';
-      var cntText = h.target > 1 && h.period !== 'weekly'
-        ? '<span class="cnt">' + cnt + '/' + h.target + '</span>' : '';
-      row.innerHTML = '<div class="box">' + (cnt >= h.target ? '✓' : (cnt > 0 ? cnt : '')) + '</div>'
-        + '<div class="name">' + h.name + extra + '</div>' + cntText;
+      var done = cnt >= habitCap(h);
+      var row = el('div', 'habit' + (done ? ' done' : ''));
+      row.appendChild(el('div', 'box', done ? '✓' : (cnt > 0 ? String(cnt) : '')));
+      var name = el('div', 'name', h.name);
+      if (h.auto) name.appendChild(el('span', 'hint', '自动'));
+      if (h.period === 'weekly') name.appendChild(el('span', 'hint', '每周×' + h.target));
+      else if (h.time_hint) name.appendChild(el('span', 'hint', h.time_hint));
+      row.appendChild(name);
+      if (h.target > 1 && h.period !== 'weekly') {
+        row.appendChild(el('span', 'cnt', cnt + '/' + h.target));
+      }
       row.onclick = function () { tapHabit(h); };
       box.appendChild(row);
     });
@@ -160,9 +178,7 @@
     var b = bridge();
     if (!b) return;
     var cur = queuedHabits[h.id] || 0;
-    // weekly 离线按「今天做过一次」记；daily 计数习惯逐次 +1，满额再点撤销暂存
-    var cap = h.period === 'weekly' ? 1 : h.target;
-    var next = cur >= cap ? 0 : cur + 1;
+    var next = cur >= habitCap(h) ? 0 : cur + 1;
     b.setQueuedHabit(h.id, next);
     if (next > 0) queuedHabits[h.id] = next; else delete queuedHabits[h.id];
     renderHabits();
@@ -195,9 +211,16 @@
     if (!text) { toast('先写点吃了什么'); return; }
     var p = { meal: $('meal').value, free_text: text };
     var kcal = num('dietKcal');
-    if (kcal !== null) p.kcal = kcal;
+    if (kcal !== null) {
+      // 与服务端界值一致：越界记录服务端只留档标失败、不会入饮食表，得当场拦
+      if (kcal < 0 || kcal > 20000) { toast('热量要在 0-20000 kcal'); return; }
+      p.kcal = kcal;
+    }
     var protein = num('dietProtein');
-    if (protein !== null) p.protein_g = protein;
+    if (protein !== null) {
+      if (protein < 0 || protein > 1000) { toast('蛋白质要在 0-1000 g'); return; }
+      p.protein_g = protein;
+    }
     if (enq('diet', p)) {
       $('dietText').value = ''; $('dietKcal').value = ''; $('dietProtein').value = '';
     }
@@ -238,6 +261,10 @@
   };
   window.onProbeResult = function (ok) {
     if (!ok) toast('仍然离线，稍后自动重试');
+  };
+  window.changeAddress = function () {
+    var b = bridge();
+    if (b) b.changeAddress();  // 地址错了（服务器搬家/手滑）不能只会干等重试
   };
 
   // ---- 初始化 ----
@@ -280,10 +307,6 @@
     if (b) {
       try { var raw = b.getBootstrap(); if (raw) bs = JSON.parse(raw); } catch (e) { bs = null; }
       try { queuedHabits = JSON.parse(b.getQueuedHabits() || '{}'); } catch (e) { queuedHabits = {}; }
-      // 键是字符串，统一转成数字键便于查表
-      var byId = {};
-      Object.keys(queuedHabits).forEach(function (k) { byId[Number(k)] = queuedHabits[k]; });
-      queuedHabits = byId;
     }
     renderMeals();
     renderTypes();

@@ -11,10 +11,10 @@
 
 - **阶段一（服务端）**：迁移 11（`ck_import_source` 词表加 'offline'）；
   `POST /api/ingest/offline` + `GET /api/offline/bootstrap`（app/routers/offline.py，
-  Bearer 同秤/手表；import_raw 留档幂等 + begin_nested 单条隔离；归一化语义：
-  habit→ON CONFLICT DO NOTHING、diet→直插、workout→manual+`offline-{client_id}`、
-  metric→autofill 后 mark_manual 不覆盖既有手动值）；
-  tests/test_offline_ingest.py 24 测（DB 不可达自动 skip），全套 89 测绿
+  Bearer 同秤/手表；import_raw 留档 + parse_status 门控幂等 + begin_nested 单条
+  隔离；归一化语义：habit→ON CONFLICT DO NOTHING、diet→直插、
+  workout→manual+`offline-{client_id}`、metric→视同手动保存后写覆盖 + mark_manual）；
+  tests/test_offline_ingest.py 27 测（DB 不可达自动 skip），全套 92 测绿
 - **阶段二（壳）**：assets/offline.html 本地启动页（秒开、暗色、打卡清单用
   bootstrap 缓存 + 快记饮食/训练/体重）；MainActivity 启动先本地页 + 后台探测
   /healthz（在线自动切网页、离线 30s 自动重试，加载失败也回落本地页）；
@@ -27,6 +27,19 @@
   /api//login/sw.js/uploads 及 attachment 下载不拦；302/非 200 交回原生
 - 阶段四（页面内写队列）**暂缓**，真机用过后视手感决定
 - APK 已本机构建通过（见下「开发注意」），**待真机回归**（清单见 offline-plan §5 第 4 条）
+- **落地后做了 11 角度全量审查，修了 14 处**（2026-07-11，测试 92 个全绿）。要点：
+  批级失败改 503 + parse_status 门控自愈（原 200+xmax 门控会清壳端队列、数据永久
+  搁浅在 raw）；metric 改「视同手动保存后写覆盖」（原 autofill 语义会静默丢同日
+  第二条离线体重）；快照代理同源判定改 Uri 规范化（原字符串前缀比对遇 WebView
+  规范化 URL 会整层静默失效）；本地页 DOM textContent 渲染（习惯名 XSS 可打
+  ShellBridge）；连接/读取阶段区分 + 10s 负缓存（服务器关机不再逐请求干等超时、
+  在线慢页不误回快照）；快照页保持 30s 探测、连上原地 reload，横幅带「去离线记录」；
+  SnapshotCache 磁盘读写全挂锁（并发写同键会损坏快照）+ ETag/304 复验 + 大文件
+  Content-Length 预检；NUL 落档前剔除（JSONB 拒收，毒记录会卡死队列）+ 留档
+  失败 503；date 加一年下界（坏时钟）；离线页补「改地址」按钮与饮食界值前置校验；
+  Token 未配置时通知提醒（原来无声不同步）；测试清理改按 external_id 精确删
+  （原来整删 source='offline' 会毁真实留档）。接受的从简语义记在 offline-plan §4
+  （habit 先到先得含否决行/计数冻结）
 
 ## 当前状态（截至 42883e8）
 

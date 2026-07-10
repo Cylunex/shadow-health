@@ -84,6 +84,7 @@ public class MainActivity extends Activity {
     private Runnable pendingLongPress;
     private String lastAttemptedUrl;
     private boolean showingLocalPage;
+    private boolean onSnapshotPage;  // 当前主文档是离线快照回放：保持探测、连上原地刷新
     private String lastError;  // 最近一次加载失败原因，本地页状态栏展示
     private boolean clearHistoryOnNextLoad;  // 本地启动页不留在返回历史里
     private String erroredUrl;  // 加载失败的 URL 也会触发 onPageFinished，需忽略以免复位标志
@@ -145,6 +146,14 @@ public class MainActivity extends Activity {
                 }
                 if (url != null && url.startsWith("http")) {
                     showingLocalPage = false;
+                    if (SnapshotCache.consumeReplayedMain(url)) {
+                        // 离线快照页 ≠ 在线：保持 30s 探测，连上后原地 reload 回真页面
+                        onSnapshotPage = true;
+                        handler.removeCallbacks(probeRunnable);
+                        handler.postDelayed(probeRunnable, PROBE_INTERVAL_MS);
+                        return;
+                    }
+                    onSnapshotPage = false;
                     lastError = null;
                     handler.removeCallbacks(probeRunnable);  // 在线了，停 30s 自动探测
                     if (clearHistoryOnNextLoad) {
@@ -258,6 +267,7 @@ public class MainActivity extends Activity {
 
     private void loadServer() {
         clearHistoryOnNextLoad = showingLocalPage;
+        erroredUrl = null;  // 新一轮加载：stale 守卫不能吞掉这次的 onPageFinished
         lastAttemptedUrl = getServerUrl();
         webView.loadUrl(lastAttemptedUrl);
     }
@@ -272,8 +282,11 @@ public class MainActivity extends Activity {
         handler.postDelayed(probeRunnable, PROBE_INTERVAL_MS);  // 30s 自动重试
     }
 
-    /** 后台探测 /healthz：通了就切服务器页并补发队列；不通留在本地页等下轮。 */
+    /** 后台探测 /healthz：通了就回到断点页面并补发队列；不通留在本地页/快照页等下轮。 */
     private void probeAndConnect() {
+        if (isFinishing() || isDestroyed()) {
+            return;  // 销毁后 io 已 shutdown，execute 会 RejectedExecutionException
+        }
         handler.removeCallbacks(probeRunnable);
         final String server = getServerUrl();
         io.execute(() -> {
@@ -284,17 +297,21 @@ public class MainActivity extends Activity {
                 }
                 if (ok) {
                     if (showingLocalPage) {
-                        loadServer();
+                        // 回到中断前的页面（中途断网的深链），没有就回首页
+                        clearHistoryOnNextLoad = true;
+                        erroredUrl = null;
+                        webView.loadUrl(lastAttemptedUrl != null ? lastAttemptedUrl : getServerUrl());
+                    } else if (onSnapshotPage) {
+                        webView.reload();  // 快照页原地换成在线真页面（横幅随之消失）
                     }
-                    io.execute(() -> {
-                        int n = OfflineStore.drain(MainActivity.this);
-                        if (n > 0) {
-                            OfflineStore.notifySynced(MainActivity.this, n);
-                        }
-                    });
-                } else if (showingLocalPage) {
-                    webView.evaluateJavascript(
-                            "window.onProbeResult&&window.onProbeResult(false)", null);
+                    if (OfflineStore.queueSize(MainActivity.this) > 0) {
+                        OfflineStore.scheduleFlush(MainActivity.this);  // 补发统一走 Worker
+                    }
+                } else if (showingLocalPage || onSnapshotPage) {
+                    if (showingLocalPage) {
+                        webView.evaluateJavascript(
+                                "window.onProbeResult&&window.onProbeResult(false)", null);
+                    }
                     handler.postDelayed(probeRunnable, PROBE_INTERVAL_MS);
                 }
             });
@@ -340,7 +357,7 @@ public class MainActivity extends Activity {
 
         final EditText tokenInput = new EditText(this);
         tokenInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        tokenInput.setHint("INGEST_TOKEN（体脂秤上报用，同 .env）");
+        tokenInput.setHint("INGEST_TOKEN（体脂秤/离线补同步用，同 .env）");
         tokenInput.setText(prefs.getString(KEY_INGEST_TOKEN, ""));
 
         final CheckBox scanBox = new CheckBox(this);
@@ -514,25 +531,21 @@ public class MainActivity extends Activity {
 
     private class ShellBridge {
         @JavascriptInterface
-        public void retry() {
-            handler.post(() -> {
-                if (lastAttemptedUrl != null) {
-                    webView.loadUrl(lastAttemptedUrl);
-                } else {
-                    loadServer();
-                }
-            });
-        }
-
-        @JavascriptInterface
         public void changeAddress() {
             handler.post(() -> showAddressDialog(false));
         }
 
-        /** 本地页手动重试：探测通了自动切服务器页，不通回调 window.onProbeResult(false)。 */
+        /** 快照页横幅「去离线记录」：回到可记录的本地启动页。 */
+        @JavascriptInterface
+        public void openOfflinePage() {
+            handler.post(() -> showLocalPage(null));
+        }
+
+        /** 本地页手动重试：探测通了自动切服务器页，不通回调 window.onProbeResult(false)。
+         *  post probeRunnable 本体（而非新引用），onDestroy 的 removeCallbacks 才能取消。 */
         @JavascriptInterface
         public void probeNow() {
-            handler.post(MainActivity.this::probeAndConnect);
+            handler.post(probeRunnable);
         }
 
         /** 上次在线时缓存的 bootstrap JSON（习惯清单/训练类型/餐次），没有则空串。 */
@@ -553,26 +566,21 @@ public class MainActivity extends Activity {
             return o.toString();
         }
 
-        /** 入队一条离线记录（type: habit/diet/workout/metric）；返回队列长度，-1 失败。 */
+        /** 入队一条离线记录（type: habit/diet/workout/metric）；返回队列长度，-1 失败。
+         *  补发任务由 OfflineStore 在队列空转非空时注册，这里不必每条都敲 WorkManager。 */
         @JavascriptInterface
         public int enqueueRecord(String type, String payloadJson) {
             if (!"habit".equals(type) && !"diet".equals(type)
                     && !"workout".equals(type) && !"metric".equals(type)) {
                 return -1;
             }
-            int n = OfflineStore.enqueue(MainActivity.this, type, localDate(), payloadJson);
-            if (n >= 0) {
-                OfflineStore.scheduleFlush(MainActivity.this);
-            }
-            return n;
+            return OfflineStore.enqueue(MainActivity.this, type, localDate(), payloadJson);
         }
 
         /** 今日打卡暂存：声明式覆盖同日同习惯（doneCount<=0 = 撤销）；返回队列长度。 */
         @JavascriptInterface
         public int setQueuedHabit(int habitId, int doneCount) {
-            int n = OfflineStore.setQueuedHabit(MainActivity.this, habitId, localDate(), doneCount);
-            OfflineStore.scheduleFlush(MainActivity.this);
-            return n;
+            return OfflineStore.setQueuedHabit(MainActivity.this, habitId, localDate(), doneCount);
         }
 
         /** 今日已暂存打卡 {habit_id: done_count}，本地页渲染勾选态。 */
@@ -645,11 +653,11 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         webView.onResume();
-        // 回前台：有积压就再排一次补发（KEEP 策略幂等）；停在本地页则立刻探测一次
+        // 回前台：有积压就再排一次补发（KEEP 策略幂等）；停在本地页/快照页则立刻探测
         if (OfflineStore.queueSize(this) > 0) {
             OfflineStore.scheduleFlush(this);
         }
-        if (showingLocalPage) {
+        if (showingLocalPage || onSnapshotPage) {
             probeAndConnect();
         }
     }

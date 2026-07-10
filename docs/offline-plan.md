@@ -45,18 +45,25 @@
 ```
 
 - **留档幂等**：全部先进 import_raw，`source='offline'`（迁移 11：ck_import_source
-  词表加 'offline'），`external_id = f"{type}-{client_id}"`——重复补发自动去重，
-  与秤/手表完全同构
+  词表加 'offline'），`external_id = f"{type}-{client_id}"`——重复补发自动去重。
+  归一化按 **parse_status 门控**（审查后改进，取代 xmax 新行门控）：parsed 绝不重放、
+  pending/failed 随重发自动重试——批级失败后壳端重试即自愈（离线记录没有上游可重拉）
 - **归一化落库**（每类幂等语义）：
   - habit → habit_logs `ON CONFLICT (habit_id, log_date) DO NOTHING`
     （声明式「该日已做」，不用 toggle 翻转语义，重放安全；服务端校验 habit 存在且 active）
-  - diet → DietLog 直插（import_raw 层已挡重复补发；payload 走现有
-    `_parse_decimal` 校验口径）
+  - diet → DietLog 直插（parse_status 门控挡重复补发；数值直接复用 diet 页
+    `_parse_decimal`，同界值同舍入防漂移）
   - workout → WorkoutLog `source='manual'` + `external_id='offline-{client_id}'`
-    （部分唯一索引现成，天然幂等）
-  - metric → `autofill_fields` 字段级回填（**标手动来源 mark_manual**，同步不可覆盖；
-    只允许 metrics 页同一批数值字段白名单）
-- 响应 `{received, new, skipped}`；单条失败不毒化整批（begin_nested，照 samsung_direct 通道抄）
+    （部分唯一索引现成，天然幂等；界值对齐 workout 页表单）
+  - metric → **视同手动保存：直接覆盖 + mark_manual**（队列 FIFO 补发，同日多条
+    后写胜出——与秤/手表「同日取最后一次」同口径；mark_manual 后自动同步不可覆盖。
+    审查后从 autofill 不覆盖语义改过来：否则同日第二条离线体重会被静默丢弃）；
+    只允许 metrics 页同一批数值字段白名单；date 有 sanity 界（未来 >1 天或
+    一年以前拒收，防坏时钟污染历史）
+- 响应 `{received, new, skipped}`；单条失败不毒化整批（begin_nested，照 samsung_direct
+  通道抄），响应仍 200；**批级失败（DB 抖动等系统性错误）返回 503**——壳端保队列
+  按退避重试，配合 parse_status 门控不丢不重。payload 里的 NUL 落档前剔除
+  （PostgreSQL JSONB 拒收，一条毒记录会卡死整个队列）
 
 ### ✅ 阶段二：壳本地启动页（秒开）+ 离线记录队列（已落地：assets/offline.html + OfflineStore/OfflineFlushWorker + MainActivity 改造）
 
@@ -102,10 +109,16 @@
 ## 4. 边界与不做的事
 
 - 离线不支持：照片上传/AI 识别、AI 分析、报表生成、搜索联想（都要服务端）
-- 冲突策略从简：habit 同日已有记录则跳过（先到先得）；diet/workout 直插
-  （import_raw 挡重复补发，不做跨设备合并——单用户单手机，冲突面极小）
-- 卸载 App 丢未同步队列：可接受（通知栏常提示积压条数）
+- 冲突策略从简：habit 同日已有记录则跳过（先到先得，**含否决行**——在线否决过的
+  auto 习惯，离线打卡补发会被吞掉；计数习惯若在两次点按之间恰好补发了一次，
+  后续计数更新同样不再覆盖。单用户单手机，接受这一从简语义）；diet/workout 直插
+  （parse_status 门控挡重复补发，不做跨设备合并——冲突面极小）；metric 后写胜出
+- 卸载 App 丢未同步队列：可接受（通知栏常提示积压条数；服务器/Token 未配置时
+  会弹通知提醒，不会无声堆积）
 - 秤/手表数据不受影响（已有独立队列/水位线）
+- 快照代理假定同源判定经 Uri 规范化；/settings/backup（全量打包，构建昂贵）、
+  /api/*、/login、/uploads/*、/sw.js 不代理不缓存——服务端新增「不可快照」路由时
+  记得同步壳里 SnapshotCache 的排除名单
 
 ## 5. 实施顺序与验收
 

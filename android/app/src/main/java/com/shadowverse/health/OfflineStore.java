@@ -49,6 +49,7 @@ final class OfflineStore {
     private static final String TAG = "OfflineStore";
     private static final String PREFS_NAME = "shell";
     private static final String KEY_QUEUE = "offline_queue";
+    private static final String KEY_QUEUE_SIZE = "offline_queue_size";  // 免得数个数也要解析全队列
     private static final String KEY_BOOTSTRAP = "offline_bootstrap";
     private static final String KEY_BOOTSTRAP_AT = "offline_bootstrap_at";
     private static final int QUEUE_MAX = 500;
@@ -73,12 +74,27 @@ final class OfflineStore {
     }
 
     private static void saveQueue(Context ctx, JSONArray arr) {
-        prefs(ctx).edit().putString(KEY_QUEUE, arr.toString()).apply();
+        prefs(ctx).edit()
+                .putString(KEY_QUEUE, arr.toString())
+                .putInt(KEY_QUEUE_SIZE, arr.length())
+                .apply();
+    }
+
+    /** 服务端契约 {"type","client_id","date","payload"}（enqueue/setQueuedHabit 共用）。 */
+    private static JSONObject newRecord(String type, String date, JSONObject payload)
+            throws JSONException {
+        JSONObject rec = new JSONObject();
+        rec.put("type", type);
+        rec.put("client_id", UUID.randomUUID().toString());
+        rec.put("date", date);
+        rec.put("payload", payload);
+        return rec;
     }
 
     // ---- 队列写入（WebView JS 桥线程调用） ----
 
-    /** 入队一条离线记录；返回新队列长度，payload 非法返回 -1。 */
+    /** 入队一条离线记录；返回新队列长度，payload 非法返回 -1。
+     *  队列从空转非空时顺带注册补发任务（KEEP 幂等，不必每条都去敲 WorkManager）。 */
     static int enqueue(Context ctx, String type, String date, String payloadJson) {
         JSONObject payload;
         try {
@@ -87,15 +103,13 @@ final class OfflineStore {
             Log.w(TAG, "enqueue 忽略非法 payload: " + e);
             return -1;
         }
+        boolean wasEmpty;
+        int size;
         synchronized (LOCK) {
             JSONArray arr = loadQueue(ctx);
+            wasEmpty = arr.length() == 0;
             try {
-                JSONObject rec = new JSONObject();
-                rec.put("type", type);
-                rec.put("client_id", UUID.randomUUID().toString());
-                rec.put("date", date);
-                rec.put("payload", payload);
-                arr.put(rec);
+                arr.put(newRecord(type, date, payload));
             } catch (JSONException e) {
                 return -1;
             }
@@ -103,8 +117,12 @@ final class OfflineStore {
                 arr.remove(0);
             }
             saveQueue(ctx, arr);
-            return arr.length();
+            size = arr.length();
         }
+        if (wasEmpty) {
+            scheduleFlush(ctx);
+        }
+        return size;
     }
 
     /**
@@ -113,8 +131,11 @@ final class OfflineStore {
      * doneCount<=0 = 撤销暂存（只删不留）。返回新队列长度。
      */
     static int setQueuedHabit(Context ctx, int habitId, String date, int doneCount) {
+        boolean wasEmpty;
+        int size;
         synchronized (LOCK) {
             JSONArray arr = loadQueue(ctx);
+            wasEmpty = arr.length() == 0;
             JSONArray kept = new JSONArray();
             for (int i = 0; i < arr.length(); i++) {
                 JSONObject rec = arr.optJSONObject(i);
@@ -131,12 +152,7 @@ final class OfflineStore {
                     JSONObject payload = new JSONObject();
                     payload.put("habit_id", habitId);
                     payload.put("done_count", doneCount);
-                    JSONObject rec = new JSONObject();
-                    rec.put("type", "habit");
-                    rec.put("client_id", UUID.randomUUID().toString());
-                    rec.put("date", date);
-                    rec.put("payload", payload);
-                    kept.put(rec);
+                    kept.put(newRecord("habit", date, payload));
                 } catch (JSONException ignored) {
                 }
             }
@@ -144,8 +160,12 @@ final class OfflineStore {
                 kept.remove(0);
             }
             saveQueue(ctx, kept);
-            return kept.length();
+            size = kept.length();
         }
+        if (wasEmpty && size > 0) {
+            scheduleFlush(ctx);
+        }
+        return size;
     }
 
     /** 某日已暂存的打卡：{habit_id: done_count}（本地页渲染勾选态用）。 */
@@ -177,7 +197,13 @@ final class OfflineStore {
 
     static int queueSize(Context ctx) {
         synchronized (LOCK) {
-            return loadQueue(ctx).length();
+            SharedPreferences p = prefs(ctx);
+            if (p.contains(KEY_QUEUE_SIZE)) {
+                return p.getInt(KEY_QUEUE_SIZE, 0);
+            }
+            int n = loadQueue(ctx).length();  // 旧安装升级：补写一次计数
+            p.edit().putInt(KEY_QUEUE_SIZE, n).apply();
+            return n;
         }
     }
 
@@ -185,7 +211,8 @@ final class OfflineStore {
 
     /**
      * 补发整个队列（IO/Worker 线程调用）：快照 → 单次批量 POST → 按 client_id 摘除。
-     * 返回成功补发条数；0 = 无积压或未配置服务器；-1 = 网络/服务端失败（下轮再试）。
+     * 返回成功补发条数；0 = 无积压；-1 = 网络/服务端失败（下轮再试）；
+     * -2 = 有积压但服务器/Token 未配置（重试无意义，得提示用户去配置）。
      */
     static int drain(Context ctx) {
         String server = prefs(ctx).getString("server_url", "");
@@ -194,8 +221,11 @@ final class OfflineStore {
         synchronized (LOCK) {
             snapshot = loadQueue(ctx);
         }
-        if (snapshot.length() == 0 || server.isEmpty() || token.isEmpty()) {
+        if (snapshot.length() == 0) {
             return 0;
+        }
+        if (server.isEmpty() || token.isEmpty()) {
+            return -2;
         }
         JSONObject body = new JSONObject();
         try {
@@ -240,6 +270,16 @@ final class OfflineStore {
 
     /** 通知栏「已补同步 N 条离线记录」；13+ 无通知权限则静默跳过。 */
     static void notifySynced(Context ctx, int n) {
+        notify(ctx, "离线记录已补同步", "已补同步 " + n + " 条离线记录");
+    }
+
+    /** 有积压但服务器/Token 未配置：不提示的话队列会无声躺一辈子。 */
+    static void notifyConfigMissing(Context ctx, int pending) {
+        notify(ctx, "离线记录无法补同步",
+                "有 " + pending + " 条离线记录待同步：请在连接设置里填服务器地址和 INGEST_TOKEN");
+    }
+
+    private static void notify(Context ctx, String title, String text) {
         if (Build.VERSION.SDK_INT >= 33
                 && ctx.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
                 != PackageManager.PERMISSION_GRANTED) {
@@ -256,8 +296,8 @@ final class OfflineStore {
             PendingIntent pi = PendingIntent.getActivity(
                     ctx, 2, new Intent(ctx, MainActivity.class), PendingIntent.FLAG_IMMUTABLE);
             Notification notification = new Notification.Builder(ctx, CHANNEL_ID)
-                    .setContentTitle("离线记录已补同步")
-                    .setContentText("已补同步 " + n + " 条离线记录")
+                    .setContentTitle(title)
+                    .setContentText(text)
                     .setSmallIcon(R.mipmap.ic_launcher)
                     .setContentIntent(pi)
                     .setAutoCancel(true)
@@ -295,14 +335,8 @@ final class OfflineStore {
             if (conn.getResponseCode() != 200) {
                 return false;
             }
-            java.io.InputStream in = conn.getInputStream();
-            java.io.ByteArrayOutputStream buf = new java.io.ByteArrayOutputStream();
-            byte[] chunk = new byte[8192];
-            int len;
-            while ((len = in.read(chunk)) > 0) {
-                buf.write(chunk, 0, len);
-            }
-            String bodyText = buf.toString("UTF-8");
+            String bodyText = new String(
+                    SnapshotCache.readAll(conn.getInputStream()), StandardCharsets.UTF_8);
             new JSONObject(bodyText);  // 校验是合法 JSON 再入缓存
             prefs(ctx).edit()
                     .putString(KEY_BOOTSTRAP, bodyText)

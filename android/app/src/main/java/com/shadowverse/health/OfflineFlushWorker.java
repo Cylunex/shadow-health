@@ -21,6 +21,12 @@ public class OfflineFlushWorker extends Worker {
     @Override
     public Result doWork() {
         int sent = OfflineStore.drain(getApplicationContext());
+        if (sent == -2) {
+            // 服务器/Token 没配：重试无意义，提醒用户去连接设置里补齐
+            OfflineStore.notifyConfigMissing(
+                    getApplicationContext(), OfflineStore.queueSize(getApplicationContext()));
+            return Result.failure();
+        }
         if (sent < 0) {
             return Result.retry();  // 联网 ≠ 能到局域网服务器：退避后再试
         }
