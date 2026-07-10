@@ -19,6 +19,12 @@
 - 饮食 = 记录天数 + 日均四项（合计 / 有记录天数）
 - 步数 = 有数据天的日均 + 达标天数（target_steps，缺省 8000）
 - 饮食连击最高 = 月内最长连续记录天数
+
+生成时机与回填（审查 H1/M4）：
+- 月快照须等「月结束且末周（跨月整周）结束」才冻结（_month_frozen_after），
+  否则末周有氧被截断且永久误判
+- 列表访问时回填缺口：月报从最早数据所在月起逐月补齐；周报从最早已有快照补到
+  上一完整周（深层历史由详情页上一周导航按需生成）
 """
 from __future__ import annotations
 
@@ -45,7 +51,14 @@ from app.models import (
     WorkoutLog,
 )
 from app.routers.diet import _summary_ctx as _diet_summary_ctx
-from app.routers.review import _ensure_last_week, _fmt_f, _is_cardio, _list_row
+from app.routers.review import (
+    _aggregate_week,
+    _earliest_data_date,
+    _fmt_f,
+    _is_cardio,
+    _list_row,
+    _week_start_of,
+)
 from app.routers.today import WEEKDAY_CN, _rings, _target_steps
 from app.routers.workout import SOURCE_LABELS
 from app.services import sleep
@@ -93,6 +106,17 @@ def _month_mondays(ms: date) -> list[date]:
     end = _next_month_start(ms)
     return [first + timedelta(days=7 * i) for i in range((end - first).days // 7 + 1)
             if first + timedelta(days=7 * i) < end]
+
+
+def _month_frozen_after(ms: date) -> date:
+    """快照可冻结的最早日期：月已结束、且归属本月的最后一个 ISO 周也已结束。
+
+    有氧达标周按整周（允许跨月）统计——末周跨入下月时必须等它过完再聚合，
+    否则该周的有氧只算到生成那天，快照落库后永久误判（审查 H1）。
+    """
+    mondays = _month_mondays(ms)
+    week_done = mondays[-1] + timedelta(days=7) if mondays else _next_month_start(ms)
+    return max(_next_month_start(ms), week_done)
 
 
 def _max_run(days: set[date], start: date, end: date) -> int:
@@ -433,19 +457,42 @@ def _aggregate_month(db: Session, ms: date) -> dict[str, Any]:
     }
 
 
-# ---------- 月报惰性生成（照 review.py 模式） ----------
-def _ensure_last_month(db: Session) -> None:
-    """上一完整月若无记录则现场聚合插入。"""
-    last = _prev_month_start(_month_start_of(today_local()))
-    exists = db.execute(
-        select(MonthlyReview.id).where(MonthlyReview.month_start == last)
-    ).scalar_one_or_none()
-    if exists is None:
-        db.execute(
-            pg_insert(MonthlyReview)
-            .values(month_start=last, metrics_snapshot=_aggregate_month(db, last))
-            .on_conflict_do_nothing(index_elements=["month_start"])
-        )
+# ---------- 周报/月报惰性生成（回填缺口，照 review.py 模式扩展） ----------
+def _ensure_months(db: Session) -> None:
+    """从最早数据所在月到最近一个可冻结月，逐月补齐缺失快照（一次性回填，之后幂等）。"""
+    today = today_local()
+    earliest = _earliest_data_date(db)
+    if earliest is None:
+        return
+    existing = {r for (r,) in db.execute(select(MonthlyReview.month_start))}
+    ms = _month_start_of(earliest)
+    while today >= _month_frozen_after(ms):
+        if ms not in existing:
+            db.execute(
+                pg_insert(MonthlyReview)
+                .values(month_start=ms, metrics_snapshot=_aggregate_month(db, ms))
+                .on_conflict_do_nothing(index_elements=["month_start"])
+            )
+        ms = _next_month_start(ms)
+
+
+def _ensure_weeks(db: Session) -> None:
+    """从最早已有周报（无则上一完整周）到上一完整周，补齐中间被跳过的周。
+
+    深层历史（首个快照之前）不批量生成——周数可能数以百计，
+    由周报详情页的上一周导航按需生成。
+    """
+    last = _week_start_of(today_local()) - timedelta(days=7)
+    existing = {r for (r,) in db.execute(select(WeeklyReview.week_start))}
+    ws = min(existing) if existing else last
+    while ws <= last:
+        if ws not in existing:
+            db.execute(
+                pg_insert(WeeklyReview)
+                .values(week_start=ws, metrics_snapshot=_aggregate_week(db, ws))
+                .on_conflict_do_nothing(index_elements=["week_start"])
+            )
+        ws += timedelta(days=7)
 
 
 def _parse_month_start(month_start: str) -> date:
@@ -459,13 +506,15 @@ def _parse_month_start(month_start: str) -> date:
 
 
 def _get_or_create_month(db: Session, ms: date) -> MonthlyReview:
-    """已有则取；缺失但该月已完整则现场聚合生成；未结束的月 404。"""
+    """已有则取；缺失但已可冻结则现场聚合生成；月（或其末周）未结束 404。"""
     row = db.execute(
         select(MonthlyReview).where(MonthlyReview.month_start == ms)
     ).scalar_one_or_none()
     if row is None:
-        if _next_month_start(ms) > today_local():
-            raise HTTPException(status_code=404, detail="该月尚未结束，暂无月报")
+        if today_local() < _month_frozen_after(ms):
+            raise HTTPException(
+                status_code=404, detail="该月（或其最后一个训练周）尚未结束，暂无月报"
+            )
         row = MonthlyReview(month_start=ms, metrics_snapshot=_aggregate_month(db, ms))
         db.add(row)
         db.flush()
@@ -594,14 +643,14 @@ def _tabs_ctx(db: Session, t: str) -> dict[str, Any]:
     if t == "daily":
         ctx["rows"] = _daily_rows(db)
     elif t == "weekly":
-        _ensure_last_week(db)
+        _ensure_weeks(db)
         reviews = (
             db.execute(select(WeeklyReview).order_by(WeeklyReview.week_start.desc()))
             .scalars().all()
         )
         ctx["rows"] = [_list_row(r) for r in reviews]
     else:
-        _ensure_last_month(db)
+        _ensure_months(db)
         reviews = (
             db.execute(select(MonthlyReview).order_by(MonthlyReview.month_start.desc()))
             .scalars().all()
@@ -637,12 +686,20 @@ def report_daily(request: Request, d: str | None = None, db: Session = Depends(g
 def report_month_detail(month_start: str, request: Request, db: Session = Depends(get_db)):
     ms = _parse_month_start(month_start)
     row = _get_or_create_month(db, ms)
+    # 上月/下月导航：下界 = 最早数据所在月，上界 = 最近一个可冻结月
+    earliest = _earliest_data_date(db)
+    floor = _month_start_of(earliest) if earliest is not None else ms
+    prev_ms = _prev_month_start(ms)
+    next_ms = _next_month_start(ms)
     return templates.TemplateResponse(
         request,
         "report_month_detail.html",
         {
             "month_start": ms.isoformat(),
             "range_label": _month_label(ms),
+            "prev_month": prev_ms.isoformat() if prev_ms >= floor else None,
+            "next_month": next_ms.isoformat()
+            if today_local() >= _month_frozen_after(next_ms) else None,
             "cards": _month_cards(row.metrics_snapshot or {}),
             "summary": row.summary or "",
             "saved": False,

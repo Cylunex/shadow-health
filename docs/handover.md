@@ -31,15 +31,26 @@
   llm.build_context 已接入最近 3 份月报快照
 - 回归：tests/test_monthly_report.py 锁月份边界/周归属/连击口径（42 个测试全绿）
 
+## ✅ 审查缺陷已全部修复（2026-07-10，24 缺陷 + 存疑 2）
+
+docs/audit-2026-07-10.md 全部勾完。要点：月报冻结等末周结束（_month_frozen_after）+
+周/月报列表回填缺口 + 详情翻页导航；samsung_direct daily 水位线按日期比较；zip 睡眠
+回填走跨源去重；Keep 去重清单补 samsung_direct；auto_rule 撤销否决（**迁移 09**：
+habit_logs.done_count 允许 0 = 否决行）；三环/计划卡/打卡分区 HTMX 被动刷新补齐；
+base.html 全局错误 toast + 「更多」导航高亮扩展；SW v9（cache:reload 防固化旧资源、
+跳过 .apk）；导入上传 500MB 上限；网关看门狗+本地队列（compose 挂 /data 卷）；
+壳 WebChromeClient/文件选择器/DownloadListener + 秤本地补发队列。
+新增 tests/test_review_habit_rules.py（15 个口径锁），57 测试全绿。
+
 ## 其余待办（优先级序）
 
-1. **审查缺陷修复**（用户 2026-07-10 定调「先不动手」，动手时照
-   docs/audit-2026-07-10.md 的批次清单执行：批次一 = 3 高危 + 4 数据类中危）
+1. **真机回归**（Android 壳与网关改动后必做）：重新构建 APK 装机——验证壳内
+   hx-confirm 删除弹系统确认框、拍照记餐/导入 zip 文件选择器、CSV 导出下载、
+   断服上秤后恢复补发；NAS 网关重建镜像验证看门狗与 /data 队列。
+   顺带做心率同步回归（查 daily_activity.hr_min/hr_max）
 2. **NAS 部署**（用户明确"这里部署不了生产"，等到 NAS 环境照 deploy.md 执行；
-   生产库角色未建是第一步）
-3. 心率同步真机回归：HR 分日分组聚合修复后未验证（手机装新包同步一次，
-   查 daily_activity.hr_min/hr_max）
-4. 候选池：功能/UX 建议见 audit 文档 F1-F8/U1-U10（F8 即原「力量组次明细+PR」，
+   生产库角色未建是第一步；注意迁移 08/09 会随容器启动自动应用）
+3. 候选池：功能/UX 建议见 audit 文档 F1-F8/U1-U10（F8 即原「力量组次明细+PR」，
    detail JSONB 就绪）、GPS 轨迹地图（依赖外网瓦片，违背断网原则，做成可选）、
    Keep API（搁置）
 

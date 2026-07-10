@@ -9,7 +9,11 @@
       <h2 class="card-title mb-0">今日计划</h2>
       <a href="/workout/plans" class="inline-flex min-h-[44px] items-center px-2 -mr-2 text-xs font-medium text-emerald-400 active:text-emerald-300">全部计划 →</a>
     </div>
-    <div id="workout-plan-cards">{% include "fragments/workout_plan_cards.html" %}</div>
+    {# 监听 workout-changed：删除/编辑今日打卡记录后「已完成 ✓」状态跟着复位 #}
+    <div id="workout-plan-cards"
+         hx-get="/fragments/workout/plan-cards"
+         hx-trigger="workout-changed from:body"
+         hx-swap="innerHTML">{% include "fragments/workout_plan_cards.html" %}</div>
   </section>
 
   {# ---- 手动记录 ---- #}

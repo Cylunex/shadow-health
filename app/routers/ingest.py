@@ -961,9 +961,17 @@ async def ingest_samsung_direct(request: Request, db: Session = Depends(get_db))
             if (e["rtype"], e["ext_id"]) not in new_keys:
                 continue
             rtype, ext_id, data = e["rtype"], e["ext_id"], e["data"]
-            if watermark is not None and e["rec_ts"] is not None and e["rec_ts"] <= watermark:
-                _mark_sd(rtype, ext_id, "skipped")
-                continue
+            if watermark is not None and e["rec_ts"] is not None:
+                # daily 是天级 SET 语义（rec_ts 固定为当日 00:00）：按日期与水位线比较，
+                # 等于水位线当天的照常放行（幂等覆盖）——否则 zip 导入当天（水位线≈导出
+                # 时刻）之后的步数/心率增量会被冻结到次日
+                if rtype == "daily":
+                    if e["rec_ts"].astimezone(LOCAL_TZ).date() < watermark.astimezone(LOCAL_TZ).date():
+                        _mark_sd(rtype, ext_id, "skipped")
+                        continue
+                elif e["rec_ts"] <= watermark:
+                    _mark_sd(rtype, ext_id, "skipped")
+                    continue
             try:
                 with db.begin_nested():
                     if rtype == "daily":

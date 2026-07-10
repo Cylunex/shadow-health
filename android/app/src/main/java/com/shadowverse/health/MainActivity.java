@@ -4,12 +4,15 @@ import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.DownloadManager;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.InputType;
@@ -19,6 +22,9 @@ import android.view.Window;
 import android.view.WindowManager;
 import android.webkit.CookieManager;
 import android.webkit.JavascriptInterface;
+import android.webkit.URLUtil;
+import android.webkit.ValueCallback;
+import android.webkit.WebChromeClient;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
@@ -53,6 +59,7 @@ public class MainActivity extends Activity {
     private static final int DARK_BG = Color.parseColor("#0f172a");
     private static final long LONG_PRESS_MS = 700;
     private static final int REQ_SCALE_PERMS = 42;
+    private static final int REQ_FILE_CHOOSER = 44;
 
     private WebView webView;
     private SharedPreferences prefs;
@@ -61,6 +68,7 @@ public class MainActivity extends Activity {
     private String lastAttemptedUrl;
     private boolean showingErrorPage;
     private String erroredUrl;  // 加载失败的 URL 也会触发 onPageFinished，需忽略以免复位错误页标志
+    private ValueCallback<Uri[]> filePathCallback;  // <input type=file> 的回调，选择结果回传给 WebView
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -122,6 +130,49 @@ public class MainActivity extends Activity {
                     erroredUrl = lastAttemptedUrl;
                     showErrorPage(String.valueOf(error.getDescription()));
                 }
+            }
+        });
+
+        // 必须设 WebChromeClient：否则 WebView 静默取消所有 JS 对话框——window.confirm()
+        // 恒返回 false，页面里 hx-confirm 的删除/放弃确认全部点了没反应；
+        // 且没有 onShowFileChooser 时 <input type=file>（拍照记餐、导入 zip）打不开。
+        webView.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback,
+                                             FileChooserParams params) {
+                if (filePathCallback != null) {
+                    filePathCallback.onReceiveValue(null);  // 上一次未完成的选择先作废
+                }
+                filePathCallback = callback;
+                try {
+                    startActivityForResult(params.createIntent(), REQ_FILE_CHOOSER);
+                } catch (Exception e) {
+                    filePathCallback = null;
+                    Toast.makeText(MainActivity.this, "无法打开文件选择器", Toast.LENGTH_SHORT).show();
+                    return false;
+                }
+                return true;
+            }
+        });
+
+        // CSV 导出等 Content-Disposition: attachment 响应 WebView 自身不处理，
+        // 不设 DownloadListener 会被静默丢弃——转交系统 DownloadManager 并带上登录 Cookie。
+        webView.setDownloadListener((url, userAgent, contentDisposition, mimeType, contentLength) -> {
+            try {
+                DownloadManager.Request req = new DownloadManager.Request(Uri.parse(url));
+                String cookie = CookieManager.getInstance().getCookie(url);
+                if (cookie != null) {
+                    req.addRequestHeader("Cookie", cookie);
+                }
+                String name = URLUtil.guessFileName(url, contentDisposition, mimeType);
+                req.setNotificationVisibility(
+                        DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+                req.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, name);
+                DownloadManager dm = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
+                dm.enqueue(req);
+                Toast.makeText(MainActivity.this, "已开始下载 " + name, Toast.LENGTH_SHORT).show();
+            } catch (Exception e) {
+                Toast.makeText(MainActivity.this, "下载失败：" + e.getMessage(), Toast.LENGTH_LONG).show();
             }
         });
 
@@ -290,6 +341,19 @@ public class MainActivity extends Activity {
 
     private void startScaleService() {
         startForegroundService(new Intent(this, ScaleScanService.class));
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (requestCode == REQ_FILE_CHOOSER) {
+            if (filePathCallback != null) {
+                filePathCallback.onReceiveValue(
+                        WebChromeClient.FileChooserParams.parseResult(resultCode, data));
+                filePathCallback = null;
+            }
+            return;
+        }
+        super.onActivityResult(requestCode, resultCode, data);
     }
 
     @Override

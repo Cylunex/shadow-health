@@ -24,5 +24,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # miscale 存量行在旧词表下非法，先清掉——否则重建 CHECK 校验失败、降级中止
+    # （单用户自用可接受；原始测量可由秤/手机端重放）
+    op.execute("DELETE FROM health.import_raw WHERE source = 'miscale'")
     op.drop_constraint("ck_import_source", "import_raw", schema="health", type_="check")
     op.create_check_constraint("ck_import_source", "import_raw", _OLD, schema="health")

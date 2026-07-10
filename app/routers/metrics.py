@@ -180,13 +180,14 @@ def _form_context(
     v: dict[str, str] = {}
     for name in _NUM_FIELDS:
         v[name] = _fmt(getattr(row, name)) if row is not None else ""
-    # 当日无记录（或该字段为空）时，慢变化字段预填最近一次值
+    # 当日无记录（或该字段为空）时，慢变化字段预填「该日期之前」最近一次值——
+    # 不设上界会把今天的值预填进补录的历史日期，顺手保存即污染历史曲线
     for name in _PREFILL_FIELDS:
         if not v[name]:
             col = getattr(BodyMetrics, name)
             last = db.execute(
                 select(col)
-                .where(col.is_not(None), BodyMetrics.log_date != log_date)
+                .where(col.is_not(None), BodyMetrics.log_date < log_date)
                 .order_by(BodyMetrics.log_date.desc())
                 .limit(1)
             ).scalar_one_or_none()

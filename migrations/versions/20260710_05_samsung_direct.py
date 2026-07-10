@@ -30,6 +30,12 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # samsung_direct 存量数据在旧词表下非法，先清掉——否则重建 CHECK 校验失败、
+    # 降级中止（单用户自用可接受；直读通道会按水位线重新同步）
+    op.execute("DELETE FROM health.import_raw WHERE source = 'samsung_direct'")
+    op.execute("DELETE FROM health.workout_logs WHERE source = 'samsung_direct'")
+    op.execute("DELETE FROM health.sleep_sessions WHERE source = 'samsung_direct'")
+    op.execute("DELETE FROM health.sync_state WHERE source = 'samsung_direct'")
     op.drop_constraint("ck_import_source", "import_raw", schema="health", type_="check")
     op.create_check_constraint("ck_import_source", "import_raw", _RAW_OLD, schema="health")
     op.drop_constraint("ck_workout_source", "workout_logs", schema="health", type_="check")

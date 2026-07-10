@@ -49,7 +49,8 @@ from app.timeutil import now_local
 PARSER_VERSION = 1
 SOURCE = "keep_file"        # import_raw / sync_state 的来源标识
 WORKOUT_SOURCE = "keep"     # workout_logs.source（CHECK 枚举里已有）
-DUP_SOURCES = ("samsung_zip", "health_connect")
+# 跨源去重必须覆盖手表直读（现为主通道）：漏了它，同一次运动会以 keep 源双计
+DUP_SOURCES = ("samsung_zip", "health_connect", "samsung_direct")
 DUP_TOLERANCE_S = 180       # 跨源去重窗口：started_at 相差 ≤3 分钟
 BJT = timezone(timedelta(hours=8))  # Keep 导出时间为北京时间，无 DST
 BATCH_SIZE = 800

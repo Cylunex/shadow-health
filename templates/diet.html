@@ -74,12 +74,12 @@
       </label>
       <label class="block">
         <span class="field-label">脂肪 (g)</span>
-        <input type="text" inputmode="decimal" name="fat_g" autocomplete="off" placeholder="可选"
+        <input type="text" inputmode="decimal" name="fat_g" id="diet-fat" autocomplete="off" placeholder="可选"
                class="field disabled:opacity-40">
       </label>
       <label class="block">
         <span class="field-label">碳水 (g)</span>
-        <input type="text" inputmode="decimal" name="carb_g" autocomplete="off" placeholder="可选"
+        <input type="text" inputmode="decimal" name="carb_g" id="diet-carb" autocomplete="off" placeholder="可选"
                class="field disabled:opacity-40">
       </label>
     </div>
@@ -116,8 +116,11 @@
     document.getElementById('diet-suggestions').innerHTML = '';
     document.getElementById('diet-picked-name').textContent = btn.dataset.name;
     document.getElementById('diet-picked').classList.remove('hidden');
+    // 四项一起禁用：food_id 路径服务端按食物库×用量整组重算，手填值会被覆盖
     document.getElementById('diet-kcal').disabled = true;
     document.getElementById('diet-protein').disabled = true;
+    document.getElementById('diet-fat').disabled = true;
+    document.getElementById('diet-carb').disabled = true;
     amount.focus();
   }
   // 取消选中（改文字/成功重置后回到自由文本态）
@@ -129,6 +132,8 @@
     document.getElementById('diet-suggestions').innerHTML = '';
     document.getElementById('diet-kcal').disabled = false;
     document.getElementById('diet-protein').disabled = false;
+    document.getElementById('diet-fat').disabled = false;
+    document.getElementById('diet-carb').disabled = false;
   }
 </script>
 {% endblock %}

@@ -110,6 +110,9 @@ _IMPORT_SOURCES = ("samsung_zip", "keep_file")
 _IMPORT_SOURCE_LABELS = {"samsung_zip": "三星健康导出 zip", "keep_file": "Keep 导出文件"}
 _JOB_STATUS_LABELS = {"pending": "等待中", "running": "进行中", "done": "已完成", "failed": "失败"}
 _SAFE_NAME_RE = re.compile(r"[^\w.\-]+")
+# 上传护栏：多年三星导出 zip 一般也就几百 MB；扩展名白名单（Keep 导出常见 zip/7z/csv）
+_IMPORT_EXTS = {".zip", ".7z", ".csv"}
+IMPORT_MAX_BYTES = 500 * 1024 * 1024
 
 
 # ---------- 通用小工具 ----------
@@ -436,14 +439,43 @@ async def imports_create(
             status_code=400,
         )
 
+    original = Path(file.filename).name
+    if Path(original).suffix.lower() not in _IMPORT_EXTS:
+        return templates.TemplateResponse(
+            request,
+            "imports.html",
+            _imports_context(
+                db, wizard_open=True,
+                wizard_error="仅支持 zip/7z/csv 导出文件",
+            ),
+            status_code=400,
+        )
+
     upload_dir = get_settings().upload_dir
     upload_dir.mkdir(parents=True, exist_ok=True)
-    original = Path(file.filename).name
     safe = _SAFE_NAME_RE.sub("_", original) or "upload.bin"
     dest = upload_dir / f"{now_local():%Y%m%d_%H%M%S}_{source}_{safe}"
-    with dest.open("wb") as out:
-        while chunk := await file.read(1024 * 1024):
-            out.write(chunk)
+    size = 0
+    try:
+        with dest.open("wb") as out:
+            while chunk := await file.read(1024 * 1024):
+                size += len(chunk)
+                if size > IMPORT_MAX_BYTES:
+                    # 无上限会被误传的超大文件写满 NAS 磁盘，拖垮同机 PG
+                    raise HTTPException(status_code=413, detail="too large")
+                out.write(chunk)
+    except HTTPException:
+        dest.unlink(missing_ok=True)
+        return templates.TemplateResponse(
+            request,
+            "imports.html",
+            _imports_context(
+                db, wizard_open=True,
+                wizard_error=f"文件超过 {IMPORT_MAX_BYTES // (1024 * 1024)}MB 上限，"
+                             "请确认选的是健康数据导出文件",
+            ),
+            status_code=413,
+        )
 
     job = ImportJob(source=source, filename=original, status="pending")
     db.add(job)

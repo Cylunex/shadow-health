@@ -1,10 +1,12 @@
 /* shadow-health Service Worker
  * 通过 GET /sw.js 路由以根 scope 注册（直接放 /static/ 下 scope 罩不住页面）。
- * 策略：/static/* cache-first；导航请求 network-first、离线回退 offline.html；
- * 非 GET（POST/PUT/DELETE…）一律 passthrough 不缓存。
+ * 策略：/static/* cache-first（.apk 等大二进制除外）；导航请求 network-first、
+ * 离线回退 offline.html；非 GET（POST/PUT/DELETE…）一律 passthrough 不缓存。
  * 升级方式：改 SW_VERSION 即可让旧缓存在 activate 时被清掉。
+ * 注意：服务器对 /static 不发 Cache-Control，install/回源必须显式绕过浏览器
+ * HTTP 缓存（cache: 'reload'/'no-cache'），否则新版本缓存会固化到旧资源。
  */
-const SW_VERSION = 'v8';
+const SW_VERSION = 'v9';
 const CACHE_NAME = 'shadow-health-' + SW_VERSION;
 const OFFLINE_URL = '/static/offline.html';
 const PRECACHE = [
@@ -18,12 +20,16 @@ const PRECACHE = [
   '/static/icon-512.png',
   OFFLINE_URL,
 ];
+// 不缓存的静态文件：部署时同名替换的大二进制（缓存后旧包会被继续下发）
+const NO_CACHE_EXT = /\.(apk|zip|7z)$/i;
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches
       .open(CACHE_NAME)
-      .then((cache) => cache.addAll(PRECACHE))
+      // cache: 'reload' 强制回源——不然 addAll 可能命中浏览器 HTTP 启发式缓存，
+      // 把升级前的旧 app.css/vendor 固化进新版本缓存
+      .then((cache) => cache.addAll(PRECACHE.map((u) => new Request(u, { cache: 'reload' }))))
       .then(() => self.skipWaiting())
   );
 });
@@ -49,11 +55,13 @@ self.addEventListener('fetch', (event) => {
 
   // 静态资源：cache-first，命中后台不更新，靠 SW_VERSION 整体失效
   if (url.origin === self.location.origin && url.pathname.startsWith('/static/')) {
+    if (NO_CACHE_EXT.test(url.pathname)) return; // APK 等直连网络
     event.respondWith(
       caches.match(req).then(
         (hit) =>
           hit ||
-          fetch(req).then((resp) => {
+          // 回源同样绕过 HTTP 缓存，进 SW 缓存的必须是服务器当前版本
+          fetch(new Request(req, { cache: 'no-cache' })).then((resp) => {
             if (resp && resp.ok) {
               const copy = resp.clone();
               caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));

@@ -301,7 +301,9 @@ class HabitLog(TimestampMixin, Base):
     __tablename__ = "habit_logs"
     __table_args__ = (
         UniqueConstraint("habit_id", "log_date", name="ux_habit_logs"),
-        CheckConstraint("done_count > 0", name="ck_done_count"),
+        # done_count=0 = auto_rule 习惯的「当日否决」：占住唯一键防自动规则回填，
+        # 达标判断一律 done_count >= target，0 值行不计入任何统计（迁移 09）
+        CheckConstraint("done_count >= 0", name="ck_done_count"),
         Index("idx_habit_logs_date", "log_date"),
         {"schema": SCHEMA},
     )

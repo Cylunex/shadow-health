@@ -42,6 +42,7 @@ from app.models import (
     WorkoutLog,
 )
 from app.services.autofill import autofill_fields
+from app.services.sleep import total_sleep_min as dedup_total_sleep_min
 from app.timeutil import now_local, parse_day_time, parse_event_time, parse_time_offset
 
 PARSER_VERSION = 1
@@ -472,10 +473,12 @@ class _Importer:
                 n = sum(1 for f in flags if f)
                 stats["inserted"] += n
                 stats["skipped"] += len(flags) - n
-            # 每个 wake_date 回填 sleep_hours（同日多会话取总和；单会话即设计口径 total/60）
+            # 每个 wake_date 回填 sleep_hours：经 services/sleep 跨源去重后取值
+            # （与 ingest 的 HC/直读通道同口径）——直读/HC 已覆盖的夜晚优先级更高，
+            # 重导 zip 不能用 zip 自身求和覆盖它们
             backfilled = 0
             for d in sorted(hours_by_wake):
-                total = hours_by_wake[d]
+                total = dedup_total_sleep_min(self.db, d)
                 if total <= 0:
                     continue
                 if autofill_fields(self.db, d, SOURCE, {"sleep_hours": round(total / 60.0, 1)}):

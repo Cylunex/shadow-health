@@ -182,20 +182,33 @@ def build_context(db: Session, days: int = 30) -> str:
     for d, kcal, protein, n in diet:
         lines.append(f"- {d}: {_fmt(kcal, 0)}kcal, 蛋白{_fmt(protein, 0)}g（{n}笔）")
 
-    # 习惯（active，近 N 天完成天数）
+    # 习惯（active）：daily = 达标天数；weekly = 达标周数（与打卡模块同口径：
+    # 周一起算、周内 done_count 求和 ≥ target，而非单日行数）
     habits = db.execute(select(Habit).where(Habit.active.is_(True))).scalars().all()
     if habits:
-        lines.append(f"\n## 习惯打卡（近{days}天完成天数）")
+        lines.append(f"\n## 习惯打卡（近{days}天，daily 计天 / weekly 计周）")
         for h in habits:
-            done = db.execute(
-                select(func.count()).where(
-                    HabitLog.habit_id == h.id,
-                    HabitLog.log_date >= since,
-                    HabitLog.done_count >= (h.target_per_period or 1),
-                )
-            ).scalar_one()
-            unit = "周" if h.period == "weekly" else "天"
-            lines.append(f"- {h.name}: {done} {unit if h.period == 'weekly' else '天'}")
+            target = h.target_per_period or 1
+            if h.period == "weekly":
+                weeks: dict[date, int] = {}
+                for d, c in db.execute(
+                    select(HabitLog.log_date, HabitLog.done_count).where(
+                        HabitLog.habit_id == h.id, HabitLog.log_date >= since
+                    )
+                ):
+                    ws = d - timedelta(days=d.isoweekday() - 1)
+                    weeks[ws] = weeks.get(ws, 0) + c
+                done = sum(1 for total in weeks.values() if total >= target)
+                lines.append(f"- {h.name}: {done} 周")
+            else:
+                done = db.execute(
+                    select(func.count()).where(
+                        HabitLog.habit_id == h.id,
+                        HabitLog.log_date >= since,
+                        HabitLog.done_count >= target,
+                    )
+                ).scalar_one()
+                lines.append(f"- {h.name}: {done} 天")
 
     # 周报快照（最近 4 份）
     reviews = db.execute(

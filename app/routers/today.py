@@ -100,19 +100,23 @@ def _rings(db: Session, today: date, steps: int | None, target_steps: int) -> li
 @router.get("/")
 def today_page(request: Request, db: Session = Depends(get_db)):
     today = today_local()
-    activity = db.get(DailyActivity, today)
-    steps = activity.steps if activity is not None else None
-    target_steps = _target_steps(db)
-    steps_pct = 0
-    if steps is not None and target_steps > 0:
-        steps_pct = min(100, round(steps * 100 / target_steps))
     ctx = {
         "greeting": _greeting(now_local().hour),
         "today": today,
         "weekday_cn": WEEKDAY_CN[today.isoweekday() - 1],
-        "steps": steps,
-        "target_steps": target_steps,
-        "steps_pct": steps_pct,
-        "rings": _rings(db, today, steps, target_steps),
     }
     return templates.TemplateResponse(request, "today.html", ctx)
+
+
+@router.get("/fragments/today/rings")
+def rings_fragment(request: Request, db: Session = Depends(get_db)):
+    """三环片段：打卡/训练写操作后经 habit-changed / workout-changed 被动刷新，
+    与同页汇总条保持一致（否则环数据停留在页面加载时刻）。"""
+    today = today_local()
+    activity = db.get(DailyActivity, today)
+    steps = activity.steps if activity is not None else None
+    return templates.TemplateResponse(
+        request,
+        "fragments/today_rings.html",
+        {"rings": _rings(db, today, steps, _target_steps(db))},
+    )

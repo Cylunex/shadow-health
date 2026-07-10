@@ -53,6 +53,19 @@ def _week_start_of(d: date) -> date:
     return d - timedelta(days=d.isoweekday() - 1)
 
 
+def _earliest_data_date(db: Session) -> date | None:
+    """全库最早的数据日期（周/月报回填与详情翻页导航的下界）。"""
+    mins = [
+        db.execute(select(func.min(col))).scalar_one()
+        for col in (
+            BodyMetrics.log_date, DailyActivity.log_date, DietLog.log_date,
+            WorkoutLog.log_date, HabitLog.log_date,
+        )
+    ]
+    vals = [m for m in mins if m is not None]
+    return min(vals) if vals else None
+
+
 def _is_cardio(session_type: str | None) -> bool:
     if not session_type:
         return False
@@ -331,12 +344,20 @@ def review_list():
 def review_detail(week_start: str, request: Request, db: Session = Depends(get_db)):
     ws = _parse_week_start(week_start)
     row = _get_or_create_review(db, ws)
+    # 上一周/下一周导航：下界 = 最早数据所在周（更早的周按需生成），上界 = 上一完整周
+    earliest = _earliest_data_date(db)
+    floor = _week_start_of(earliest) if earliest is not None else ws
+    prev_ws = ws - timedelta(days=7)
+    next_ws = ws + timedelta(days=7)
     return templates.TemplateResponse(
         request,
         "review_detail.html",
         {
             "week_start": ws.isoformat(),
             "range_label": _range_label(ws),
+            "prev_week": prev_ws.isoformat() if prev_ws >= floor else None,
+            "next_week": next_ws.isoformat()
+            if next_ws + timedelta(days=7) <= today_local() else None,
             "cards": _snapshot_cards(row.metrics_snapshot or {}),
             "summary": row.summary or "",
             "saved": False,

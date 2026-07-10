@@ -25,6 +25,10 @@ import android.os.Looper;
 import android.os.ParcelUuid;
 import android.util.Log;
 
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
+
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -65,6 +69,11 @@ public class ScaleScanService extends Service {
     private static final long SETTLE_MS = 12_000;
     /** 已上报测量的去重缓存保留时长。 */
     private static final long SENT_TTL_MS = 600_000;
+    /** 上报失败的本地补发队列（SharedPreferences JSON 数组）：秤广播只持续一两分钟，
+     * 重试窗口（约 12s）内服务端恰在重启就永久丢测量——落盘后服务恢复即补发，
+     * 服务端按 (秤时间戳+体重) 去重，重放幂等。 */
+    private static final String KEY_QUEUE = "miscale_queue";
+    private static final int QUEUE_MAX = 200;
 
     private BluetoothLeScanner scanner;
     private ScanCallback scanCallback;
@@ -130,6 +139,13 @@ public class ScaleScanService extends Service {
             startForeground(NOTIFICATION_ID, n);
         }
         startScan();
+        // 上次失败积压的测量：服务启动即尝试补发
+        SharedPreferences prefs = getSharedPreferences("shell", MODE_PRIVATE);
+        final String server = prefs.getString("server_url", "");
+        final String token = prefs.getString("ingest_token", "");
+        if (!server.isEmpty() && !token.isEmpty()) {
+            io.execute(() -> drainQueue(server, token));
+        }
         return START_STICKY;
     }
 
@@ -321,13 +337,14 @@ public class ScaleScanService extends Service {
             updateNotification("未配置服务器/Token");
             return;
         }
-        String json = String.format(Locale.US,
-                "{\"measurements\":[{\"ts\":\"%s\",\"weight_kg\":%.2f,\"impedance\":%s}]}",
+        final String measurementJson = String.format(Locale.US,
+                "{\"ts\":\"%s\",\"weight_kg\":%.2f,\"impedance\":%s}",
                 m.tsIso, m.weightKg, m.impedance == null ? "null" : m.impedance.toString());
         io.execute(() -> {
             boolean ok = false;
             for (int attempt = 1; attempt <= 3 && !ok; attempt++) {
-                ok = postJson(server + "/api/ingest/miscale", token, json);
+                ok = postJson(server + "/api/ingest/miscale", token,
+                        "{\"measurements\":[" + measurementJson + "]}");
                 if (!ok) {
                     try {
                         Thread.sleep(2000L * attempt);
@@ -337,18 +354,67 @@ public class ScaleScanService extends Service {
                     }
                 }
             }
+            if (ok) {
+                drainQueue(server, token);  // 顺带补发之前积压的
+            } else {
+                // 三连失败：落本地队列，保留 sent 键防同一测量的后续广播重复入队
+                enqueueFailed(measurementJson);
+            }
             final String text = ok
                     ? String.format(Locale.US, "已记录 %.2f kg%s", m.weightKg,
                         m.impedance != null ? "（含体成分）" : "")
-                    : "上报失败，检查服务器/Token";
-            final boolean finalOk = ok;
-            handler.post(() -> {
-                if (!finalOk) {
-                    sent.remove(key); // 允许下次广播重试（主线程访问，防并发损坏）
-                }
-                updateNotification(text);
-            });
+                    : "上报失败，已存本地稍后补发";
+            handler.post(() -> updateNotification(text));
         });
+    }
+
+    /** 上报失败的测量入本地队列（IO 线程调用；SharedPreferences 线程安全）。 */
+    private void enqueueFailed(String measurementJson) {
+        SharedPreferences prefs = getSharedPreferences("shell", MODE_PRIVATE);
+        try {
+            JSONArray arr = new JSONArray(prefs.getString(KEY_QUEUE, "[]"));
+            arr.put(new JSONObject(measurementJson));
+            while (arr.length() > QUEUE_MAX) {
+                arr.remove(0);
+            }
+            prefs.edit().putString(KEY_QUEUE, arr.toString()).apply();
+            Log.w(TAG, "上报失败入本地队列，共 " + arr.length() + " 条");
+        } catch (JSONException e) {
+            Log.w(TAG, "入队失败: " + e);
+        }
+    }
+
+    /** 补发本地队列（IO 线程调用）：保序，遇到失败即停，其余下轮再试。 */
+    private void drainQueue(String server, String token) {
+        SharedPreferences prefs = getSharedPreferences("shell", MODE_PRIVATE);
+        JSONArray arr;
+        try {
+            arr = new JSONArray(prefs.getString(KEY_QUEUE, "[]"));
+        } catch (JSONException e) {
+            prefs.edit().remove(KEY_QUEUE).apply();  // 损坏的队列直接清掉
+            return;
+        }
+        if (arr.length() == 0) {
+            return;
+        }
+        int sentCount = 0;
+        while (arr.length() > 0) {
+            JSONObject item = arr.optJSONObject(0);
+            if (item == null) {
+                arr.remove(0);
+                continue;
+            }
+            if (!postJson(server + "/api/ingest/miscale", token,
+                    "{\"measurements\":[" + item + "]}")) {
+                break;
+            }
+            arr.remove(0);
+            sentCount++;
+        }
+        prefs.edit().putString(KEY_QUEUE, arr.toString()).apply();
+        if (sentCount > 0) {
+            Log.i(TAG, "本地队列补发 " + sentCount + " 条，剩 " + arr.length());
+        }
     }
 
     private static boolean postJson(String url, String token, String json) {

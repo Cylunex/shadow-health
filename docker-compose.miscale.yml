@@ -18,11 +18,16 @@ services:
       SHADOW_URL: http://127.0.0.1:${APP_PORT:-8080}
       INGEST_TOKEN: ${INGEST_TOKEN}
       MISCALE_MAC: ${MISCALE_MAC:-}
+      QUEUE_FILE: /data/miscale_queue.json  # 上报失败的本地补发队列（app 重启窗口不丢测量）
       TZ: Asia/Shanghai
     volumes:
       - /var/run/dbus:/var/run/dbus:ro
+      - miscale-data:/data
     logging:
       driver: json-file
       options:
         max-size: "5m"
         max-file: "2"
+
+volumes:
+  miscale-data:

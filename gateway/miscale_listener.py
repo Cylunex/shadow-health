@@ -15,7 +15,16 @@
   SHADOW_URL    服务端地址，如 http://127.0.0.1:8080
   INGEST_TOKEN  与服务端 .env 一致的 Bearer token
   MISCALE_MAC   可选，秤的 MAC 过滤（米家 App 设备信息里能查到）
+  QUEUE_FILE    可选，上报失败的本地持久队列（默认 ./miscale_queue.json；
+                compose 里挂 /data 卷）——服务端重启窗口内的测量不再丢失
   LOG_LEVEL     可选，默认 INFO
+
+健壮性：
+- 看门狗：周期性重建 BLE 扫描会话——bluetoothd 重启/适配器掉线后 BlueZ 的
+  discovery 会话静默丢失，bleak 既不报错也不重建；重建失败则退出进程，
+  交给 Docker restart 策略拉起
+- 本地队列：上报三连失败（如 app 容器在部署重启）先落盘，服务恢复后补发；
+  服务端按 (秤时间戳+体重) 去重，重放幂等
 
 自测（不依赖蓝牙）：python miscale_listener.py --selftest
 """
@@ -42,6 +51,9 @@ UUID_BODY_COMPOSITION = "0000181b-0000-1000-8000-00805f9b34fb"
 SETTLE_S = 12
 # 已上报测量的去重缓存保留时长
 SENT_TTL_S = 600
+# 本地队列补发间隔 / 扫描会话重建周期（看门狗）
+RETRY_QUEUE_S = 60
+SCAN_REBUILD_S = 600
 
 
 def _round_half_up(x: float) -> int:
@@ -126,12 +138,64 @@ def post_measurement(url: str, token: str, m: Measurement) -> bool:
 
 
 class Gateway:
-    def __init__(self, url: str, token: str, mac_filter: str | None) -> None:
+    def __init__(self, url: str, token: str, mac_filter: str | None,
+                 queue_path: str | None = None) -> None:
         self.url = url
         self.token = token
         self.mac_filter = mac_filter.upper() if mac_filter else None
         self.pending: dict[str, tuple[float, Measurement]] = {}  # key -> (首见时刻, 最优帧)
         self.sent: dict[str, float] = {}
+        self.queue_path = queue_path
+        self._last_drain = 0.0
+
+    # ---- 失败测量的本地持久队列（服务端按秤时间戳+体重去重，重放幂等） ----
+    def _load_queue(self) -> list[dict]:
+        if not self.queue_path or not os.path.exists(self.queue_path):
+            return []
+        try:
+            with open(self.queue_path, encoding="utf-8") as f:
+                items = json.load(f)
+            return items if isinstance(items, list) else []
+        except (ValueError, OSError):
+            return []
+
+    def _save_queue(self, items: list[dict]) -> None:
+        if not self.queue_path:
+            return
+        try:
+            tmp = self.queue_path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(items[-200:], f, ensure_ascii=False)  # 上限护栏，防无限膨胀
+            os.replace(tmp, self.queue_path)
+        except OSError as exc:
+            log.warning("写本地队列失败：%s", exc)
+
+    def enqueue(self, m: Measurement) -> None:
+        items = self._load_queue()
+        items.append({"ts": m.ts.isoformat(), "weight_kg": m.weight_kg, "impedance": m.impedance})
+        self._save_queue(items)
+        log.warning("上报失败已入本地队列（%d 条待补发）", len(items))
+
+    def drain_queue(self) -> None:
+        items = self._load_queue()
+        if not items:
+            return
+        remaining: list[dict] = []
+        for it in items:
+            try:
+                m = Measurement(
+                    ts=datetime.fromisoformat(str(it["ts"])),
+                    weight_kg=float(it["weight_kg"]),
+                    impedance=it.get("impedance"),
+                )
+            except (KeyError, TypeError, ValueError):
+                continue  # 坏条目直接丢弃
+            # 保序补发：一旦失败，其余留到下一轮
+            if remaining or not post_measurement(self.url, self.token, m):
+                remaining.append(it)
+        self._save_queue(remaining)
+        if len(remaining) < len(items):
+            log.info("本地队列补发：%d → %d 条", len(items), len(remaining))
 
     def on_adv(self, device, adv) -> None:
         if self.mac_filter and device.address.upper() != self.mac_filter:
@@ -164,7 +228,14 @@ class Gateway:
                     self.sent[key] = now
                     ok = await loop.run_in_executor(None, post_measurement, self.url, self.token, m)
                     if not ok:
-                        self.sent.pop(key, None)  # 三次都失败：允许下次广播重试
+                        # 三连失败（如 app 容器在部署重启）：落本地持久队列稍后补发；
+                        # 保留 sent 键，同一测量的后续广播不会重复入队
+                        await loop.run_in_executor(None, self.enqueue, m)
+            # 有积压时定期补发（服务恢复后 1 分钟内追平）
+            if now - self._last_drain >= RETRY_QUEUE_S:
+                self._last_drain = now
+                if self._load_queue():
+                    await loop.run_in_executor(None, self.drain_queue)
 
 
 async def main() -> None:
@@ -180,10 +251,27 @@ async def main() -> None:
 
     from bleak import BleakScanner  # 延迟导入：--selftest 不需要蓝牙栈
 
-    gw = Gateway(url, token, os.environ.get("MISCALE_MAC"))
+    gw = Gateway(
+        url, token, os.environ.get("MISCALE_MAC"),
+        queue_path=os.environ.get("QUEUE_FILE", "miscale_queue.json").strip() or None,
+    )
     log.info("开始监听体脂秤广播（0x181B）%s", f"，MAC 过滤 {gw.mac_filter}" if gw.mac_filter else "")
-    async with BleakScanner(gw.on_adv):
-        await gw.flush_loop()
+
+    flusher = asyncio.create_task(gw.flush_loop())
+    try:
+        # 看门狗：周期性重建扫描会话。bluetoothd 重启/适配器掉线后 discovery 会话
+        # 静默丢失且 bleak 不报错——重建让监听自动恢复；重建失败说明蓝牙栈不可用，
+        # 退出进程交给 Docker restart 拉起（比带病假活强）。
+        while True:
+            try:
+                async with BleakScanner(gw.on_adv):
+                    await asyncio.sleep(SCAN_REBUILD_S)
+                log.info("按看门狗周期重建 BLE 扫描会话")
+            except Exception as exc:
+                log.error("BLE 扫描会话建立/维持失败：%s——退出交给容器重启", exc)
+                sys.exit(1)
+    finally:
+        flusher.cancel()
 
 
 def selftest() -> None:

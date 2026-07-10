@@ -82,7 +82,8 @@ def _apply_auto_rules(
 ) -> tuple[dict[int, bool | None], int]:
     """带 auto_rule 的习惯先自动判定：达标且当日无记录则写 habit_logs（幂等）。
 
-    返回 (habit_id -> 判定结果, 实际新插入行数)。只插不删：用户手动记录永不被自动清掉。
+    返回 (habit_id -> 判定结果, 实际新插入行数)。只插不删：用户手动记录永不被自动清掉；
+    手动撤销留下的 done_count=0 否决行同样占住唯一键，ON CONFLICT 不会回填。
     """
     status: dict[int, bool | None] = {}
     inserted = 0
@@ -294,34 +295,56 @@ def _heatmap_ctx(db: Session, months: int) -> dict:
 
 
 # ---------- 页面 ----------
-@router.get("/habits")
-def habits_page(request: Request, db: Session = Depends(get_db)):
-    """管理页：全部习惯（含 inactive）+ 启停开关 + streak + 本月完成率 + 打卡日历。"""
+def _manage_sections_ctx(db: Session) -> dict:
+    """启用/停用双分区上下文（管理页与 habit-changed 刷新片段共用）。"""
     today = today_local()
     habits = db.execute(
         select(Habit).order_by(Habit.sort, Habit.id)
     ).scalars().all()
     logs = _logs_map(db, [h.id for h in habits])
     rows = [_manage_row_ctx(h, logs[h.id], today) for h in habits]
-    ctx: dict = {
+    return {
         "active_rows": [r for r in rows if r["habit"].active],
         "inactive_rows": [r for r in rows if not r["habit"].active],
     }
+
+
+@router.get("/habits")
+def habits_page(request: Request, db: Session = Depends(get_db)):
+    """管理页：全部习惯（含 inactive）+ 启停开关 + streak + 本月完成率 + 打卡日历。"""
+    ctx: dict = _manage_sections_ctx(db)
     ctx.update(_heatmap_ctx(db, 3))
     return templates.TemplateResponse(request, "habits.html", ctx)
+
+
+@router.get("/fragments/habits/manage")
+def habits_manage_fragment(request: Request, db: Session = Depends(get_db)):
+    """启用/停用双分区片段（habit-changed 被动刷新：行迁移分区 + 计数同步）。"""
+    return templates.TemplateResponse(
+        request, "fragments/habits_manage_sections.html", _manage_sections_ctx(db)
+    )
 
 
 # ---------- 打卡写操作 ----------
 @router.post("/habits/{habit_id}/toggle")
 def habit_toggle(habit_id: int, request: Request, db: Session = Depends(get_db)):
-    """target=1 打卡：当日存在则删、不存在则插——再点一次即撤销。"""
+    """target=1 打卡：当日存在则撤销、不存在则插——再点一次即撤销。
+
+    auto_rule 习惯的撤销不删行，而是留 done_count=0 的「否决」行占住唯一键：
+    否则下次今日面板加载 _apply_auto_rules 会幂等补插，撤销被静默还原。
+    """
     habit = _get_habit(db, habit_id)
     today = today_local()
     row = db.execute(
         select(HabitLog).where(HabitLog.habit_id == habit_id, HabitLog.log_date == today)
     ).scalar_one_or_none()
     if row is not None:
-        db.delete(row)
+        if row.done_count == 0:
+            row.done_count = habit.target_per_period or 1  # 从否决态重新打卡
+        elif habit.auto_rule:
+            row.done_count = 0  # 否决：规则仍满足也不再回填
+        else:
+            db.delete(row)
         db.flush()
     else:
         db.execute(
@@ -351,7 +374,7 @@ def habit_increment(habit_id: int, request: Request, db: Session = Depends(get_d
 
 @router.post("/habits/{habit_id}/decrement")
 def habit_decrement(habit_id: int, request: Request, db: Session = Depends(get_db)):
-    """target>1 计数打卡 -1：减到 0 删行；当日无行则 no-op。"""
+    """target>1 计数打卡 -1：减到 0 删行（auto 习惯留否决行）；当日无行则 no-op。"""
     habit = _get_habit(db, habit_id)
     today = today_local()
     row = db.execute(
@@ -359,7 +382,10 @@ def habit_decrement(habit_id: int, request: Request, db: Session = Depends(get_d
     ).scalar_one_or_none()
     if row is not None:
         if row.done_count <= 1:
-            db.delete(row)
+            if habit.auto_rule:
+                row.done_count = 0  # 否决行：防 _apply_auto_rules 回填
+            else:
+                db.delete(row)
         else:
             row.done_count = row.done_count - 1
         db.flush()

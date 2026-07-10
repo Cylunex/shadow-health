@@ -5,7 +5,9 @@
     <button type="button"
             hx-get="/fragments/report/tabs?t={{ key }}"
             hx-target="#report-tabs" hx-swap="outerHTML"
-            class="chip flex-1 min-h-[44px] {% if key == t %}chip-active{% endif %}">
+            hx-push-url="/report?t={{ key }}"
+            hx-disabled-elt="this"
+            class="chip flex-1 min-h-[44px] [&.htmx-request]:animate-pulse [&.htmx-request]:opacity-60 {% if key == t %}chip-active{% endif %}">
       {{ label }}
     </button>
     {% endfor %}

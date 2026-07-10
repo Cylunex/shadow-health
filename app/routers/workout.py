@@ -492,7 +492,6 @@ def _load_ctx(db: Session) -> dict[str, Any]:
         select(WorkoutLog.log_date, WorkoutLog.duration_min, WorkoutLog.rpe).where(
             WorkoutLog.log_date >= prev_ws,
             WorkoutLog.log_date <= today,
-            WorkoutLog.duration_min.is_not(None),
         )
     ).all()
 
@@ -501,7 +500,10 @@ def _load_ctx(db: Session) -> dict[str, Any]:
         for d, dur, rpe in rows:
             if not (lo <= d <= hi):
                 continue
+            # 无时长记录（如「按模板完成」打卡）计入次数、不计分钟/负荷——
+            # 否则纯打卡的一周会显示「本周还没有训练记录」
             out["sessions"] += 1
+            dur = dur or 0
             if rpe:
                 out["load"] += rpe * dur
                 band = "low" if rpe <= 3 else ("mid" if rpe <= 6 else "high")
@@ -606,7 +608,12 @@ async def plan_enroll(plan_id: int, request: Request, db: Session = Depends(get_
     if plan is None:
         raise HTTPException(status_code=404, detail="计划不存在")
     form = await request.form()
-    start_date = _parse_date(form.get("start_date"))
+    # 单独解析：允许未来开始日期（「将于 X 开始」是正常场景）；
+    # _parse_date 的 min(…,今天) 钳制只适用于训练日志，别在这误伤
+    try:
+        start_date = date.fromisoformat(str(form.get("start_date") or "").strip())
+    except ValueError:
+        start_date = today_local()
     exists = db.execute(
         select(PlanEnrollment.id)
         .where(PlanEnrollment.plan_id == plan_id, PlanEnrollment.status == "active")
