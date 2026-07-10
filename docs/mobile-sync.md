@@ -33,11 +33,11 @@
 **解锁**：三星健康 → 设置 → 关于 → 连点版本号 10 次 → 开发者模式（Samsung Health Data SDK）。
 其中 **Developer Mode for Data Read 开关 = 读自己数据，不需要 access code / 合作伙伴**（access code 仅"写入"需申请 partnership，个人拿不到；我们只读，用不上）。
 
-**验证产物**：本仓库 [`mobile-poc/samsung-sdk/`](../mobile-poc/samsung-sdk/) —— 独立 Gradle PoC，包 `com.shadowverse.health.shpoc`，真机点开即直读到今日步数，完全绕过 HC。
+**验证产物**：曾以独立 Gradle PoC（`mobile-poc/samsung-sdk/`，包 `com.shadowverse.health.shpoc`）真机验证直读到今日步数、完全绕过 HC。**PoC 已于 2026-07-10 删除**（使命完成，正式集成见 `android/` 的 `SamsungSyncWorker`；需要考古可从 git 历史找回）。
 
 ### 集成技术要点（踩坑已清）
 
-- **依赖**：`samsung-health-data-api-<版本>.aar`（三星账号登录 developer.samsung.com/health/data 下载，**不在 maven**；放 `app/libs/`，fileTree 收）+ `gson` + `kotlin-parcelize` 插件。**AAR 不入仓库**，换机器重下（见 `mobile-poc/samsung-sdk/app/libs/README.txt`）。
+- **依赖**：`samsung-health-data-api-<版本>.aar`（三星账号登录 developer.samsung.com/health/data 下载，**不在 maven**；放 `app/libs/`，fileTree 收）+ `gson` + `kotlin-parcelize` 插件。**AAR 不入仓库**，换机器重下（见 `android/app/libs/README.txt`）。
 - **`minSdk ≥ 29`**（AAR manifest 强制）。
 - `DataTypes` / `DataType` 在 `com.samsung.android.sdk.health.data.request` 包（**不是** `.type`，官方文档写错）。
 - 读 API（均为 suspend）：
@@ -76,6 +76,6 @@
 
 ## 不在本仓库、需另行准备的东西
 
-- **三星 SDK AAR**：专有，换机器从三星门户重下放进 `mobile-poc/samsung-sdk/app/libs/`。
+- **三星 SDK AAR**：专有，换机器从三星门户重下放进 `android/app/libs/`。
 - **health-connect-webhook 本地修复**：在另一 clone（upstream 无推送权限），仅本机 commit，非本方案继续所必需（HC 通道已弃）。
 - **完整设计文档**：含部署凭据线索/个人数据统计，本地维护不入仓；本文档已提炼移动端同步所需的全部内容。
