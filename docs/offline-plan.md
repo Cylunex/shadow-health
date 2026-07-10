@@ -1,8 +1,10 @@
-# 手机离线记录与自动补同步——设计方案（2026-07-10，未开工）
+# 手机离线记录与自动补同步——设计方案（2026-07-11 定稿加强版，未开工）
 
 > 需求：手机应用不连服务器也能用，数据先本地缓存，连上之后自动同步。
-> 结论：**可行**。推荐「壳内原生离线页 + ingest 补发通道」，复用体脂秤队列
-> 与 import_raw 幂等基建，分三阶段落地（服务端半天 + 壳一天 + 增强半天）。
+> 结论：**可行，全程不依赖 PWA/Service Worker**（用户 2026-07-11 确认走加强版）。
+> 架构：「壳本地启动页（秒开）+ 离线记录队列 + ingest 补发通道 + 原生页面快照」，
+> 复用体脂秤队列与 import_raw 幂等基建。约 3 天：服务端半天 + 壳启动页与队列
+> 1-1.5 天 + 快照缓存 1 天；页面内写队列为可选阶段四。
 
 ## 1. 关键约束（决定了技术路线）
 
@@ -19,11 +21,12 @@
 
 | 方案 | 思路 | 结论 |
 |---|---|---|
-| A 壳内离线页 + ingest 通道 | 连不上时壳展示内置记录页，写本地队列，网络恢复 WorkManager 补发到 Bearer 接口 | ✅ **推荐**：复用全部现有基建，幂等天然成立 |
-| B 页面 JS 写队列 | 页面已打开时拦 htmx:sendError 暂存、online 事件重放 | ✅ 作为阶段三增强（覆盖「页面开着突然断网」） |
+| A 壳内离线层 + ingest 通道（**加强版，已选定**） | 壳启动秒开本地页，离线可记录（本地队列 + WorkManager 补发），在线无缝进网页；原生快照缓存让常看页面离线可读 | ✅ 复用全部现有基建，幂等天然成立，零 PWA 依赖 |
+| B 页面 JS 写队列 | 页面已打开时拦 htmx:sendError 暂存、online 事件重放 | ✅ 作为可选阶段四（覆盖「快照页上突然断网时的写操作」） |
 | C PWA SW 离线 | SW 缓存页面快照 + Background Sync | ❌ HTTP 局域网 SW 不可用，搁置（上 HTTPS 后再议） |
+| D 全原生 App 重写 | 原生 UI + 本地 SQLite + 双向同步引擎 | ❌ 几周级重写、之后每个功能写两遍、双库同步复杂度高——单人局域网场景不值（用户 2026-07-11 确认不走） |
 
-## 3. 推荐架构（方案 A，三阶段）
+## 3. 定稿架构（方案 A 加强版，四阶段）
 
 ### 阶段一：服务端补发通道（~半天）
 
@@ -52,33 +55,46 @@
     只允许 metrics 页同一批数值字段白名单）
 - 响应 `{received, new, skipped}`；单条失败不毒化整批（begin_nested，照 samsung_direct 通道抄）
 
-### 阶段二：壳内离线记录页 + 队列补发（~1 天）
+### 阶段二：壳本地启动页（秒开）+ 离线记录队列（~1-1.5 天）
 
-- **入口**：现有 showErrorPage（连不上服务器）升级为「离线模式」页
-  （loadDataWithBaseURL 内置 HTML+JS，暗色风格与 App 一致）：
+- **本地启动页取代直连加载**：壳启动先 loadDataWithBaseURL 内置本地页
+  （毫秒级出屏，永不白屏），同时后台探测 `/healthz`：
+  - 在线（局域网内 ~100-300ms）→ 自动跳转服务器页面，体感只是闪一下启动屏
+  - 离线 → 停留本地页直接可用；顶部显示「离线中 · 已暂存 N 条」+「重试连接」，
+    并每 30s 自动探测，连上即跳转
+  - 原 showErrorPage（加载中途失败）也回落到同一本地页
+- **本地页内容**（暗色风格与 App 一致，内置 HTML+JS）：
   - 打卡清单：习惯列表用**上次在线时缓存的副本**（壳在每次成功加载首页后，
-    通过 `GET /api/reminders/digest` 或新增轻量 `GET /api/offline/bootstrap`
-    拉习惯清单存 SharedPreferences）
+    经新增轻量 `GET /api/offline/bootstrap`（Bearer）拉 active 习惯清单存
+    SharedPreferences；顺带缓存常用训练类型）
   - 快速记饮食（餐次 + 自由文本 + 热量/蛋白可选）、记训练（类型/时长/RPE）、
-    记体重——都是一屏小表单，不求全，覆盖「出门在外随手记」
+    记体重——一屏小表单，不求全，覆盖「出门在外随手记」
 - **本地队列**：ShellBridge 加 `enqueueRecord(json)`；存 SharedPreferences
   JSON 数组（照 ScaleScanService 的 KEY_QUEUE/QUEUE_MAX 模式，上限 500 条），
   `client_id` 由壳生成 UUID，`date` 取壳本地日期（时钟即真相）
 - **补发**：WorkManager 一次性任务，约束 `NetworkType.CONNECTED`，网络恢复即跑；
   另在 App 启动/回前台时尝试。保序批量 POST /api/ingest/offline，成功清队列，
   失败保留下轮再试；通知栏提示「已补同步 N 条离线记录」
-- **在线检测**：离线页顶部「重试连接」按钮 + 自动每 30s 探测 `/healthz`，
-  连上即跳回正常页面
 
-### 阶段三：增强（可选，~半天-1 天）
+### 阶段三：原生页面快照缓存——离线可读（~1 天）
 
-- **页面内写队列**（方案 B）：base.html 拦 `htmx:sendError`——把失败请求的
-  (method, url, body) 存 localStorage，`online` 事件时重放并 toast「已补同步」。
-  注意：仅对**带显式日期参数**的写操作开启（打卡已带 d、饮食表单带 log_date；
+- WebViewClient.`shouldInterceptRequest` 把**成功的 GET 响应**写壳内磁盘缓存
+  （URL 哈希做键，LRU 上限 ~20MB）：导航 HTML、`/fragments/*`（今日页的计划卡/
+  习惯/饮食区块都是 hx-get 片段，不缓存片段则离线页面只剩骨架）、`/static/*`
+- 离线时（探测失败/请求错误）同 URL 回放缓存，并对 HTML 注入
+  「📴 离线快照 · 截至 HH:MM」顶部横幅；无缓存 → 回本地启动页
+- 只缓存 GET；POST/PUT/DELETE 永不缓存。快照页上的写操作离线时会失败，
+  由 base.html 全局 toast 报「网络错误」——引导回本地页记录（或做阶段四）
+- 缓存按 URL 覆盖写（永远是最后一次成功响应），无 TTL，横幅时间戳即真相
+
+### 阶段四：页面内写队列（可选，~半天）
+
+- base.html 拦 `htmx:sendError`——把失败请求的 (method, url, body) 存
+  localStorage，`online` 事件时重放并 toast「已补同步」。
+  仅对**带显式日期参数**的写操作开启（打卡已带 d、饮食表单带 log_date；
   chips 一击/照片上传要先补上显式 d，否则次日重放会记错天）；
   toggle 类翻转语义不入队（重放两次会翻回来），只入 set 语义的操作
-- **壳内只读快照**：WebViewClient.shouldInterceptRequest 缓存最近成功的 GET 页面，
-  离线时回放并注入「离线快照 · 截至 HH:MM」横幅（工程量中等，价值看使用习惯再定）
+- 做完这条，快照页（阶段三）上的离线写操作也能暂存，闭环完整
 
 ## 4. 边界与不做的事
 
@@ -90,12 +106,15 @@
 
 ## 5. 实施顺序与验收
 
-1. 迁移 11（source 词表 + 'offline'）+ `/api/ingest/offline` + pytest
-   （payload 校验/幂等重放/单条失败隔离的用例）
-2. 壳：bootstrap 缓存 → 离线页 UI → 队列 → WorkManager 补发 → 通知
-3. 真机回归清单：飞行模式打开 App → 出离线页 → 记打卡+饮食+体重 →
-   恢复网络 → 通知补同步 → 服务端各表落库且重复补发不双写
-4. 阶段三视手感决定要不要做
+1. 阶段一：迁移 11（source 词表 + 'offline'）+ `/api/ingest/offline` +
+   `/api/offline/bootstrap` + pytest（payload 校验/幂等重放/单条失败隔离）
+2. 阶段二：bootstrap 缓存 → 本地启动页（秒开 + 探测跳转）→ 队列 →
+   WorkManager 补发 → 通知
+3. 阶段三：shouldInterceptRequest 快照缓存 + 离线横幅 + LRU 上限
+4. 真机回归清单：①冷启动秒出本地页、在线自动进网页 ②飞行模式：本地页记
+   打卡+饮食+体重 → 恢复网络 → 通知补同步 → 服务端落库、重复补发不双写
+   ③飞行模式下打开最近看过的页面 → 出快照 + 离线横幅 ④队列积压跨 App 重启不丢
+5. 阶段四视手感决定要不要做
 
 > 开发注意照 handover.md：改模板后重建 Tailwind + 升 SW_VERSION；
 > 改数据逻辑跑 `uv run pytest`；Android 构建见 android/README.md。

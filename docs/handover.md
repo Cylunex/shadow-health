@@ -5,12 +5,15 @@
 > docs/audit-2026-07-10.md（全面审查清单，已全清、归档备忘）·
 > **docs/offline-plan.md（手机离线记录方案，▶ 下一任务）**。
 
-## ▶ 下一任务：手机离线记录 + 自动补同步（用户 2026-07-10 提出，方案已定稿）
+## ▶ 下一任务：手机离线记录 + 自动补同步（加强版，用户 2026-07-11 定稿）
 
-照 **docs/offline-plan.md** 执行（方案 A，三阶段）。要点：局域网 HTTP 下 SW 不可用，
-走「壳内原生离线页 + POST /api/ingest/offline Bearer 补发」，复用 ScaleScanService
-队列模式 / WorkManager / import_raw 幂等（迁移 11 给 source 词表加 'offline'）。
-先做阶段一（服务端通道 + 测试），再做阶段二（壳离线页 + 队列），阶段三看手感。
+照 **docs/offline-plan.md** 执行（方案 A 加强版，四阶段，零 PWA 依赖）。要点：
+局域网 HTTP 下 SW 不可用；壳启动秒开本地页（在线自动跳网页、离线直接可记录），
+本地队列照 ScaleScanService 模式 + WorkManager 补发到 POST /api/ingest/offline
+（import_raw 幂等，迁移 11 给 source 词表加 'offline'）；阶段三用
+shouldInterceptRequest 做原生页面快照（含 /fragments/*，离线横幅）。
+顺序：阶段一服务端 → 阶段二壳启动页+队列 → 阶段三快照 → 阶段四（可选）页面写队列。
+用户已确认不做全原生 App 重写。
 
 ## 当前状态（截至 42883e8）
 
