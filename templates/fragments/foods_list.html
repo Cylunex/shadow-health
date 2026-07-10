@@ -1,0 +1,17 @@
+{# 食物列表：q 筛选局部替换；新增食物后经 foods-changed 被动刷新（保持当前筛选） #}
+<ul id="foods-list"
+    hx-get="/diet/foods?q={{ q | urlencode }}"
+    hx-trigger="foods-changed from:body"
+    hx-swap="outerHTML"
+    class="space-y-2">
+  {% for food in foods %}
+  {% include "fragments/food_row.html" %}
+  {% else %}
+  <li class="flex flex-col items-center gap-1.5 rounded-xl border border-dashed border-slate-800 bg-slate-900/40 px-4 py-6 text-center">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="w-7 h-7 text-slate-700">
+      <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+    </svg>
+    <span class="text-sm text-slate-500">{% if q %}没有匹配「{{ q }}」的食物，可在上方新增{% else %}食物库是空的{% endif %}</span>
+  </li>
+  {% endfor %}
+</ul>

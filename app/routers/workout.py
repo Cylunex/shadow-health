@@ -475,6 +475,53 @@ def render_plan_md(content: str) -> str:
     return html
 
 
+def _load_ctx(db: Session) -> dict[str, Any]:
+    """本周训练负荷（sRPE 法：负荷 = RPE × 分钟）+ 强度带分钟分布 + 环比。
+
+    只有带 RPE 的记录计入负荷（自动同步无 RPE，归入「未评级」分钟单列）。
+    强度带：低 1-3 / 中 4-6 / 高 7-10。
+    """
+    today = today_local()
+    ws = today - timedelta(days=today.isoweekday() - 1)
+    prev_ws = ws - timedelta(days=7)
+    rows = db.execute(
+        select(WorkoutLog.log_date, WorkoutLog.duration_min, WorkoutLog.rpe).where(
+            WorkoutLog.log_date >= prev_ws,
+            WorkoutLog.log_date <= today,
+            WorkoutLog.duration_min.is_not(None),
+        )
+    ).all()
+
+    def agg(lo: date, hi: date) -> dict[str, int]:
+        out = {"load": 0, "low": 0, "mid": 0, "high": 0, "unrated": 0, "sessions": 0}
+        for d, dur, rpe in rows:
+            if not (lo <= d <= hi):
+                continue
+            out["sessions"] += 1
+            if rpe:
+                out["load"] += rpe * dur
+                band = "low" if rpe <= 3 else ("mid" if rpe <= 6 else "high")
+                out[band] += dur
+            else:
+                out["unrated"] += dur
+        return out
+
+    cur = agg(ws, today)
+    prev = agg(prev_ws, ws - timedelta(days=1))
+    delta_pct = (
+        round((cur["load"] - prev["load"]) * 100 / prev["load"]) if prev["load"] else None
+    )
+    rated_total = cur["low"] + cur["mid"] + cur["high"]
+    return {
+        "wl": {
+            **cur,
+            "rated_total": rated_total,
+            "prev_load": prev["load"],
+            "delta_pct": delta_pct,
+        }
+    }
+
+
 # ---------- 页面 ----------
 @router.get("/workout")
 def workout_page(request: Request, db: Session = Depends(get_db)):
@@ -482,6 +529,7 @@ def workout_page(request: Request, db: Session = Depends(get_db)):
     ctx.update(_plan_cards_ctx(db))
     ctx.update(_manual_form_ctx())
     ctx.update(_recent_ctx(db))
+    ctx.update(_load_ctx(db))
     ctx.update(_heatmap_ctx(db, 3))
     return templates.TemplateResponse(request, "workout.html", ctx)
 
@@ -662,6 +710,11 @@ def heatmap_fragment(request: Request, months: int = 3, db: Session = Depends(ge
     return templates.TemplateResponse(
         request, "fragments/workout_heatmap.html", _heatmap_ctx(db, months)
     )
+
+
+@router.get("/fragments/workout/load")
+def load_fragment(request: Request, db: Session = Depends(get_db)):
+    return templates.TemplateResponse(request, "fragments/workout_load.html", _load_ctx(db))
 
 
 @router.get("/fragments/workout/day")

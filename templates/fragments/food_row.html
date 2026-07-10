@@ -1,0 +1,28 @@
+{# 食物显示行：编辑换入 food_edit；删除被引用时回传本行 + row_error 提示 #}
+<li id="food-{{ food.id }}" class="rounded-xl border border-slate-800/70 bg-slate-900/50 px-3.5 py-2.5">
+  <div class="flex items-center gap-2">
+    <div class="min-w-0 flex-1">
+      <div class="flex items-center gap-1.5">
+        <span class="font-medium text-slate-100 truncate">{{ food.name }}</span>
+        {% if food.category %}<span class="badge shrink-0">{{ food.category }}</span>{% endif %}
+      </div>
+      <div class="mt-0.5 text-xs text-slate-500 tabular-nums">
+        {% if food.kcal_per_100g is not none %}{{ fmt(food.kcal_per_100g) }} kcal{% else %}热量未知{% endif %}
+        {%- if food.protein_g is not none %} · 蛋白 {{ fmt(food.protein_g) }}g{% endif -%}
+        {%- if food.fat_g is not none %} · 脂肪 {{ fmt(food.fat_g) }}g{% endif -%}
+        {%- if food.carb_g is not none %} · 碳水 {{ fmt(food.carb_g) }}g{% endif %}
+        <span class="text-slate-600">/100g</span>
+      </div>
+    </div>
+    <button type="button" class="chip min-h-[40px] px-3 text-xs shrink-0"
+            hx-get="/diet/foods/{{ food.id }}/edit"
+            hx-target="#food-{{ food.id }}" hx-swap="outerHTML">编辑</button>
+    <button type="button" class="chip min-h-[40px] px-3 text-xs shrink-0 text-red-400"
+            hx-delete="/diet/foods/{{ food.id }}"
+            hx-confirm="删除「{{ food.name }}」？"
+            hx-target="#food-{{ food.id }}" hx-swap="outerHTML">删除</button>
+  </div>
+  {% if row_error %}
+  <p class="mt-2 text-xs text-red-400 fade-in">{{ row_error }}</p>
+  {% endif %}
+</li>

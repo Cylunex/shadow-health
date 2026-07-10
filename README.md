@@ -4,7 +4,7 @@
 
 四大模块：**饮食记录+营养分析 · 运动训练管理 · 身体指标追踪 · 养生任务打卡**，外加三星健康历史数据一次性导入、Health Connect 增量同步、小米体脂秤 2 蓝牙直连（上秤即记录，见 [gateway/README.md](gateway/README.md)）。
 
-亮点：餐次拍照记录 · 图表目标参考线 · 睡眠分期堆叠图 · 习惯/训练打卡热力图 · 周报复盘 · AI 分析（Claude）· PWA 离线可用。
+亮点：餐次拍照记录 · 自定义食物库 · 图表目标参考线 · 睡眠分期堆叠图 · 习惯/训练打卡热力图 · 训练周负荷（sRPE）· 周报复盘 · AI 分析（Claude）· PWA 离线可用。
 
 > `app/seed/data/*.md` 训练计划内容素材为私人整理，不入仓库；缺失时 seed 自动跳过对应计划，说明见 [app/seed/data/README.md](app/seed/data/README.md)。
 

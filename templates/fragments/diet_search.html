@@ -17,11 +17,15 @@
   {% endfor %}
 </ul>
 {% elif q %}
-<div class="mt-1.5 flex items-center gap-2.5 rounded-xl border border-slate-700/80 bg-slate-900 shadow-2xl shadow-black/60 px-3.5 py-3 fade-in">
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
-       stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0 text-slate-600">
-    <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
-  </svg>
-  <span class="text-xs text-slate-500">食物库无匹配，直接提交将按自由文本记录（可手填热量）</span>
+<div class="mt-1.5 rounded-xl border border-slate-700/80 bg-slate-900 shadow-2xl shadow-black/60 px-3.5 py-3 fade-in space-y-1.5">
+  <div class="flex items-center gap-2.5">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+         stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0 text-slate-600">
+      <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+    </svg>
+    <span class="text-xs text-slate-500">食物库无匹配，直接提交将按自由文本记录（可手填热量）</span>
+  </div>
+  <a href="/diet/foods?new={{ q | urlencode }}" class="block pl-7 text-xs text-emerald-400">
+    ＋ 把「{{ q }}」加进食物库（记营养值，之后一键复用）</a>
 </div>
 {% endif %}

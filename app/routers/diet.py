@@ -17,6 +17,11 @@
 - GET    /fragments/diet/summary?d= 日汇总片段（今日面板也用）
 - GET    /fragments/diet/chips     近 30 天频次 top8 chips 片段
 - GET    /diet/recipes?tag=        药膳库；HX-Request 时仅返回列表片段（tag 筛选局部刷新）
+- GET    /diet/foods?q=&new=       食物库管理页（q 筛选，HX 请求回列表片段；new 预填新增名）
+- POST   /diet/foods               新增自定义食物（重名拒绝）
+- GET    /diet/foods/{id}/edit     行内编辑片段 / {id}/row 显示行片段
+- PUT    /diet/foods/{id}          保存编辑（饮食记录冗余值不回溯，新记录用新值）
+- DELETE /diet/foods/{id}          删除；已被饮食记录引用时拒绝（外键保护）
 
 所有写操作响应带 HX-Trigger: diet-changed；summary / chips / day 片段以
 hx-trigger="diet-changed from:body" 被动刷新。
@@ -406,6 +411,152 @@ async def diet_quick(food_id: int, request: Request, db: Session = Depends(get_d
     db.flush()
     # chips 按钮 hx-swap="none"，只吃 HX-Trigger
     return Response(status_code=200, content="", headers=dict(HX_TRIGGER))
+
+
+# ---------- 食物库管理 ----------
+# 数值字段：(字段, 中文名, 上限)；均为「每 100g」口径
+_FOOD_NUM_FIELDS = [
+    ("kcal_per_100g", "热量", 900),
+    ("protein_g", "蛋白质", 100),
+    ("fat_g", "脂肪", 100),
+    ("carb_g", "碳水", 100),
+]
+FOODS_HX_TRIGGER = {"HX-Trigger": "foods-changed"}
+
+
+def _parse_food_form(form: Any) -> tuple[dict[str, Any], str | None]:
+    name = str(form.get("name") or "").strip()
+    if not name:
+        return {}, "请填写食物名称"
+    if len(name) > 50:
+        return {}, "名称太长（≤50 字）"
+    values: dict[str, Any] = {
+        "name": name,
+        "category": str(form.get("category") or "").strip() or None,
+        "notes": str(form.get("notes") or "").strip() or None,
+    }
+    for field, label, hi in _FOOD_NUM_FIELDS:
+        try:
+            values[field] = _parse_decimal(form.get(field), label, hi)
+        except ValueError as exc:
+            return {}, str(exc)
+    return values, None
+
+
+def _load_food(db: Session, food_id: int) -> Food:
+    food = db.get(Food, food_id)
+    if food is None:
+        raise HTTPException(status_code=404, detail="食物不存在")
+    return food
+
+
+def _food_ref_count(db: Session, food_id: int) -> int:
+    return db.execute(
+        select(func.count()).select_from(DietLog).where(DietLog.food_id == food_id)
+    ).scalar_one()
+
+
+def _foods_list_ctx(db: Session, q: str = "") -> dict:
+    stmt = select(Food)
+    q = q.strip()
+    if q:
+        esc = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        stmt = stmt.where(Food.name.ilike(f"%{esc}%", escape="\\"))
+    # 自定义食物 id 大（seed 在前），倒序让新建的排最上
+    foods = db.execute(stmt.order_by(Food.id.desc()).limit(300)).scalars().all()
+    return {"foods": foods, "q": q, "fmt": _fmt}
+
+
+@router.get("/diet/foods")
+def foods_page(request: Request, q: str = "", new: str = "", db: Session = Depends(get_db)):
+    ctx = _foods_list_ctx(db, q)
+    is_htmx = (
+        request.headers.get("HX-Request") == "true"
+        and request.headers.get("HX-History-Restore-Request") != "true"
+    )
+    if is_htmx:
+        return templates.TemplateResponse(request, "fragments/foods_list.html", ctx)
+    ctx.update({"new_name": new.strip()[:50], "f_saved": None, "f_error": None})
+    return templates.TemplateResponse(request, "foods.html", ctx)
+
+
+@router.post("/diet/foods")
+async def food_create(request: Request, db: Session = Depends(get_db)):
+    form = await request.form()
+    values, error = _parse_food_form(form)
+    saved = None
+    if error is None:
+        exists = db.execute(
+            select(Food.id).where(Food.name == values["name"])
+        ).scalar_one_or_none()
+        if exists is not None:
+            error = f"「{values['name']}」已在食物库中"
+        else:
+            db.add(Food(**values))
+            db.flush()
+            saved = values["name"]
+    headers = dict(FOODS_HX_TRIGGER) if saved else None
+    return templates.TemplateResponse(
+        request,
+        "fragments/food_new_form.html",
+        {"new_name": "", "f_saved": saved, "f_error": error},
+        headers=headers,
+    )
+
+
+@router.get("/diet/foods/{food_id}/edit")
+def food_edit(food_id: int, request: Request, db: Session = Depends(get_db)):
+    food = _load_food(db, food_id)
+    return templates.TemplateResponse(
+        request, "fragments/food_edit.html", {"food": food, "error": None, "fmt": _fmt}
+    )
+
+
+@router.get("/diet/foods/{food_id}/row")
+def food_row(food_id: int, request: Request, db: Session = Depends(get_db)):
+    food = _load_food(db, food_id)
+    return templates.TemplateResponse(
+        request, "fragments/food_row.html", {"food": food, "fmt": _fmt}
+    )
+
+
+@router.put("/diet/foods/{food_id}")
+async def food_update(food_id: int, request: Request, db: Session = Depends(get_db)):
+    food = _load_food(db, food_id)
+    form = await request.form()
+    values, error = _parse_food_form(form)
+    if error is None and values["name"] != food.name:
+        dup = db.execute(
+            select(Food.id).where(Food.name == values["name"], Food.id != food_id)
+        ).scalar_one_or_none()
+        if dup is not None:
+            error = f"「{values['name']}」已在食物库中"
+    if error is not None:
+        return templates.TemplateResponse(
+            request, "fragments/food_edit.html", {"food": food, "error": error, "fmt": _fmt}
+        )
+    for field, value in values.items():
+        setattr(food, field, value)
+    db.flush()
+    return templates.TemplateResponse(
+        request, "fragments/food_row.html", {"food": food, "fmt": _fmt}
+    )
+
+
+@router.delete("/diet/foods/{food_id}")
+def food_delete(food_id: int, request: Request, db: Session = Depends(get_db)):
+    food = _load_food(db, food_id)
+    refs = _food_ref_count(db, food_id)
+    if refs:
+        # 有引用不能删（外键保护）：回传原行 + 提示
+        return templates.TemplateResponse(
+            request,
+            "fragments/food_row.html",
+            {"food": food, "fmt": _fmt, "row_error": f"已有 {refs} 条饮食记录引用，不能删除"},
+        )
+    db.delete(food)
+    db.flush()
+    return Response(status_code=200, content="")
 
 
 # ---------- 餐次照片 ----------

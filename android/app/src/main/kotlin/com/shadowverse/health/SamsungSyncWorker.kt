@@ -2,13 +2,18 @@ package com.shadowverse.health
 
 import android.content.Context
 import android.util.Log
+import android.widget.Toast
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.samsung.android.sdk.health.data.HealthDataService
 import com.samsung.android.sdk.health.data.HealthDataStore
 import com.samsung.android.sdk.health.data.request.DataType
 import com.samsung.android.sdk.health.data.request.DataTypes
 import com.samsung.android.sdk.health.data.request.LocalDateFilter
+import com.samsung.android.sdk.health.data.request.LocalDateGroup
+import com.samsung.android.sdk.health.data.request.LocalDateGroupUnit
 import com.samsung.android.sdk.health.data.request.LocalTimeFilter
 import com.samsung.android.sdk.health.data.request.LocalTimeGroup
 import com.samsung.android.sdk.health.data.request.LocalTimeGroupUnit
@@ -35,6 +40,11 @@ class SamsungSyncWorker(ctx: Context, params: WorkerParameters) : CoroutineWorke
         val token = prefs.getString("ingest_token", "") ?: ""
         if (server.isEmpty() || token.isEmpty()) {
             Log.w(TAG, "未配置服务器/Token，跳过同步")
+            withContext(Dispatchers.Main) {
+                Toast.makeText(
+                    applicationContext, "三星同步未配置 INGEST_TOKEN（三指长按填写）", Toast.LENGTH_LONG
+                ).show()
+            }
             return Result.failure()
         }
         return try {
@@ -72,30 +82,52 @@ class SamsungSyncWorker(ctx: Context, params: WorkerParameters) : CoroutineWorke
     ): JSONObject {
         val timeFilter = LocalTimeFilter.of(start.atStartOfDay(), end.plusDays(1).atStartOfDay())
 
+        // 每类数据独立容错：单类读取失败只丢那一类（记日志），不拖累整体上报
         // ---- 每日步数：一次请求分日聚合 ----
         val stepsByDay = HashMap<LocalDate, Long>()
-        val stepsReq = DataType.StepsType.TOTAL.requestBuilder
-            .setLocalTimeFilterWithGroup(timeFilter, LocalTimeGroup.of(LocalTimeGroupUnit.DAILY, 1))
-            .build()
-        for (agg in store.aggregateData(stepsReq).dataList) {
-            val v = agg.value ?: continue
-            // 注：AggregatedData 的 getStartLocalDateTime 在 Kotlin 元数据里是函数而非属性
-            if (v > 0) stepsByDay[agg.getStartLocalDateTime().toLocalDate()] = v
+        try {
+            val stepsReq = DataType.StepsType.TOTAL.requestBuilder
+                .setLocalTimeFilterWithGroup(
+                    timeFilter, LocalTimeGroup.of(LocalTimeGroupUnit.DAILY, 1)
+                )
+                .build()
+            for (agg in store.aggregateData(stepsReq).dataList) {
+                val v = agg.value ?: continue
+                // 注：AggregatedData 的 getStartLocalDateTime 在 Kotlin 元数据里是函数而非属性
+                if (v > 0) stepsByDay[agg.getStartLocalDateTime().toLocalDate()] = v
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "读取步数失败", e)
         }
 
-        // ---- 每日心率 min/max：逐日聚合（SDK 无 AVG 聚合） ----
+        // ---- 每日心率 min/max：分日分组聚合，各一次请求（SDK 无 AVG 聚合） ----
+        // 显式 inclusive 两端（4 参 of），绕开单日过滤的边界语义问题
         val hrByDay = HashMap<LocalDate, Pair<Float?, Float?>>()
-        var d = start
-        while (!d.isAfter(end)) {
-            val df = LocalDateFilter.of(d, d)
-            val min = store.aggregateData(
-                DataType.HeartRateType.MIN.requestBuilder.setLocalDateFilter(df).build()
-            ).dataList.firstOrNull()?.value
-            val max = store.aggregateData(
-                DataType.HeartRateType.MAX.requestBuilder.setLocalDateFilter(df).build()
-            ).dataList.firstOrNull()?.value
-            if (min != null || max != null) hrByDay[d] = Pair(min, max)
-            d = d.plusDays(1)
+        try {
+            val dateFilter = LocalDateFilter.of(start, end, true, true)
+            val daily1 = LocalDateGroup.of(LocalDateGroupUnit.DAILY, 1)
+            val minByDay = HashMap<LocalDate, Float>()
+            for (agg in store.aggregateData(
+                DataType.HeartRateType.MIN.requestBuilder
+                    .setLocalDateFilterWithGroup(dateFilter, daily1).build()
+            ).dataList) {
+                agg.value?.let { minByDay[agg.getStartLocalDateTime().toLocalDate()] = it }
+            }
+            for (agg in store.aggregateData(
+                DataType.HeartRateType.MAX.requestBuilder
+                    .setLocalDateFilterWithGroup(dateFilter, daily1).build()
+            ).dataList) {
+                val day = agg.getStartLocalDateTime().toLocalDate()
+                val max = agg.value
+                if (max != null || minByDay.containsKey(day)) {
+                    hrByDay[day] = Pair(minByDay[day], max)
+                }
+            }
+            for ((day, min) in minByDay) {
+                if (day !in hrByDay) hrByDay[day] = Pair(min, null)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "读取心率失败", e)
         }
 
         val daily = JSONArray()
@@ -111,6 +143,7 @@ class SamsungSyncWorker(ctx: Context, params: WorkerParameters) : CoroutineWorke
 
         // ---- 睡眠会话（含分期） ----
         val sleeps = JSONArray()
+        try {
         val sleepReq = DataTypes.SLEEP.readDataRequestBuilder
             .setLocalTimeFilter(timeFilter).build()
         for (p in store.readData(sleepReq).dataList) {
@@ -141,9 +174,13 @@ class SamsungSyncWorker(ctx: Context, params: WorkerParameters) : CoroutineWorke
             p.getValue(DataType.SleepType.DURATION)?.let { o.put("total_sleep_min", it.toMinutes()) }
             sleeps.put(o)
         }
+        } catch (e: Exception) {
+            Log.w(TAG, "读取睡眠失败", e)
+        }
 
         // ---- 运动会话 ----
         val exercises = JSONArray()
+        try {
         val exReq = DataTypes.EXERCISE.readDataRequestBuilder
             .setLocalTimeFilter(timeFilter).build()
         for (p in store.readData(exReq).dataList) {
@@ -168,9 +205,13 @@ class SamsungSyncWorker(ctx: Context, params: WorkerParameters) : CoroutineWorke
             }
             exercises.put(o)
         }
+        } catch (e: Exception) {
+            Log.w(TAG, "读取运动失败", e)
+        }
 
         // ---- 体成分（手表 BIA） ----
         val body = JSONArray()
+        try {
         val bcReq = DataTypes.BODY_COMPOSITION.readDataRequestBuilder
             .setLocalTimeFilter(timeFilter).build()
         for (p in store.readData(bcReq).dataList) {
@@ -190,7 +231,15 @@ class SamsungSyncWorker(ctx: Context, params: WorkerParameters) : CoroutineWorke
                 ?.let { o.put("bmr_kcal", it) }
             if (o.length() > 1) body.put(o)
         }
+        } catch (e: Exception) {
+            Log.w(TAG, "读取体成分失败", e)
+        }
 
+        Log.i(
+            TAG,
+            "读取结果：steps=${stepsByDay.size}天 hr=${hrByDay.size}天 " +
+                "sleep=${sleeps.length()}条 exercise=${exercises.length()}条 body=${body.length()}条"
+        )
         return JSONObject()
             .put("daily", daily)
             .put("sleep_sessions", sleeps)

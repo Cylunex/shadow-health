@@ -1,0 +1,43 @@
+{# 本周训练负荷（sRPE）：ctx = wl{load, low, mid, high, unrated, sessions, rated_total, prev_load, delta_pct}
+   记录增删改后经 workout-changed 被动刷新；嵌在「本周负荷」.card 内 #}
+<div id="workout-load"
+     hx-get="/fragments/workout/load"
+     hx-trigger="workout-changed from:body"
+     hx-swap="outerHTML">
+  {% if wl.sessions == 0 %}
+  <p class="text-sm text-slate-500 py-1">本周还没有训练记录。</p>
+  {% else %}
+  <div class="flex items-baseline gap-2.5">
+    <span class="text-3xl font-bold tabular-nums text-emerald-400">{{ wl.load }}</span>
+    <span class="text-xs text-slate-500">负荷（RPE×分钟）</span>
+    {% if wl.delta_pct is not none %}
+    <span class="text-xs tabular-nums {{ 'text-amber-400' if wl.delta_pct > 30 else 'text-slate-400' }}">
+      比上周 {{ '+' if wl.delta_pct >= 0 }}{{ wl.delta_pct }}%
+    </span>
+    {% elif wl.load > 0 %}
+    <span class="text-xs text-slate-500">上周无评级记录</span>
+    {% endif %}
+  </div>
+
+  {% if wl.rated_total > 0 %}
+  <div class="mt-3 flex h-2.5 w-full overflow-hidden rounded-full bg-slate-800/80">
+    <div class="bg-emerald-800" style="width: {{ wl.low * 100 / wl.rated_total }}%"></div>
+    <div class="bg-emerald-500" style="width: {{ wl.mid * 100 / wl.rated_total }}%"></div>
+    <div class="bg-amber-500" style="width: {{ wl.high * 100 / wl.rated_total }}%"></div>
+  </div>
+  <div class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-400">
+    <span><span class="inline-block w-2.5 h-2.5 rounded-sm bg-emerald-800 mr-1"></span>低强度 {{ wl.low }} 分钟</span>
+    <span><span class="inline-block w-2.5 h-2.5 rounded-sm bg-emerald-500 mr-1"></span>中强度 {{ wl.mid }} 分钟</span>
+    <span><span class="inline-block w-2.5 h-2.5 rounded-sm bg-amber-500 mr-1"></span>高强度 {{ wl.high }} 分钟</span>
+  </div>
+  {% endif %}
+
+  {% if wl.unrated > 0 %}
+  <p class="mt-2 text-xs text-slate-500">另有 {{ wl.unrated }} 分钟未评级（同步的记录没有 RPE，可点开记录补填）。</p>
+  {% endif %}
+
+  {% if wl.delta_pct is not none and wl.delta_pct > 30 %}
+  <p class="mt-2 text-xs text-amber-400/90">周负荷环比增幅超过 30%，注意循序渐进，谨防过训。</p>
+  {% endif %}
+  {% endif %}
+</div>

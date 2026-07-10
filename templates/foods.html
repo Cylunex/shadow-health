@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block page_title %}食物库{% endblock %}
+{% block content %}
+<div class="space-y-5">
+
+  {# ---- 新增自定义食物 ---- #}
+  <section class="card">
+    <h2 class="card-title">新增食物</h2>
+    {% include "fragments/food_new_form.html" %}
+  </section>
+
+  {# ---- 列表 + 筛选 ---- #}
+  <section class="card">
+    <h2 class="card-title">全部食物</h2>
+    <input type="search" name="q" value="{{ q }}" placeholder="筛选食物名…" autocomplete="off"
+           hx-get="/diet/foods"
+           hx-trigger="input changed delay:300ms, search"
+           hx-target="#foods-list" hx-swap="outerHTML"
+           class="field mb-3">
+    {% include "fragments/foods_list.html" %}
+    <p class="mt-3 text-xs text-slate-600">改营养值只影响之后的记录（历史记录按当时的值冗余保存）；被饮食记录引用过的食物不能删除。</p>
+  </section>
+
+</div>
+{% endblock %}

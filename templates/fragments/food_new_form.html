@@ -1,0 +1,48 @@
+{# 新增食物表单：POST /diet/foods 后整体替换（成功清空 + HX-Trigger: foods-changed 刷新列表） #}
+<form id="food-new-form"
+      hx-post="/diet/foods"
+      hx-target="this"
+      hx-swap="outerHTML"
+      hx-disabled-elt="find button[type='submit']"
+      class="space-y-3">
+
+  {% if f_saved %}
+  <div class="fade-in flex items-center gap-2 rounded-xl bg-emerald-600/15 border border-emerald-600/40 text-emerald-300 text-sm px-3.5 py-2.5">
+    <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+    <span>已添加「{{ f_saved }}」，搜索联想立即可用 ✓</span>
+  </div>
+  {% endif %}
+  {% if f_error %}
+  <div class="fade-in rounded-xl bg-red-600/15 border border-red-600/40 text-red-400 text-sm px-3.5 py-2.5">{{ f_error }}</div>
+  {% endif %}
+
+  <div class="grid grid-cols-2 gap-3">
+    <label class="block col-span-2 sm:col-span-1">
+      <span class="field-label">名称 *</span>
+      <input type="text" name="name" value="{{ new_name or '' }}" maxlength="50" placeholder="如：鸡胸肉（卤）" class="field">
+    </label>
+    <label class="block col-span-2 sm:col-span-1">
+      <span class="field-label">分类</span>
+      <input type="text" name="category" maxlength="20" placeholder="如：肉类 / 主食 / 零食" class="field">
+    </label>
+    <label class="block">
+      <span class="field-label">热量 (kcal/100g)</span>
+      <input type="text" inputmode="decimal" name="kcal_per_100g" class="field tabular-nums">
+    </label>
+    <label class="block">
+      <span class="field-label">蛋白质 (g/100g)</span>
+      <input type="text" inputmode="decimal" name="protein_g" class="field tabular-nums">
+    </label>
+    <label class="block">
+      <span class="field-label">脂肪 (g/100g)</span>
+      <input type="text" inputmode="decimal" name="fat_g" class="field tabular-nums">
+    </label>
+    <label class="block">
+      <span class="field-label">碳水 (g/100g)</span>
+      <input type="text" inputmode="decimal" name="carb_g" class="field tabular-nums">
+    </label>
+  </div>
+
+  <button type="submit" class="btn-primary w-full min-h-[48px]">添加到食物库</button>
+  <p class="text-xs text-slate-500">营养值按包装标签或常用数据库填（每 100g 口径），留空表示未知。</p>
+</form>
