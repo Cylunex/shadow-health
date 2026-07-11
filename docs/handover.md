@@ -1,9 +1,24 @@
 # 会话交接（自包含，新会话从这里继续）
 
-> 最后更新：2026-07-11。配套阅读：README（功能全貌）· docs/deploy.md（NAS 部署照单）·
+> 最后更新：2026-07-12。配套阅读：README（功能全貌）· docs/deploy.md（NAS 部署照单）·
 > docs/mobile-sync.md（三星直读背景）· gateway/README.md（体脂秤双端）·
 > docs/audit-2026-07-10.md（全面审查清单，已全清、归档备忘）·
-> **docs/offline-plan.md（手机离线记录方案，阶段一~三已落地，▶ 待真机回归）**。
+> docs/offline-plan.md（手机离线记录方案，阶段一~三已落地，待真机回归）·
+> **docs/subpath-agent-plan.md（▶ V3 批次执行计划：/shealth 子路径 + 多 Agent MCP +
+> personal_data 迁移，2026-07-12 定稿，按 P1→P2→P3 顺序做）**。
+
+## ▶ 进行中：V3 批次（照 docs/subpath-agent-plan.md，任务已拆三段）
+
+1. **P1 子路径适配**：计划 §1 全部 + 一条计划外必做——SnapshotCache 的路径匹配
+   （/fragments、/static、排除名单）要先剥掉 serverUrl 里的 path 前缀再比，
+   否则带前缀后快照层对片段/静态静默失效、/shealth/login 反被缓存
+2. **P2 REST+MCP**（用户 2026-07-12 拍板的增补）：mood_score 加列**提前**到本阶段，
+   与 'agent'/'legacy' 来源词表并成一个迁移（12）；/api/ingest/agent 响应带
+   per-record 明细（client_id/status/row_id）；MCP 工具加第 9 个 delete_record
+   （diet/workout 限定，改口纠错用）；工具层同参数短窗去重防 agent 超时重调双写；
+   record_* 返回附当日累计
+3. **P3 迁移脚本**：只交付脚本+冻结 SQL+执行手册，不实际连生产执行
+4. 环境边界：这台 Mac 的 .env 是本地临时 PG（≠生产）；真机回归与 §1.8 上线切换由用户做
 
 ## ✅ 已完成：手机离线记录 + 自动补同步（2026-07-11，阶段一~三全落地）
 
