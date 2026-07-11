@@ -116,12 +116,14 @@ def _run_analysis(days: int) -> None:
 @router.get("")
 def ai_page(request: Request, db: Session = Depends(get_db)):
     state = _job_state(db)
+    cfg = llm.get_config(db)
     return templates.TemplateResponse(
         request,
         "ai.html",
         {
-            "configured": llm.is_configured(),
-            "model": llm.model_name(),
+            "configured": cfg["configured"],
+            "model": cfg["model"],
+            "provider_label": llm.PROVIDER_LABELS[cfg["provider"]],
             "analysis": _cached(db),
             "job_running": state.get("status") == "running",
             "job_days": state.get("days"),
@@ -143,10 +145,10 @@ async def ai_analyze(request: Request, db: Session = Depends(get_db)):
     state = _job_state(db)
     if state.get("status") == "running":
         return _job_fragment(request, db, state)  # 已在跑：直接接上轮询
-    if not llm.is_configured():
+    if not llm.is_configured(db):
         return _job_fragment(request, db, {
             "status": "failed",
-            "error": "未配置 ANTHROPIC_API_KEY——在 .env 里填入后重启应用即可使用。",
+            "error": "未配置 AI 模型 API Key——到 设置→AI 模型 填入即可使用。",
         })
     state = {"status": "running", "days": days, "started_at": now_local().isoformat()}
     _set_setting(db, _JOB_KEY, state)

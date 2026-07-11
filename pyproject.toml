@@ -17,6 +17,7 @@ dependencies = [
     "py7zr>=0.22",
     "openpyxl>=3.1",
     "anthropic>=0.79",
+    "openai>=1.60",
     # Linux 部署必需：python:3.12-slim 无系统 tzdata，ZoneInfo("Asia/Shanghai") 依赖 pip 版
     #（锁文件里 tzdata 原本仅 sys_platform=='win32' 才装，这里显式提为主依赖）
     "tzdata>=2024.1",

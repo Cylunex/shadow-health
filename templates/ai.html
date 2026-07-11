@@ -8,9 +8,10 @@
   <section class="card border-amber-800/60">
     <h2 class="card-title">未配置</h2>
     <p class="text-sm text-slate-300 leading-relaxed">
-      还没有配置 API Key。在服务器的 <code class="text-emerald-300">.env</code> 里填入
-      <code class="text-emerald-300">ANTHROPIC_API_KEY</code>（如走代理再加
-      <code class="text-emerald-300">ANTHROPIC_BASE_URL</code>），重启应用即可使用。
+      还没有配置 {{ provider_label }} 的 API Key。到
+      <a href="/settings" class="text-emerald-300 underline">设置 →「AI 模型」</a>
+      填入即可使用（支持 Claude / OpenAI 及兼容端点，改完立即生效，不用重启）；
+      也可以写在服务器 <code class="text-emerald-300">.env</code> 里。
     </p>
   </section>
   {% endif %}

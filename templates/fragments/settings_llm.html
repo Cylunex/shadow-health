@@ -1,0 +1,98 @@
+{# AI 模型配置片段：POST /settings/llm 保存 / POST /settings/llm/test 测试，均整体替换；
+   外层卡片由 settings 页提供。Key 语义：留空=不变、输入「清除」=删除（回退 .env）。 #}
+<form id="settings-llm"
+      hx-post="/settings/llm"
+      hx-target="this"
+      hx-swap="outerHTML"
+      hx-disabled-elt="find button"
+      x-data="{ p: '{{ llm_provider }}' }"
+      class="space-y-4">
+
+  {% if llm_saved %}
+  <div class="rounded-xl bg-emerald-600/15 border border-emerald-600/40 text-emerald-400 text-sm px-3 py-2 flex items-center gap-1.5 fade-in">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0"><path d="M20 6 9 17l-5-5"/></svg>
+    AI 模型配置已保存，立即生效
+  </div>
+  {% endif %}
+  {% if llm_errors %}
+  <div class="rounded-xl bg-red-600/15 border border-red-600/40 text-red-400 text-sm px-3 py-2 fade-in">
+    有误未保存：{{ llm_errors | join('、') }}
+  </div>
+  {% endif %}
+  {% if llm_test_result %}
+  <div class="rounded-xl bg-emerald-600/15 border border-emerald-600/40 text-emerald-400 text-sm px-3 py-2 fade-in">
+    {{ llm_test_result }}
+  </div>
+  {% endif %}
+  {% if llm_test_error %}
+  <div class="rounded-xl bg-red-600/15 border border-red-600/40 text-red-400 text-sm px-3 py-2 fade-in">
+    {{ llm_test_error }}
+  </div>
+  {% endif %}
+
+  {# 供应商切换 #}
+  <input type="hidden" name="provider" :value="p">
+  <div class="grid grid-cols-2 gap-1.5">
+    <button type="button" @click="p = 'claude'"
+            :class="p === 'claude' ? 'chip-active' : ''"
+            class="chip min-h-[44px]">Claude</button>
+    <button type="button" @click="p = 'openai'"
+            :class="p === 'openai' ? 'chip-active' : ''"
+            class="chip min-h-[44px]">OpenAI / 兼容端点</button>
+  </div>
+
+  {# Claude 配置 #}
+  <div x-show="p === 'claude'" class="space-y-3">
+    <label class="block">
+      <span class="field-label">模型（留空 = {{ llm_defaults['claude'] }}）</span>
+      <input type="text" name="claude_model" value="{{ llm_forms['claude'].model }}"
+             placeholder="{{ llm_defaults['claude'] }}" autocomplete="off" class="field">
+    </label>
+    <label class="block">
+      <span class="field-label">API Key</span>
+      <input type="password" name="claude_api_key" value="" autocomplete="new-password"
+             placeholder="sk-ant-…" class="field">
+      <span class="mt-1 block text-xs text-slate-500">{{ llm_key_hints['claude'] }}</span>
+    </label>
+    <label class="block">
+      <span class="field-label">Base URL（可选，代理/网关用）</span>
+      <input type="text" name="claude_base_url" value="{{ llm_forms['claude'].base_url }}"
+             placeholder="https://…" autocomplete="off" class="field">
+    </label>
+  </div>
+
+  {# OpenAI 配置 #}
+  <div x-show="p === 'openai'" class="space-y-3">
+    <label class="block">
+      <span class="field-label">模型（留空 = {{ llm_defaults['openai'] }}）</span>
+      <input type="text" name="openai_model" value="{{ llm_forms['openai'].model }}"
+             placeholder="gpt-5.1 / gpt-4o / deepseek-chat…" autocomplete="off" class="field">
+    </label>
+    <label class="block">
+      <span class="field-label">API Key</span>
+      <input type="password" name="openai_api_key" value="" autocomplete="new-password"
+             placeholder="sk-…" class="field">
+      <span class="mt-1 block text-xs text-slate-500">{{ llm_key_hints['openai'] }}</span>
+    </label>
+    <label class="block">
+      <span class="field-label">Base URL（可选，DeepSeek/Ollama 等兼容端点必填）</span>
+      <input type="text" name="openai_base_url" value="{{ llm_forms['openai'].base_url }}"
+             placeholder="https://api.deepseek.com/v1" autocomplete="off" class="field">
+    </label>
+  </div>
+
+  <p class="text-xs text-slate-500">
+    当前生效：{{ llm_effective_label }} · {{ llm_effective.model }} ·
+    {% if not llm_effective.configured %}<span class="text-amber-400">未配置 Key</span>
+    {% elif llm_effective.key_from_env %}Key 来自 .env{% else %}Key 来自此页{% endif %}。
+    AI 分析、问答与餐照识别共用这套配置。
+  </p>
+
+  <div class="grid grid-cols-2 gap-2">
+    <button type="submit" class="btn-primary">保存</button>
+    <button type="button" class="chip min-h-[44px]"
+            hx-post="/settings/llm/test" hx-target="#settings-llm" hx-swap="outerHTML">
+      测试连接
+    </button>
+  </div>
+</form>

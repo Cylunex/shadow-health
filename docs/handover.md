@@ -41,6 +41,20 @@
   （原来整删 source='offline' 会毁真实留档）。接受的从简语义记在 offline-plan §4
   （habit 先到先得含否决行/计数冻结）
 
+## ✅ 已完成：LLM 双供应商 + 设置页配置（2026-07-11）
+
+- services/llm.py 抽象成 Claude / OpenAI 双通道（`_call` 统一入口，images 由各家
+  适配器拼内容块；OpenAI 走 chat.completions，gpt-5/o 系用 max_completion_tokens、
+  兼容端点用 max_tokens；错误映射同款中文口径）
+- 配置存 `app_settings['llm_config']`（设置页「AI 模型」卡片维护，**改完即生效
+  不用重启**）：provider 切换 + 两家各自的 模型/API Key/Base URL；字段留空回退
+  .env（ANTHROPIC_API_KEY/LLM_MODEL、OPENAI_API_KEY/OPENAI_BASE_URL/OPENAI_MODEL）
+  与内置默认（claude-opus-4-8 / gpt-5.1）。Key 掩码显示、留空不变、输「清除」删；
+  「测试连接」按钮打真端点验证连通性（错误映射已实测 401 路径）
+- OpenAI 兼容端点（DeepSeek/Ollama/oneapi 等）填 Base URL 即可用；
+  AI 分析、问答、餐照识别三处共用这套配置（is_configured/analyze_meal_photo
+  等签名都带 db 了）。tests/test_llm_meal_parse.py 增配置解析口径锁，97 测全绿
+
 ## 当前状态（截至 42883e8）
 
 - 功能面已对标 Keep/薄荷/MFP 补齐：四大模块 + 餐次拍照 AI 识别（Claude Vision）+

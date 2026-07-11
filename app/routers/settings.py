@@ -40,6 +40,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.db import SessionLocal, get_db
 from app.deps import require_login, templates
+from app.services import llm
 from app.models import (
     AppSetting,
     BodyMetrics,
@@ -187,6 +188,7 @@ def _sync_rows(db: Session) -> list[dict[str, Any]]:
 def settings_page(request: Request, db: Session = Depends(get_db)):
     ctx: dict[str, Any] = {"sync_rows": _sync_rows(db), "export_tables": _EXPORT_LABELS}
     ctx.update(_targets_context(db))
+    ctx.update(_llm_context(db))
     return templates.TemplateResponse(request, "settings.html", ctx)
 
 
@@ -241,6 +243,127 @@ async def targets_save(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse(
         request, "fragments/settings_targets.html", _targets_context(db, saved=saved, errors=errors)
     )
+
+
+# ---------- AI 模型（LLM 供应商）配置 ----------
+_LLM_ENV_KEYS = {
+    "claude": ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"),
+    "openai": ("OPENAI_API_KEY",),
+}
+
+
+def _llm_raw(db: Session) -> dict:
+    row = db.get(AppSetting, llm.CONFIG_KEY)
+    return row.value if row is not None and isinstance(row.value, dict) else {}
+
+
+def _llm_context(
+    db: Session,
+    saved: bool = False,
+    errors: list[str] | None = None,
+    test_result: str | None = None,
+    test_error: str | None = None,
+) -> dict[str, Any]:
+    raw = _llm_raw(db)
+
+    def sub(p: str) -> dict:
+        v = raw.get(p)
+        return v if isinstance(v, dict) else {}
+
+    def key_hint(p: str) -> str:
+        k = str(sub(p).get("api_key") or "")
+        if k:
+            masked = f"{k[:4]}……{k[-4:]}" if len(k) > 12 else "已配置"
+            return f"已保存（{masked}）——留空保持不变，输入「清除」删除"
+        env_names = "/".join(_LLM_ENV_KEYS[p])
+        if any(os.environ.get(e) for e in _LLM_ENV_KEYS[p]):
+            return f"未在此保存，当前回退 .env 的 {env_names}"
+        return f"未配置（也可写 .env 的 {env_names}）"
+
+    effective = llm.get_config(db)
+    return {
+        "llm_provider": raw.get("provider") if raw.get("provider") in llm.PROVIDERS else "claude",
+        "llm_forms": {
+            p: {
+                "model": str(sub(p).get("model") or ""),
+                "base_url": str(sub(p).get("base_url") or ""),
+            }
+            for p in llm.PROVIDERS
+        },
+        "llm_key_hints": {p: key_hint(p) for p in llm.PROVIDERS},
+        "llm_defaults": llm.DEFAULT_MODELS,
+        "llm_effective": effective,
+        "llm_effective_label": llm.PROVIDER_LABELS[effective["provider"]],
+        "llm_saved": saved,
+        "llm_errors": errors or [],
+        "llm_test_result": test_result,
+        "llm_test_error": test_error,
+    }
+
+
+def _llm_fragment(request: Request, db: Session, **kwargs):
+    return templates.TemplateResponse(
+        request, "fragments/settings_llm.html", _llm_context(db, **kwargs)
+    )
+
+
+@router.post("/llm")
+async def llm_save(request: Request, db: Session = Depends(get_db)):
+    """保存 LLM 配置到 app_settings['llm_config']（Key 留空=不变、「清除」=删）。"""
+    form = await request.form()
+    prev = _llm_raw(db)
+    errors: list[str] = []
+
+    provider = str(form.get("provider") or "").strip()
+    if provider not in llm.PROVIDERS:
+        provider = "claude"
+    new_cfg: dict[str, Any] = {"provider": provider}
+    for p in llm.PROVIDERS:
+        prev_sub = prev.get(p) if isinstance(prev.get(p), dict) else {}
+        model = str(form.get(f"{p}_model") or "").strip()[:100]
+        base_url = str(form.get(f"{p}_base_url") or "").strip()[:300]
+        if base_url and not base_url.startswith(("http://", "https://")):
+            errors.append(f"{llm.PROVIDER_LABELS[p]} 的 Base URL 须以 http(s):// 开头")
+            base_url = str(prev_sub.get("base_url") or "")
+        key_in = str(form.get(f"{p}_api_key") or "").strip()
+        if key_in == "":
+            api_key = str(prev_sub.get("api_key") or "")  # 留空 = 保持不变
+        elif key_in == "清除":
+            api_key = ""
+        else:
+            api_key = key_in[:400]
+        new_cfg[p] = {"model": model, "base_url": base_url, "api_key": api_key}
+
+    stmt = pg_insert(AppSetting).values(key=llm.CONFIG_KEY, value=new_cfg)
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["key"],
+        set_={"value": stmt.excluded.value, "updated_at": text("now()")},
+    )
+    db.execute(stmt)
+    db.flush()
+    return _llm_fragment(request, db, saved=not errors, errors=errors)
+
+
+@router.post("/llm/test")
+async def llm_test(request: Request, db: Session = Depends(get_db)):
+    """用当前已保存配置发一条最小请求验证连通性（同步短等待，photo 识别同款口径）。"""
+    from starlette.concurrency import run_in_threadpool
+
+    try:
+        # 推理型模型会先烧思考预算，max_tokens 给足才不至于空回复
+        reply = await run_in_threadpool(
+            llm._call, db, "你是连通性测试助手。", "请只回复两个字：正常", None, 2000
+        )
+        cfg = llm.get_config(db)
+        result = (
+            f"连接正常：{llm.PROVIDER_LABELS[cfg['provider']]} · {cfg['model']}"
+            f" → 「{reply[:40]}」"
+        )
+        return _llm_fragment(request, db, test_result=result)
+    except llm.LLMError as e:
+        return _llm_fragment(request, db, test_error=str(e))
+    except Exception as e:  # SDK 之外的意外（配置怪值等）也要给出可读提示
+        return _llm_fragment(request, db, test_error=f"测试失败：{str(e)[:200]}")
 
 
 # ---------- CSV 导出 ----------

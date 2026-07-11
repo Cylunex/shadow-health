@@ -203,7 +203,7 @@ def _day_ctx(db: Session, d: date) -> dict:
     ]
     from app.services import llm
 
-    return {"d": d, "meal_groups": meal_groups, "ai_on": llm.is_configured(), "fmt": _fmt}
+    return {"d": d, "meal_groups": meal_groups, "ai_on": llm.is_configured(db), "fmt": _fmt}
 
 
 def _diet_streak(db: Session, d: date) -> int:
@@ -783,14 +783,14 @@ def diet_photo_analyze(photo_id: int, request: Request, db: Session = Depends(ge
             headers=headers,
         )
 
-    if not llm.is_configured():
-        return _msg(error="未配置 ANTHROPIC_API_KEY，AI 识别不可用（.env 里填入后重启）。")
+    if not llm.is_configured(db):
+        return _msg(error="未配置 AI 模型 API Key——到 设置→AI 模型 填入即可使用识别。")
     path = get_settings().photo_dir / photo.filename
     if not path.is_file():
         return _msg(error="照片文件缺失。")
     try:
         result = llm.analyze_meal_photo(
-            path.read_bytes(), photo.content_type or "image/jpeg"
+            db, path.read_bytes(), photo.content_type or "image/jpeg"
         )
     except llm.LLMError as exc:
         return _msg(error=str(exc))
