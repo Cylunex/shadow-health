@@ -74,7 +74,7 @@
 
     {# 练完一键记入训练：消灭「练完记得回训练页手动记一笔」的断点 #}
     <form class="mt-3" x-show="phase === 'done'" style="display: none"
-          hx-post="/workout/logs" hx-swap="none"
+          hx-post="{{ u('/workout/logs') }}" hx-swap="none"
           @htmx:after-request.camel="if ($event.detail.successful) logged = true">
       <input type="hidden" name="fragment" value="timer">
       <input type="hidden" name="session_type" :value="guided.length ? '循环训练' : '间歇训练'">

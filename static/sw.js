@@ -6,18 +6,20 @@
  * 注意：服务器对 /static 不发 Cache-Control，install/回源必须显式绕过浏览器
  * HTTP 缓存（cache: 'reload'/'no-cache'），否则新版本缓存会固化到旧资源。
  */
-const SW_VERSION = 'v12';
+const SW_VERSION = 'v13';
 const CACHE_NAME = 'shadow-health-' + SW_VERSION;
-const OFFLINE_URL = '/static/offline.html';
+// 子路径部署（/shealth）时本文件在 <前缀>/sw.js 下发，从自身 URL 反推前缀
+const ROOT = self.location.pathname.replace(/\/sw\.js$/, '');
+const OFFLINE_URL = ROOT + '/static/offline.html';
 const PRECACHE = [
-  '/static/app.css',
-  '/static/vendor/htmx.min.js',
-  '/static/vendor/alpine.min.js',
-  '/static/vendor/chart.umd.min.js',
-  '/static/vendor/chartjs-adapter-date-fns.bundle.min.js',
-  '/static/icon.svg',
-  '/static/icon-192.png',
-  '/static/icon-512.png',
+  ROOT + '/static/app.css',
+  ROOT + '/static/vendor/htmx.min.js',
+  ROOT + '/static/vendor/alpine.min.js',
+  ROOT + '/static/vendor/chart.umd.min.js',
+  ROOT + '/static/vendor/chartjs-adapter-date-fns.bundle.min.js',
+  ROOT + '/static/icon.svg',
+  ROOT + '/static/icon-192.png',
+  ROOT + '/static/icon-512.png',
   OFFLINE_URL,
 ];
 // 不缓存的静态文件：部署时同名替换的大二进制（缓存后旧包会被继续下发）
@@ -54,7 +56,7 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(req.url);
 
   // 静态资源：cache-first，命中后台不更新，靠 SW_VERSION 整体失效
-  if (url.origin === self.location.origin && url.pathname.startsWith('/static/')) {
+  if (url.origin === self.location.origin && url.pathname.startsWith(ROOT + '/static/')) {
     if (NO_CACHE_EXT.test(url.pathname)) return; // APK 等直连网络
     event.respondWith(
       caches.match(req).then(

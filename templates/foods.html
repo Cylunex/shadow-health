@@ -13,7 +13,7 @@
   <section class="card">
     <h2 class="card-title">全部食物</h2>
     <input type="search" name="q" value="{{ q }}" placeholder="筛选食物名…" autocomplete="off"
-           hx-get="/diet/foods"
+           hx-get="{{ u('/diet/foods') }}"
            hx-trigger="input changed delay:300ms, search"
            hx-target="#foods-list" hx-swap="outerHTML"
            class="field mb-3">

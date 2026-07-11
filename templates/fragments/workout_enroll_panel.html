@@ -10,13 +10,13 @@
   </div>
   <div class="flex gap-1.5 shrink-0">
     <button type="button"
-            hx-post="/workout/enrollments/{{ it.e.id }}/finish"
+            hx-post="{{ u('/workout/enrollments/') }}{{ it.e.id }}/finish"
             hx-confirm="标记「{{ plan.name }}」为已完成？"
             hx-target="#enroll-panel" hx-swap="innerHTML"
             hx-disabled-elt="this"
             class="btn-primary px-3">完成</button>
     <button type="button"
-            hx-post="/workout/enrollments/{{ it.e.id }}/abandon"
+            hx-post="{{ u('/workout/enrollments/') }}{{ it.e.id }}/abandon"
             hx-confirm="放弃这一轮「{{ plan.name }}」？"
             hx-target="#enroll-panel" hx-swap="innerHTML"
             hx-disabled-elt="this"
@@ -25,7 +25,7 @@
 </div>
 {% endfor %}
 {% else %}
-<form hx-post="/workout/plans/{{ plan.id }}/enroll"
+<form hx-post="{{ u('/workout/plans/') }}{{ plan.id }}/enroll"
       hx-confirm="启动「{{ plan.name }}」？"
       hx-target="#enroll-panel" hx-swap="innerHTML"
       hx-disabled-elt="find button[type='submit']"

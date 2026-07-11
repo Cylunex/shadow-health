@@ -1,7 +1,7 @@
 {# AI 模型配置片段：POST /settings/llm 保存 / POST /settings/llm/test 测试，均整体替换；
    外层卡片由 settings 页提供。Key 语义：留空=不变、输入「清除」=删除（回退 .env）。 #}
 <form id="settings-llm"
-      hx-post="/settings/llm"
+      hx-post="{{ u('/settings/llm') }}"
       hx-target="this"
       hx-swap="outerHTML"
       hx-disabled-elt="find button"
@@ -91,7 +91,7 @@
   <div class="grid grid-cols-2 gap-2">
     <button type="submit" class="btn-primary">保存</button>
     <button type="button" class="chip min-h-[44px]"
-            hx-post="/settings/llm/test" hx-target="#settings-llm" hx-swap="outerHTML">
+            hx-post="{{ u('/settings/llm/test') }}" hx-target="#settings-llm" hx-swap="outerHTML">
       测试连接
     </button>
   </div>

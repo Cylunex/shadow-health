@@ -1,6 +1,6 @@
 {# 复盘表单片段：PUT /review/{week_start} 后整体替换（含成功提示）；外层卡片由 review_detail 提供 #}
 <form id="review-summary"
-      hx-put="/review/{{ week_start }}"
+      hx-put="{{ u('/review/') }}{{ week_start }}"
       hx-target="this"
       hx-swap="outerHTML"
       hx-disabled-elt="find button[type='submit']"

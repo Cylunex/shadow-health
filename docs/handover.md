@@ -9,9 +9,15 @@
 
 ## ▶ 进行中：V3 批次（照 docs/subpath-agent-plan.md，任务已拆三段）
 
-1. **P1 子路径适配**：计划 §1 全部 + 一条计划外必做——SnapshotCache 的路径匹配
-   （/fragments、/static、排除名单）要先剥掉 serverUrl 里的 path 前缀再比，
-   否则带前缀后快照层对片段/静态静默失效、/shealth/login 反被缓存
+1. ~~**P1 子路径适配**~~ ✅ **已完成（2026-07-12，含 SnapshotCache 计划外项）**：
+   X-Forwarded-Prefix 中间件（存 scope 私有键——**不是 root_path**，那会让
+   Mount(StaticFiles) 静态解析错位 404，缘由见计划 §1 落地记录）；模板全局
+   u() ≈190 处替换 + tests/test_template_urls.py 裸 URL lint 防返工；重定向/
+   HX-Redirect 走 deps.prefixed/redirect；登录 cookie path 收窄到前缀；
+   manifest 相对化 + sw.js 自推前缀（SW v13）；SnapshotCache 按 serverUrl
+   剥前缀再匹配、前缀外同域不代理；壳/网关全部拼接点核对为 baseUrl+"/api/…"。
+   验收：125 测全绿 + 本地前缀代理全页面走查（htmx/图表/hx-push-url 均正常）+
+   APK 构建拷至 static/shadow-health.apk。剩余：真机回归 + §1.8 上线切换（用户做）
 2. **P2 REST+MCP**（用户 2026-07-12 拍板的增补）：mood_score 加列**提前**到本阶段，
    与 'agent'/'legacy' 来源词表并成一个迁移（12）；/api/ingest/agent 响应带
    per-record 明细（client_id/status/row_id）；MCP 工具加第 9 个 delete_record

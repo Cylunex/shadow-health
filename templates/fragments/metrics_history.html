@@ -5,7 +5,7 @@
 {%- endif -%}
 {%- endmacro %}
 <div id="metrics-history"
-     hx-get="/fragments/metrics/history"
+     hx-get="{{ u('/fragments/metrics/history') }}"
      hx-trigger="metrics-changed from:body"
      hx-swap="outerHTML"
      class="rounded-xl border border-slate-800/70 overflow-hidden">
@@ -22,6 +22,7 @@
           <th class="sticky top-0 z-10 bg-slate-900 text-center px-3 py-2.5 font-normal border-b border-slate-800">质量</th>
           <th class="sticky top-0 z-10 bg-slate-900 text-center px-3 py-2.5 font-normal border-b border-slate-800">晨勃</th>
           <th class="sticky top-0 z-10 bg-slate-900 text-center px-3 py-2.5 font-normal border-b border-slate-800">精力</th>
+          <th class="sticky top-0 z-10 bg-slate-900 text-center px-3 py-2.5 font-normal border-b border-slate-800">心情</th>
           <th class="sticky top-0 z-10 bg-slate-900 text-right px-3 pr-4 py-2.5 font-normal border-b border-slate-800">血氧%</th>
         </tr>
       </thead>
@@ -57,13 +58,16 @@
           <td class="text-center px-3">
             {% if r.energy_level is not none %}{{ r.energy_level }}{{ badge(r, 'energy_level') }}{% else %}<span class="text-slate-700">—</span>{% endif %}
           </td>
+          <td class="text-center px-3">
+            {% if r.mood_score is not none %}{{ r.mood_score }}{{ badge(r, 'mood_score') }}{% else %}<span class="text-slate-700">—</span>{% endif %}
+          </td>
           <td class="text-right px-3 pr-4">
             {% if r.spo2_pct is not none %}{{ fmt(r.spo2_pct) }}{{ badge(r, 'spo2_pct') }}{% else %}<span class="text-slate-700">—</span>{% endif %}
           </td>
         </tr>
         {% else %}
         <tr>
-          <td colspan="10" class="py-10 text-center">
+          <td colspan="11" class="py-10 text-center">
             <svg class="mx-auto w-10 h-10 text-slate-700" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <rect x="5" y="4" width="14" height="17" rx="2"/>
               <path d="M9 4.5V3h6v1.5"/>

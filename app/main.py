@@ -4,14 +4,14 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
 from app import auth
 from app.config import BASE_DIR, get_settings
 from app.db import engine, wait_for_db
-from app.deps import LoginRequired, login_redirect, templates
+from app.deps import LoginRequired, login_redirect, prefixed, redirect, templates
 
 
 @asynccontextmanager
@@ -22,6 +22,20 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="shadow-health", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+
+
+@app.middleware("http")
+async def forwarded_prefix(request: Request, call_next):
+    """子路径部署（§V3 P1）：nginx 剥前缀转发并带 X-Forwarded-Prefix 头，
+    这里存进 scope 供 URL 生成（模板 u() / deps.prefixed）。
+    路由与 request.url.path 不受影响（path 已被 nginx 剥过）；直连无头时为空，行为零变化。
+    不用 uvicorn --root-path：同一进程要同时服务有/无前缀两种形态。
+    存私有键而非 root_path：Starlette 的 Mount(StaticFiles) 会把 root_path 组合进
+    子 scope，而 path 又不含前缀（违反 ASGI 约定），文件解析会错位 404。"""
+    prefix = request.headers.get("X-Forwarded-Prefix", "").strip()
+    if prefix and prefix.startswith("/"):
+        request.scope["x_forwarded_prefix"] = prefix.rstrip("/")
+    return await call_next(request)
 
 
 @app.middleware("http")
@@ -66,7 +80,7 @@ def service_worker() -> FileResponse:
 def login_page(request: Request):
     token = request.cookies.get(auth.SESSION_COOKIE)
     if auth.session_valid(token):
-        return RedirectResponse("/", status_code=303)
+        return redirect(request, "/")
     return templates.TemplateResponse(request, "login.html", {"error": None})
 
 
@@ -87,14 +101,15 @@ async def login_submit(request: Request):
         )
     auth.clear_failures(ip)
     token = auth.create_session()
-    resp = RedirectResponse("/", status_code=303)
+    resp = redirect(request, "/")
     resp.set_cookie(
         auth.SESSION_COOKIE,
         token,
         max_age=auth.SESSION_MAX_AGE,
         httponly=True,
         samesite="lax",
-        path="/",
+        # 收窄到部署前缀：同域名下 /stock/ 等其他应用收不到本站会话
+        path=prefixed(request, "") or "/",
     )
     return resp
 
@@ -150,8 +165,8 @@ def more_page(request: Request):
 @app.post("/logout")
 def logout(request: Request):
     auth.destroy_session(request.cookies.get(auth.SESSION_COOKIE))
-    resp = RedirectResponse("/login", status_code=303)
-    resp.delete_cookie(auth.SESSION_COOKIE, path="/")
+    resp = redirect(request, "/login")
+    resp.delete_cookie(auth.SESSION_COOKIE, path=prefixed(request, "") or "/")
     return resp
 
 

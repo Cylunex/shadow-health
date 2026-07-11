@@ -4,12 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>登录 · shadow-health</title>
-  <link rel="stylesheet" href="/static/app.css">
+  <link rel="stylesheet" href="{{ u('/static/app.css') }}">
 </head>
 <body class="text-slate-100 min-h-screen flex items-center justify-center px-6 py-10 antialiased">
-  <form method="post" action="/login" class="card w-full max-w-sm p-6 space-y-5 fade-in">
+  <form method="post" action="{{ u('/login') }}" class="card w-full max-w-sm p-6 space-y-5 fade-in">
     <div class="flex flex-col items-center gap-3 pt-2">
-      <img src="/static/icon.svg" alt="shadow-health" class="w-14 h-14 drop-shadow-[0_0_18px_rgba(52,211,153,0.35)]">
+      <img src="{{ u('/static/icon.svg') }}" alt="shadow-health" class="w-14 h-14 drop-shadow-[0_0_18px_rgba(52,211,153,0.35)]">
       <div class="text-center">
         <h1 class="text-xl font-bold tracking-wide">shadow-health</h1>
         <p class="mt-1 text-xs text-slate-500">私人健康管理面板</p>

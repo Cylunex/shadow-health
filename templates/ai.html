@@ -9,7 +9,7 @@
     <h2 class="card-title">未配置</h2>
     <p class="text-sm text-slate-300 leading-relaxed">
       还没有配置 {{ provider_label }} 的 API Key。到
-      <a href="/settings" class="text-emerald-300 underline">设置 →「AI 模型」</a>
+      <a href="{{ u('/settings') }}" class="text-emerald-300 underline">设置 →「AI 模型」</a>
       填入即可使用（支持 Claude / OpenAI 及兼容端点，改完立即生效，不用重启）；
       也可以写在服务器 <code class="text-emerald-300">.env</code> 里。
     </p>
@@ -19,7 +19,7 @@
   {# ---- 生成分析 ---- #}
   <section class="card">
     <h2 class="card-title">数据分析报告</h2>
-    <form hx-post="/ai/analyze" hx-target="#ai-analysis" hx-swap="innerHTML"
+    <form hx-post="{{ u('/ai/analyze') }}" hx-target="#ai-analysis" hx-swap="innerHTML"
           hx-disabled-elt="find button[type='submit']" hx-indicator="#ai-spinner"
           class="space-y-3">
       <div class="flex gap-1.5">
@@ -54,7 +54,7 @@
   <section class="card">
     <h2 class="card-title">问一问</h2>
     <p class="text-xs text-slate-500 mb-2">带上你近 30 天的数据上下文回答，例如"我最近的减脂速度合理吗""下周训练该怎么排"。</p>
-    <form hx-post="/ai/ask" hx-target="#ai-answer" hx-swap="innerHTML"
+    <form hx-post="{{ u('/ai/ask') }}" hx-target="#ai-answer" hx-swap="innerHTML"
           hx-disabled-elt="find button[type='submit']" hx-indicator="#ai-ask-spinner"
           class="space-y-2">
       <textarea name="question" rows="2" placeholder="输入你的问题…" required

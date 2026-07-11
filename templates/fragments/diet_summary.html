@@ -1,7 +1,7 @@
 {# 日热量/蛋白汇总 vs 目标（目标读 app_settings target_kcal/target_protein_g）；今日面板也用。
    根节点不带 .card：饮食页/今日面板各自用卡片包裹 #}
 <div id="diet-summary"
-     hx-get="/fragments/diet/summary?d={{ d.isoformat() }}"
+     hx-get="{{ u('/fragments/diet/summary') }}?d={{ d.isoformat() }}"
      hx-trigger="diet-changed from:body"
      hx-swap="outerHTML"
      class="space-y-4">

@@ -10,7 +10,7 @@
       <span class="tabular-nums">{{ day }}</span> 训练
     </div>
     <button type="button"
-            hx-get="/fragments/workout/day"
+            hx-get="{{ u('/fragments/workout/day') }}"
             hx-target="#workout-day-detail" hx-swap="innerHTML"
             class="min-h-[44px] px-3 text-xs text-slate-500 active:text-slate-300">收起 ✕</button>
   </div>

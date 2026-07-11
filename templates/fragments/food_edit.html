@@ -1,6 +1,6 @@
 {# 食物行内编辑：PUT 成功回 food_row，取消回 row 片段 #}
 <li id="food-{{ food.id }}" class="rounded-xl border border-emerald-700/50 bg-slate-900/70 px-3.5 py-3">
-  <form hx-put="/diet/foods/{{ food.id }}"
+  <form hx-put="{{ u('/diet/foods/') }}{{ food.id }}"
         hx-target="#food-{{ food.id }}" hx-swap="outerHTML"
         class="space-y-2.5">
     {% if error %}
@@ -35,7 +35,7 @@
     <div class="flex gap-2">
       <button type="submit" class="btn-primary flex-1 min-h-[44px]">保存</button>
       <button type="button" class="chip min-h-[44px] px-4"
-              hx-get="/diet/foods/{{ food.id }}/row"
+              hx-get="{{ u('/diet/foods/') }}{{ food.id }}/row"
               hx-target="#food-{{ food.id }}" hx-swap="outerHTML">取消</button>
     </div>
   </form>

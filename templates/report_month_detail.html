@@ -4,18 +4,18 @@
 {% block content %}
 <div class="space-y-5">
   <div class="flex items-center justify-between gap-2">
-    <a href="/report?t=monthly" class="inline-flex items-center gap-0.5 text-sm text-slate-400 py-2.5 pr-3 min-h-[44px] hover:text-slate-200 transition-colors">
+    <a href="{{ u('/report') }}?t=monthly" class="inline-flex items-center gap-0.5 text-sm text-slate-400 py-2.5 pr-3 min-h-[44px] hover:text-slate-200 transition-colors">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="m15 18-6-6 6-6"/></svg>
       月报列表
     </a>
     <span class="inline-flex items-center gap-1">
       {% if prev_month %}
-      <a href="/report/monthly/{{ prev_month }}" aria-label="上个月"
+      <a href="{{ u('/report/monthly/') }}{{ prev_month }}" aria-label="上个月"
          class="w-9 min-h-[44px] flex items-center justify-center rounded-full text-slate-400 hover:text-slate-200">‹</a>
       {% else %}<span class="w-9 min-h-[44px] flex items-center justify-center text-slate-700">‹</span>{% endif %}
       <span class="text-sm text-slate-300 font-medium tabular-nums">{{ range_label }}</span>
       {% if next_month %}
-      <a href="/report/monthly/{{ next_month }}" aria-label="下个月"
+      <a href="{{ u('/report/monthly/') }}{{ next_month }}" aria-label="下个月"
          class="w-9 min-h-[44px] flex items-center justify-center rounded-full text-slate-400 hover:text-slate-200">›</a>
       {% else %}<span class="w-9 min-h-[44px] flex items-center justify-center text-slate-700">›</span>{% endif %}
     </span>

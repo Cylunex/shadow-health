@@ -1,7 +1,7 @@
 {# 行内编辑表单（替换 wlog 行）：ctx = log, errors #}
 <li id="wlog-{{ log.id }}"
     class="rounded-xl border border-emerald-700/60 bg-slate-900/70 px-4 py-3 shadow-[0_0_16px_-6px_rgba(16,185,129,0.35)] fade-in">
-  <form hx-put="/workout/logs/{{ log.id }}"
+  <form hx-put="{{ u('/workout/logs/') }}{{ log.id }}"
         hx-target="#wlog-{{ log.id }}" hx-swap="outerHTML"
         hx-disabled-elt="find button[type='submit']"
         class="space-y-2.5">
@@ -44,7 +44,7 @@
     <div class="flex gap-2">
       <button type="submit" class="btn-primary flex-1">保存</button>
       <button type="button"
-              hx-get="/fragments/workout/recent"
+              hx-get="{{ u('/fragments/workout/recent') }}"
               hx-target="#workout-recent" hx-swap="innerHTML"
               class="btn-ghost flex-1">取消</button>
     </div>

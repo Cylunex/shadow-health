@@ -52,7 +52,7 @@
                     ('/settings', '设置', '目标值 · 数据导入 · CSV 导出',
                      'M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6')] %}
     {% for href, label, desc, icon in items %}
-    <a href="{{ href }}" class="list-row transition-colors active:bg-slate-800/70">
+    <a href="{{ u(href) }}" class="list-row transition-colors active:bg-slate-800/70">
       <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-700/60 bg-slate-800/80 text-emerald-400">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
              stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5">
@@ -71,7 +71,7 @@
     {% endfor %}
   </div>
 
-  <form method="post" action="/logout" class="pt-2">
+  <form method="post" action="{{ u('/logout') }}" class="pt-2">
     <button type="submit" class="btn-ghost w-full">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
            stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4">

@@ -3,9 +3,9 @@
   <div class="flex gap-2">
     {% for key, label in tabs %}
     <button type="button"
-            hx-get="/fragments/report/tabs?t={{ key }}"
+            hx-get="{{ u('/fragments/report/tabs') }}?t={{ key }}"
             hx-target="#report-tabs" hx-swap="outerHTML"
-            hx-push-url="/report?t={{ key }}"
+            hx-push-url="{{ u('/report') }}?t={{ key }}"
             hx-disabled-elt="this"
             class="chip flex-1 min-h-[44px] [&.htmx-request]:animate-pulse [&.htmx-request]:opacity-60 {% if key == t %}chip-active{% endif %}">
       {{ label }}
@@ -28,7 +28,7 @@
 
   {% if t == 'daily' %}
   {% for r in rows %}
-  <a href="/report/daily?d={{ r.d }}"
+  <a href="{{ u('/report/daily') }}?d={{ r.d }}"
      class="card block min-h-[44px] transition-colors hover:border-slate-700 active:bg-slate-800/70">
     <div class="flex items-center justify-between gap-2">
       <span class="font-semibold text-sm tabular-nums text-slate-100">{{ r.label }} · {{ r.weekday }}</span>
@@ -46,7 +46,7 @@
 
   {% elif t == 'weekly' %}
   {% for r in rows %}
-  <a href="/review/{{ r.week_start }}"
+  <a href="{{ u('/review/') }}{{ r.week_start }}"
      class="card block min-h-[44px] transition-colors hover:border-slate-700 active:bg-slate-800/70">
     <div class="flex items-center justify-between gap-2">
       <span class="font-semibold text-sm tabular-nums text-slate-100">{{ r.label }}</span>
@@ -64,7 +64,7 @@
 
   {% else %}
   {% for r in rows %}
-  <a href="/report/monthly/{{ r.month_start }}"
+  <a href="{{ u('/report/monthly/') }}{{ r.month_start }}"
      class="card block min-h-[44px] transition-colors hover:border-slate-700 active:bg-slate-800/70">
     <div class="flex items-center justify-between gap-2">
       <span class="font-semibold text-sm tabular-nums text-slate-100">{{ r.label }}</span>

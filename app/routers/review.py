@@ -19,13 +19,12 @@ from datetime import date, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import RedirectResponse
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.deps import require_login, templates
+from app.deps import redirect, require_login, templates
 from app.models import (
     AppSetting,
     BodyMetrics,
@@ -335,9 +334,9 @@ def _snapshot_cards(snap: dict[str, Any]) -> list[dict[str, Any]]:
 
 # ---------- 路由 ----------
 @router.get("")
-def review_list():
+def review_list(request: Request):
     """列表已并入报告中心（/report 周报 tab），旧入口重定向保关系。"""
-    return RedirectResponse("/report?t=weekly", status_code=303)
+    return redirect(request, "/report?t=weekly")
 
 
 @router.get("/{week_start}")

@@ -1,6 +1,6 @@
 {# 食物列表：q 筛选局部替换；新增食物后经 foods-changed 被动刷新（保持当前筛选） #}
 <ul id="foods-list"
-    hx-get="/diet/foods?q={{ q | urlencode }}"
+    hx-get="{{ u('/diet/foods') }}?q={{ q | urlencode }}"
     hx-trigger="foods-changed from:body"
     hx-swap="outerHTML"
     class="space-y-2">

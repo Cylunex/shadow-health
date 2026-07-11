@@ -1,6 +1,6 @@
 {# AI 分析任务状态：running=自轮询（every 3s）；终态渲染错误+缓存结果（无 trigger 即停轮询） #}
 {% if running %}
-<div hx-get="/ai/analyze/status" hx-trigger="every 3s" hx-swap="outerHTML">
+<div hx-get="{{ u('/ai/analyze/status') }}" hx-trigger="every 3s" hx-swap="outerHTML">
   <div class="rounded-xl border border-slate-800/70 bg-slate-900/60 px-4 py-3 text-sm text-slate-300 fade-in">
     <span class="inline-block animate-pulse">🧠 正在后台分析近 {{ days or 30 }} 天数据（约 1-2 分钟）…</span>
     <p class="mt-1 text-xs text-slate-500">可以离开本页/锁屏，回来自动显示结果。</p>

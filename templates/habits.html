@@ -3,7 +3,7 @@
 {% block content %}
 <div class="space-y-5">
   {# 汇总条：打卡/启停后经 HX-Trigger: habit-changed 被动刷新 #}
-  <div hx-get="/fragments/habits/summary" hx-trigger="load, habit-changed from:body" hx-swap="innerHTML">
+  <div hx-get="{{ u('/fragments/habits/summary') }}" hx-trigger="load, habit-changed from:body" hx-swap="innerHTML">
     <div class="rounded-xl border border-slate-800/70 bg-slate-900/60 px-3.5 py-3 text-sm text-slate-500 animate-pulse">汇总加载中…</div>
   </div>
 
@@ -14,7 +14,7 @@
 
   {# 启用/停用双分区：启停后经 habit-changed 整体刷新（行迁移分区 + 计数同步） #}
   <div class="space-y-5"
-       hx-get="/fragments/habits/manage"
+       hx-get="{{ u('/fragments/habits/manage') }}"
        hx-trigger="habit-changed from:body"
        hx-swap="innerHTML">
     {% include "fragments/habits_manage_sections.html" %}

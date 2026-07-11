@@ -55,6 +55,10 @@ import java.util.concurrent.ConcurrentHashMap;
  * 同源判定经 Uri 规范化（scheme/host 忽略大小写、补默认端口）：WebView 会把
  * 请求 URL 规范化（小写 host、去默认端口），裸字符串前缀比对会静默漏配。
  * 磁盘读写/淘汰统一挂 IO_LOCK：并发写同键会交错出损坏的快照体。
+ *
+ * 子路径部署（V3 P1）：serverUrl 带 path 前缀（/shealth）时，路径匹配先剥前缀
+ * 再按应用内路径比；同域不在前缀下的请求不代理——否则片段/静态匹配静默失效、
+ * 前缀下的 /login 反而会被缓存。
  */
 final class SnapshotCache {
 
@@ -99,6 +103,19 @@ final class SnapshotCache {
         if (path == null || path.isEmpty()) {
             path = "/";
         }
+        // 子路径部署：serverUrl 可能带 path 前缀（如 http://NAS:55080/shealth）。
+        // 下面的 cacheable/排除名单全按应用内路径写，必须先剥前缀再比；
+        // 同域但不在前缀下的请求（服务面板、/stock/ 等其他应用）一律不代理。
+        String prefix = pathPrefix(serverUrl);
+        if (!prefix.isEmpty()) {
+            if (path.equals(prefix)) {
+                path = "/";  // 不带尾斜杠进站（nginx 会 301，非 200 交回原生）
+            } else if (path.startsWith(prefix + "/")) {
+                path = path.substring(prefix.length());
+            } else {
+                return null;
+            }
+        }
         boolean cacheable = request.isForMainFrame()
                 || path.startsWith("/fragments/") || path.startsWith("/static/");
         if (!cacheable
@@ -129,6 +146,18 @@ final class SnapshotCache {
             Log.w(TAG, "快照拦截异常，回退原生加载: " + e);
             return null;  // 拦截层任何意外都不能拖垮 WebView
         }
+    }
+
+    /** serverUrl 里的 path 前缀，规范成 "" 或 "/xxx"（无尾斜杠）。 */
+    private static String pathPrefix(String serverUrl) {
+        String p = Uri.parse(serverUrl).getPath();
+        if (p == null) {
+            return "";
+        }
+        while (p.endsWith("/")) {
+            p = p.substring(0, p.length() - 1);
+        }
+        return p;
     }
 
     /** scheme/host 忽略大小写 + 默认端口补齐后的同源比较。 */

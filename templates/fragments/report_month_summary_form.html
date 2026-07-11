@@ -1,6 +1,6 @@
 {# 月报复盘表单片段：PUT /report/monthly/{month_start} 后整体替换（含成功提示）；外层卡片由 report_month_detail 提供 #}
 <form id="month-summary"
-      hx-put="/report/monthly/{{ month_start }}"
+      hx-put="{{ u('/report/monthly/') }}{{ month_start }}"
       hx-target="this"
       hx-swap="outerHTML"
       hx-disabled-elt="find button[type='submit']"

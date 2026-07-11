@@ -5,20 +5,20 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#0f172a">
   <title>{% block title %}shadow-health{% endblock %}</title>
-  <link rel="manifest" href="/static/manifest.json">
-  <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="/static/icon-192.png">
+  <link rel="manifest" href="{{ u('/static/manifest.json') }}">
+  <link rel="icon" href="{{ u('/static/icon.svg') }}" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="{{ u('/static/icon-192.png') }}">
   <meta name="description" content="局域网个人健康管理：指标、饮食、训练、习惯的记录与回顾">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="健康">
-  <link rel="stylesheet" href="/static/app.css">
-  <script src="/static/vendor/htmx.min.js" defer></script>
-  <script src="/static/vendor/alpine.min.js" defer></script>
+  <link rel="stylesheet" href="{{ u('/static/app.css') }}">
+  <script src="{{ u('/static/vendor/htmx.min.js') }}" defer></script>
+  <script src="{{ u('/static/vendor/alpine.min.js') }}" defer></script>
   {% block head %}{% endblock %}
 </head>
-<body class="text-slate-100 min-h-screen pb-24 antialiased">
+<body class="text-slate-100 min-h-screen pb-24 antialiased" data-root="{{ u('') }}">
   <header class="sticky top-0 z-20 border-b border-slate-800/70"
           style="background: linear-gradient(180deg, rgba(15,23,42,0.97), rgba(15,23,42,0.88)); backdrop-filter: blur(12px);">
     <div class="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between">
@@ -50,7 +50,7 @@
       {# 「更多」也罩住从它进入的二级板块（报告/打卡/AI/设置/周报详情），否则这些页面五个 tab 全灰 #}
       {% set active = p.startswith(('/more', '/report', '/habits', '/ai', '/settings', '/review'))
          if href == '/more' else (p == href or (href != '/' and p.startswith(href))) %}
-      <a href="{{ href }}"
+      <a href="{{ u(href) }}"
          class="relative py-2 flex flex-col items-center gap-1 min-h-[52px] transition-colors {% if active %}text-emerald-400{% else %}text-slate-500 hover:text-slate-300{% endif %}">
         {% if active %}
         <span class="absolute top-0 inset-x-6 h-0.5 rounded-full"
@@ -76,7 +76,7 @@
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', function () {
         // 经 GET /sw.js 路由注册，拿到根 scope（/static/sw.js 的默认 scope 罩不住页面）
-        navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(function () {});
+        navigator.serviceWorker.register('{{ u('/sw.js') }}', { scope: '{{ u('/') }}' }).catch(function () {});
       });
     }
 

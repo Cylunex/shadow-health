@@ -2,7 +2,7 @@
    根元素自带 workout-changed 刷新（保持当前 months），格子 hx-get 当日详情
    注：嵌在训练页「训练日历」.card 区块内，根元素不带卡片样式（outerHTML 自换） #}
 <div id="workout-heatmap"
-     hx-get="/fragments/workout/heatmap?months={{ hm.months }}"
+     hx-get="{{ u('/fragments/workout/heatmap') }}?months={{ hm.months }}"
      hx-trigger="workout-changed from:body"
      hx-swap="outerHTML">
   <div class="flex items-center justify-between gap-2 mb-3">
@@ -14,7 +14,7 @@
     <div class="flex gap-1.5">
       {% for m in hm.options %}
       <button type="button"
-              hx-get="/fragments/workout/heatmap?months={{ m }}"
+              hx-get="{{ u('/fragments/workout/heatmap') }}?months={{ m }}"
               hx-target="#workout-heatmap" hx-swap="outerHTML"
               hx-disabled-elt="this"
               class="chip min-h-[44px] px-3 text-xs {{ 'chip-active' if m == hm.months else '' }}">{{ m }}月</button>
@@ -45,7 +45,7 @@
           {% else %}
           <div class="w-3.5 h-3.5 rounded-[3px] cursor-pointer transition-shadow duration-100 hover:ring-1 hover:ring-emerald-300/80 {{ hm.level_classes[cell.level] }}"
                title="{{ cell.date.isoformat() }} · {{ cell.minutes }} 分钟{% if cell.count %}（{{ cell.count }} 条）{% endif %}"
-               hx-get="/fragments/workout/day?d={{ cell.date.isoformat() }}"
+               hx-get="{{ u('/fragments/workout/day') }}?d={{ cell.date.isoformat() }}"
                hx-target="#workout-day-detail" hx-swap="innerHTML"></div>
           {% endif %}
           {% endfor %}

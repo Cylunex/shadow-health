@@ -8,21 +8,21 @@
 
   {# 翻天导航：一体化胶囊 ‹ 日期 › #}
   <div class="card rounded-full p-1.5 flex items-center justify-between gap-2">
-    <a href="/diet?d={{ prev_d.isoformat() }}" aria-label="前一天"
+    <a href="{{ u('/diet') }}?d={{ prev_d.isoformat() }}" aria-label="前一天"
        class="shrink-0 w-11 min-h-[44px] flex items-center justify-center rounded-full text-lg bg-slate-800/60 border border-slate-700/60 text-slate-300 hover:border-slate-500 active:scale-95 transition-all">‹</a>
     <div class="text-center leading-tight">
       {# 点日期唤起原生日历直接跳转（透明覆盖的 date input），补记不用连点 ‹ #}
       <div class="relative text-sm font-semibold tabular-nums text-slate-100">{{ d.strftime('%Y-%m-%d') }}{% if is_today %}<span class="text-emerald-400"> · 今天</span>{% endif %}
         <input type="date" value="{{ d.isoformat() }}" max="{{ today_local().isoformat() }}" aria-label="选择日期"
                class="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-               onchange="if(this.value)location.href='/diet?d='+this.value">
+               onchange="if(this.value)location.href='{{ u('/diet') }}?d='+this.value">
       </div>
-      {% if not is_today %}<a href="/diet" class="text-xs text-emerald-400 active:text-emerald-300">回到今天</a>{% endif %}
+      {% if not is_today %}<a href="{{ u('/diet') }}" class="text-xs text-emerald-400 active:text-emerald-300">回到今天</a>{% endif %}
     </div>
     {% if is_today %}
     <span class="shrink-0 w-11 min-h-[44px] flex items-center justify-center rounded-full text-lg bg-slate-900/40 border border-slate-800/50 text-slate-700">›</span>
     {% else %}
-    <a href="/diet?d={{ next_d.isoformat() }}" aria-label="后一天"
+    <a href="{{ u('/diet') }}?d={{ next_d.isoformat() }}" aria-label="后一天"
        class="shrink-0 w-11 min-h-[44px] flex items-center justify-center rounded-full text-lg bg-slate-800/60 border border-slate-700/60 text-slate-300 hover:border-slate-500 active:scale-95 transition-all">›</a>
     {% endif %}
   </div>
@@ -34,7 +34,7 @@
   </section>
 
   {# 记录表单：搜索联想选食物（服务端算营养）或直接自由文本（手填热量） #}
-  <form id="diet-add-form" hx-post="/diet/logs" hx-target="#diet-form-msg" hx-swap="innerHTML"
+  <form id="diet-add-form" hx-post="{{ u('/diet/logs') }}" hx-target="#diet-form-msg" hx-swap="innerHTML"
         hx-disabled-elt="find button[type='submit']"
         hx-on::after-request="if(event.detail.successful && event.detail.xhr.getResponseHeader('HX-Trigger')){this.reset();dietClearFood();}"
         class="card space-y-3">
@@ -53,7 +53,7 @@
 
     <div class="relative">
       <input type="search" name="q" id="diet-q" placeholder="搜食物库，或直接写吃了什么" autocomplete="off"
-             hx-get="/diet/foods/search" hx-trigger="input changed delay:300ms" hx-target="#diet-suggestions" hx-swap="innerHTML"
+             hx-get="{{ u('/diet/foods/search') }}" hx-trigger="input changed delay:300ms" hx-target="#diet-suggestions" hx-swap="innerHTML"
              hx-disabled-elt="unset"
              oninput="if(document.getElementById('diet-food-id').value)dietClearFood()"
              class="field">
@@ -104,7 +104,7 @@
   {% include "fragments/diet_day.html" %}
 
   <div class="text-center">
-    <a href="/diet/recipes" class="btn-ghost px-6">🌿 食疗方库</a>
+    <a href="{{ u('/diet/recipes') }}" class="btn-ghost px-6">🌿 食疗方库</a>
   </div>
 
 </div>

@@ -2,7 +2,7 @@
    根元素自带 habit-changed 刷新（保持当前 months）；只统计启用中的每日习惯
    注：嵌在打卡页「打卡日历」.card 区块内，根元素不带卡片样式（outerHTML 自换） #}
 <div id="habits-heatmap"
-     hx-get="/fragments/habits/heatmap?months={{ hm.months }}"
+     hx-get="{{ u('/fragments/habits/heatmap') }}?months={{ hm.months }}"
      hx-trigger="habit-changed from:body"
      hx-swap="outerHTML">
   <div class="flex items-center justify-between gap-2 mb-3">
@@ -14,7 +14,7 @@
     <div class="flex gap-1.5">
       {% for m in hm.options %}
       <button type="button"
-              hx-get="/fragments/habits/heatmap?months={{ m }}"
+              hx-get="{{ u('/fragments/habits/heatmap') }}?months={{ m }}"
               hx-target="#habits-heatmap" hx-swap="outerHTML"
               hx-disabled-elt="this"
               class="chip min-h-[44px] px-3 text-xs {{ 'chip-active' if m == hm.months else '' }}">{{ m }}月</button>

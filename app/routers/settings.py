@@ -32,14 +32,14 @@ from fastapi import (
     Request,
     UploadFile,
 )
-from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import SessionLocal, get_db
-from app.deps import require_login, templates
+from app.deps import redirect, require_login, templates
 from app.services import llm
 from app.models import (
     AppSetting,
@@ -662,7 +662,7 @@ async def imports_create(
         background_tasks.add_task(
             _run_keep_import, str(dest), job.id, keep_password.strip() or None
         )
-    return RedirectResponse("/settings/imports", status_code=303)
+    return redirect(request, "/settings/imports")
 
 
 @router.get("/imports/{job_id}/status")

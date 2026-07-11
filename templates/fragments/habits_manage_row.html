@@ -35,7 +35,7 @@
     </div>
   </div>
   <button type="button"
-          hx-post="/habits/{{ habit.id }}/active"
+          hx-post="{{ u('/habits/') }}{{ habit.id }}/active"
           hx-target="#habit-row-{{ habit.id }}" hx-swap="outerHTML"
           hx-disabled-elt="this"
           class="shrink-0 min-h-[44px] min-w-[44px] flex items-center justify-center"

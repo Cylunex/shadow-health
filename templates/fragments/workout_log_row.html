@@ -27,11 +27,11 @@
   {% if log.source == 'manual' %}
   <div class="flex gap-1.5 shrink-0">
     <button type="button"
-            hx-get="/workout/logs/{{ log.id }}/edit"
+            hx-get="{{ u('/workout/logs/') }}{{ log.id }}/edit"
             hx-target="#wlog-{{ log.id }}" hx-swap="outerHTML"
             class="btn-ghost min-w-[44px] px-2.5 text-xs">编辑</button>
     <button type="button"
-            hx-delete="/workout/logs/{{ log.id }}"
+            hx-delete="{{ u('/workout/logs/') }}{{ log.id }}"
             hx-confirm="删除这条训练记录？"
             hx-target="#wlog-{{ log.id }}" hx-swap="outerHTML"
             hx-disabled-elt="this"

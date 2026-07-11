@@ -3,7 +3,7 @@
 {% block page_title %}导入中心{% endblock %}
 {% block content %}
 <div class="space-y-5">
-  <a href="/settings" class="inline-flex items-center gap-0.5 text-sm text-slate-400 py-2.5 pr-3 min-h-[44px] hover:text-slate-200 transition-colors">
+  <a href="{{ u('/settings') }}" class="inline-flex items-center gap-0.5 text-sm text-slate-400 py-2.5 pr-3 min-h-[44px] hover:text-slate-200 transition-colors">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="m15 18-6-6 6-6"/></svg>
     返回设置
   </a>
@@ -14,7 +14,7 @@
     {% include "fragments/settings_import_wizard.html" %}
   </section>
   {% else %}
-  <a href="/settings/imports/new" class="btn-primary w-full min-h-[48px]">
+  <a href="{{ u('/settings/imports/new') }}" class="btn-primary w-full min-h-[48px]">
     ＋ 新建导入
   </a>
   {% endif %}

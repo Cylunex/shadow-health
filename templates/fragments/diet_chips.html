@@ -1,7 +1,7 @@
 {# 最近常吃 chips：近 30 天频次 top8，一击记录（hx-include 带上页面当前日期，无则记今天）。
    横向滚动一行 .chip；根节点不带 .card（今日面板嵌在卡片里复用） #}
 <div id="diet-chips"
-     hx-get="/fragments/diet/chips"
+     hx-get="{{ u('/fragments/diet/chips') }}"
      hx-trigger="diet-changed from:body"
      hx-swap="outerHTML"
      class="{% if not chips %}hidden{% endif %}">
@@ -9,7 +9,7 @@
   <div class="flex gap-2 overflow-x-auto scrollbar-none -mx-4 px-4 pb-1">
     {% for c in chips %}
     <button type="button"
-            hx-post="/diet/quick/{{ c.id }}" hx-include="#diet-date" hx-swap="none"
+            hx-post="{{ u('/diet/quick/') }}{{ c.id }}" hx-include="#diet-date" hx-swap="none"
             hx-disabled-elt="this"
             class="chip shrink-0 whitespace-nowrap active:border-emerald-500/70 disabled:opacity-50">
       {{ c.name }}<span class="ml-1.5 text-xs text-slate-500 tabular-nums">{{ fmt(c.amount) }}g</span>

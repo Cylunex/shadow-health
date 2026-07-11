@@ -5,12 +5,12 @@
 
   {# 分类筛选 chips：HTMX 局部替换列表 #}
   <div class="flex gap-2 overflow-x-auto scrollbar-none -mx-4 px-4 pb-1">
-    <a href="/workout/exercises"
-       hx-get="/workout/exercises" hx-target="#exercises-list" hx-swap="outerHTML" hx-push-url="true"
+    <a href="{{ u('/workout/exercises') }}"
+       hx-get="{{ u('/workout/exercises') }}" hx-target="#exercises-list" hx-swap="outerHTML" hx-push-url="true"
        class="chip shrink-0 min-h-[44px] whitespace-nowrap {% if not cat %}chip-active{% endif %}">全部</a>
     {% for name in categories %}
-    <a href="/workout/exercises?c={{ name }}"
-       hx-get="/workout/exercises?c={{ name }}" hx-target="#exercises-list" hx-swap="outerHTML" hx-push-url="true"
+    <a href="{{ u('/workout/exercises') }}?c={{ name }}"
+       hx-get="{{ u('/workout/exercises') }}?c={{ name }}" hx-target="#exercises-list" hx-swap="outerHTML" hx-push-url="true"
        class="chip shrink-0 min-h-[44px] whitespace-nowrap {% if cat == name %}chip-active{% endif %}">{{ name }}</a>
     {% endfor %}
   </div>

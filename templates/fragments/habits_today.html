@@ -1,4 +1,4 @@
-{# 今日打卡列表片段：今日面板 hx-get="/fragments/habits/today" 加载。ctx = items[{habit, st}] #}
+{# 今日打卡列表片段：今日面板 hx-get="{{ u('/fragments/habits/today') }}" 加载。ctx = items[{habit, st}] #}
 <ul id="habits-today-list" class="space-y-2">
   {% for it in items %}
   {% with habit=it.habit, st=it.st %}{% include "fragments/habits_today_item.html" %}{% endwith %}
@@ -9,7 +9,7 @@
       <path d="M9.5 9.4c1.1.8 1.8 2.2 2.3 3.7-2 .4-3.5.4-4.8-.3-1.2-.6-2.3-1.9-3-4.2 2.8-.5 4.4 0 5.5.8z"/>
       <path d="M14.1 6a7 7 0 0 0-1.1 4c1.9-.1 3.3-.6 4.3-1.4 1-1 1.6-2.3 1.7-4.6-2.7.1-4 1-4.9 2z"/>
     </svg>
-    <span class="text-sm text-slate-500">暂无启用的习惯，去 <a href="/habits" class="text-emerald-400 underline min-h-[44px] inline-flex items-center">养生打卡</a> 启用</span>
+    <span class="text-sm text-slate-500">暂无启用的习惯，去 <a href="{{ u('/habits') }}" class="text-emerald-400 underline min-h-[44px] inline-flex items-center">养生打卡</a> 启用</span>
   </li>
   {% endfor %}
 </ul>

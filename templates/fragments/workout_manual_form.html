@@ -1,7 +1,7 @@
 {# 手动记录表单：ctx = form_log_date, form_saved, form_errors, session_type_hints
    注：嵌在训练页「手动记一笔」.card 区块内，根元素不带卡片样式（outerHTML 自换） #}
 <form id="workout-manual-form"
-      hx-post="/workout/logs"
+      hx-post="{{ u('/workout/logs') }}"
       hx-target="this" hx-swap="outerHTML"
       hx-disabled-elt="find button[type='submit']"
       class="space-y-3">

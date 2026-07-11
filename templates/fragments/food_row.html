@@ -15,10 +15,10 @@
       </div>
     </div>
     <button type="button" class="chip min-h-[40px] px-3 text-xs shrink-0"
-            hx-get="/diet/foods/{{ food.id }}/edit"
+            hx-get="{{ u('/diet/foods/') }}{{ food.id }}/edit"
             hx-target="#food-{{ food.id }}" hx-swap="outerHTML">编辑</button>
     <button type="button" class="chip min-h-[40px] px-3 text-xs shrink-0 text-red-400"
-            hx-delete="/diet/foods/{{ food.id }}"
+            hx-delete="{{ u('/diet/foods/') }}{{ food.id }}"
             hx-confirm="删除「{{ food.name }}」？"
             hx-target="#food-{{ food.id }}" hx-swap="outerHTML">删除</button>
   </div>

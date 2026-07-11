@@ -1,10 +1,10 @@
 {# 药膳卡片列表 + effect_tags 受控词表筛选（HTMX 局部刷新，含筛选条以更新选中态） #}
 <div id="recipes-list">
   <div class="flex gap-2 overflow-x-auto scrollbar-none -mx-4 px-4 pb-1 mb-4">
-    <button type="button" hx-get="/diet/recipes" hx-target="#recipes-list" hx-swap="outerHTML" hx-push-url="true"
+    <button type="button" hx-get="{{ u('/diet/recipes') }}" hx-target="#recipes-list" hx-swap="outerHTML" hx-push-url="true"
             class="chip shrink-0 whitespace-nowrap{% if not tag %} chip-active{% endif %}">全部</button>
     {% for t in effect_tags %}
-    <button type="button" hx-get="/diet/recipes?tag={{ t }}" hx-target="#recipes-list" hx-swap="outerHTML" hx-push-url="true"
+    <button type="button" hx-get="{{ u('/diet/recipes') }}?tag={{ t }}" hx-target="#recipes-list" hx-swap="outerHTML" hx-push-url="true"
             class="chip shrink-0 whitespace-nowrap{% if tag == t %} chip-active{% endif %}">{{ t }}</button>
     {% endfor %}
   </div>

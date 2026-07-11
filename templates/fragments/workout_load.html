@@ -1,7 +1,7 @@
 {# 本周训练负荷（sRPE）：ctx = wl{load, low, mid, high, unrated, sessions, rated_total, prev_load, delta_pct}
    记录增删改后经 workout-changed 被动刷新；嵌在「本周负荷」.card 内 #}
 <div id="workout-load"
-     hx-get="/fragments/workout/load"
+     hx-get="{{ u('/fragments/workout/load') }}"
      hx-trigger="workout-changed from:body"
      hx-swap="outerHTML">
   {% if wl.sessions == 0 %}

@@ -4,7 +4,7 @@
   {% if st.target == 1 %}
   {# 单次打卡：整行大按钮，再点即撤销 #}
   <button type="button"
-          hx-post="/habits/{{ habit.id }}/toggle"
+          hx-post="{{ u('/habits/') }}{{ habit.id }}/toggle"
           hx-target="#habit-item-{{ habit.id }}" hx-swap="outerHTML"
           hx-disabled-elt="this"
           class="w-full min-h-[52px] px-4 py-3 flex items-center justify-between gap-3 text-left active:scale-[0.99] transition-transform">
@@ -53,7 +53,7 @@
     </div>
     <div class="flex items-center gap-2 shrink-0">
       <button type="button"
-              hx-post="/habits/{{ habit.id }}/decrement"
+              hx-post="{{ u('/habits/') }}{{ habit.id }}/decrement"
               hx-target="#habit-item-{{ habit.id }}" hx-swap="outerHTML"
               hx-disabled-elt="this"
               class="w-11 h-11 min-h-[44px] min-w-[44px] rounded-full border border-slate-700 bg-slate-800/60 text-slate-300 text-xl leading-none flex items-center justify-center transition-all active:scale-95 disabled:opacity-30"
@@ -61,7 +61,7 @@
               aria-label="减一">−</button>
       <span class="w-12 text-center tabular-nums {{ 'text-emerald-400 font-bold' if st.done else 'text-slate-200 font-medium' }}">{{ st.period_count }}/{{ st.target }}</span>
       <button type="button"
-              hx-post="/habits/{{ habit.id }}/increment"
+              hx-post="{{ u('/habits/') }}{{ habit.id }}/increment"
               hx-target="#habit-item-{{ habit.id }}" hx-swap="outerHTML"
               hx-disabled-elt="this"
               class="w-11 h-11 min-h-[44px] min-w-[44px] rounded-full border border-emerald-600/60 bg-emerald-950/60 text-emerald-300 text-xl leading-none flex items-center justify-center transition-all active:scale-95 shadow-[0_0_12px_-4px_rgba(16,185,129,0.55)]"

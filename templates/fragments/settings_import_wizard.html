@@ -1,5 +1,5 @@
 {# 导入向导：来源选择 + 文件上传；keep_file 显示可选解压密码框（密码只透传导入器，不落库）；外层卡片由导入中心提供 #}
-<form method="post" action="/settings/imports" enctype="multipart/form-data"
+<form method="post" action="{{ u('/settings/imports') }}" enctype="multipart/form-data"
       x-data="{ src: 'samsung_zip', busy: false }" @submit="busy = true"
       class="space-y-4">
 

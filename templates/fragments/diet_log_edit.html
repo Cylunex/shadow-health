@@ -1,6 +1,6 @@
 {# 行内编辑表单：food 行只改餐次/用量（营养自动重算）；自由文本行可改全部 #}
 <li id="diet-log-{{ log.id }}" class="rounded-xl border border-emerald-700/40 bg-slate-900/80 p-3.5 fade-in">
-  <form hx-put="/diet/logs/{{ log.id }}" hx-target="#diet-log-{{ log.id }}" hx-swap="outerHTML"
+  <form hx-put="{{ u('/diet/logs/') }}{{ log.id }}" hx-target="#diet-log-{{ log.id }}" hx-swap="outerHTML"
         hx-disabled-elt="find button[type='submit']" class="space-y-2.5">
     <div class="flex items-center gap-2">
       <span class="text-sm font-medium text-slate-200 flex-1 truncate">{% if log.food_id is not none %}{{ name }}{% else %}自由记录{% endif %}</span>
@@ -48,7 +48,7 @@
     {% if error %}<div class="text-xs text-red-400">{{ error }}</div>{% endif %}
     <div class="grid grid-cols-2 gap-2">
       <button type="button"
-              hx-get="/diet/logs/{{ log.id }}/row" hx-target="#diet-log-{{ log.id }}" hx-swap="outerHTML"
+              hx-get="{{ u('/diet/logs/') }}{{ log.id }}/row" hx-target="#diet-log-{{ log.id }}" hx-swap="outerHTML"
               class="btn-ghost">取消</button>
       <button type="submit" class="btn-primary">保存</button>
     </div>

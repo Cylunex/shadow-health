@@ -1,6 +1,6 @@
 {# 趋势图片段：metric × days 切换整体替换；保存指标后监听 metrics-changed 被动刷新；外层 .card 由 metrics.html 提供 #}
 <div id="metrics-chart-frame"
-     hx-get="/fragments/metrics/chart?metric={{ chart.metric }}&days={{ chart.days }}"
+     hx-get="{{ u('/fragments/metrics/chart') }}?metric={{ chart.metric }}&days={{ chart.days }}"
      hx-trigger="metrics-changed from:body"
      hx-swap="outerHTML"
      class="space-y-3">
@@ -8,7 +8,7 @@
   <div class="flex gap-2 overflow-x-auto scrollbar-none -mx-4 px-4 pb-1">
     {% for key, label in chart.metric_options %}
     <button type="button"
-            hx-get="/fragments/metrics/chart?metric={{ key }}&days={{ chart.days }}"
+            hx-get="{{ u('/fragments/metrics/chart') }}?metric={{ key }}&days={{ chart.days }}"
             hx-target="#metrics-chart-frame" hx-swap="outerHTML"
             hx-disabled-elt="this"
             class="chip shrink-0 min-h-[44px] whitespace-nowrap {% if key == chart.metric %}chip-active{% endif %}">
@@ -20,7 +20,7 @@
   <div class="flex gap-2">
     {% for d in chart.days_options %}
     <button type="button"
-            hx-get="/fragments/metrics/chart?metric={{ chart.metric }}&days={{ d }}"
+            hx-get="{{ u('/fragments/metrics/chart') }}?metric={{ chart.metric }}&days={{ d }}"
             hx-target="#metrics-chart-frame" hx-swap="outerHTML"
             hx-disabled-elt="this"
             class="chip flex-1 min-h-[44px] tabular-nums {% if d == chart.days %}chip-active{% endif %}">
@@ -57,10 +57,10 @@
         if (window.__chartJsQueue) { window.__chartJsQueue.push(cb); return; }
         window.__chartJsQueue = [cb];
         var s1 = document.createElement("script");
-        s1.src = "/static/vendor/chart.umd.min.js";
+        s1.src = "{{ u('/static/vendor/chart.umd.min.js') }}";
         s1.onload = function () {
           var s2 = document.createElement("script");
-          s2.src = "/static/vendor/chartjs-adapter-date-fns.bundle.min.js";
+          s2.src = "{{ u('/static/vendor/chartjs-adapter-date-fns.bundle.min.js') }}";
           s2.onload = function () {
             var q = window.__chartJsQueue || [];
             window.__chartJsQueue = null;

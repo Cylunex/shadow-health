@@ -5,7 +5,7 @@
     <div class="mb-3 flex items-center justify-between">
       <h2 class="card-title mb-0">{{ cname }}<span class="ml-1.5 text-xs font-normal text-slate-500">{{ items | length }} 个动作</span></h2>
       {# 跟练这组：动作库 × 计时器打通，每组轮换显示动作与要领 #}
-      <a href="/workout/timer?exercises={{ items | map(attribute='id') | join(',') }}"
+      <a href="{{ u('/workout/timer') }}?exercises={{ items | map(attribute='id') | join(',') }}"
          class="inline-flex min-h-[44px] items-center px-2 -mr-2 text-xs font-medium text-emerald-400 active:text-emerald-300">▶ 跟练这组</a>
     </div>
     <ul class="space-y-2">

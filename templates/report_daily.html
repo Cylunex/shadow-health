@@ -5,7 +5,7 @@
 <div class="space-y-5">
 
   <div class="flex items-center justify-between gap-2">
-    <a href="/report" class="inline-flex items-center gap-0.5 text-sm text-slate-400 py-2.5 pr-3 min-h-[44px] hover:text-slate-200 transition-colors">
+    <a href="{{ u('/report') }}" class="inline-flex items-center gap-0.5 text-sm text-slate-400 py-2.5 pr-3 min-h-[44px] hover:text-slate-200 transition-colors">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="m15 18-6-6 6-6"/></svg>
       报告中心
     </a>
@@ -13,21 +13,21 @@
 
   {# 翻天导航（饮食页同款一体化胶囊 ‹ 日期 ›） #}
   <div class="flex items-center justify-between gap-3">
-    <a href="/report/daily?d={{ prev_d.isoformat() }}" aria-label="前一天"
+    <a href="{{ u('/report/daily') }}?d={{ prev_d.isoformat() }}" aria-label="前一天"
        class="shrink-0 w-11 min-h-[44px] flex items-center justify-center rounded-full text-lg bg-slate-800/60 border border-slate-700/60 text-slate-300 hover:border-slate-500 active:scale-95 transition-all">‹</a>
     <div class="text-center leading-tight">
       {# 点日期唤起原生日历直接跳转（日报列表只列近 14 天，更早从这进） #}
       <div class="relative text-sm font-semibold tabular-nums text-slate-100">{{ d.strftime('%Y-%m-%d') }} · {{ weekday_cn }}{% if is_today %}<span class="text-emerald-400"> · 今天</span>{% endif %}
         <input type="date" value="{{ d.isoformat() }}" max="{{ today_local().isoformat() }}" aria-label="选择日期"
                class="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-               onchange="if(this.value)location.href='/report/daily?d='+this.value">
+               onchange="if(this.value)location.href='{{ u('/report/daily') }}?d='+this.value">
       </div>
-      {% if not is_today %}<a href="/report/daily" class="text-xs text-emerald-400 active:text-emerald-300">回到今天</a>{% endif %}
+      {% if not is_today %}<a href="{{ u('/report/daily') }}" class="text-xs text-emerald-400 active:text-emerald-300">回到今天</a>{% endif %}
     </div>
     {% if is_today %}
     <span class="shrink-0 w-11 min-h-[44px] flex items-center justify-center rounded-full text-lg bg-slate-900/40 border border-slate-800/50 text-slate-700">›</span>
     {% else %}
-    <a href="/report/daily?d={{ next_d.isoformat() }}" aria-label="后一天"
+    <a href="{{ u('/report/daily') }}?d={{ next_d.isoformat() }}" aria-label="后一天"
        class="shrink-0 w-11 min-h-[44px] flex items-center justify-center rounded-full text-lg bg-slate-800/60 border border-slate-700/60 text-slate-300 hover:border-slate-500 active:scale-95 transition-all">›</a>
     {% endif %}
   </div>
@@ -68,7 +68,7 @@
   <section class="card">
     <div class="mb-3 flex items-center justify-between">
       <h2 class="card-title mb-0">饮食</h2>
-      <a href="/diet?d={{ d.isoformat() }}" class="inline-flex min-h-[44px] items-center px-2 -mr-2 text-xs font-medium text-emerald-400 active:text-emerald-300">明细 →</a>
+      <a href="{{ u('/diet') }}?d={{ d.isoformat() }}" class="inline-flex min-h-[44px] items-center px-2 -mr-2 text-xs font-medium text-emerald-400 active:text-emerald-300">明细 →</a>
     </div>
     {% include "fragments/diet_summary.html" %}
   </section>
@@ -122,7 +122,7 @@
         {% if backfill_ok and it.target == 1 %}
         {# 补卡/撤销：点击切换该日打卡（30 天内），成功后整页刷新同步三环等 #}
         <button type="button"
-                hx-post="/habits/{{ it.id }}/toggle" hx-swap="none"
+                hx-post="{{ u('/habits/') }}{{ it.id }}/toggle" hx-swap="none"
                 hx-vals='{"d": "{{ d.isoformat() }}"}'
                 hx-disabled-elt="this"
                 hx-on::after-request="if(event.detail.successful) location.reload()"
