@@ -25,20 +25,33 @@
       {% endif %}
     </div>
     {% endif %}
-    {% if bm and bm.weight_kg is not none %}
-    <p class="mt-2 flex items-center justify-between border-t border-slate-800/70 pt-2 text-sm">
-      <span class="text-slate-400">今日体重</span>
-      <span class="tabular-nums text-slate-200">
-        {{ bm.weight_kg }} kg
-        <span class="ml-1 text-xs text-slate-500">{{ weight_source }}</span>
-      </span>
-    </p>
-    {% endif %}
   </section>
+
+  {# ---- 今日体成分（body_metrics 落库值 + 字段级来源徽标） ---- #}
+  {% if body_today %}
+  <section class="card">
+    <h2 class="card-title">今日体成分</h2>
+    <div class="grid grid-cols-3 gap-3 text-center">
+      {% for f in body_today %}
+      <div>
+        <p class="text-lg font-bold tabular-nums text-emerald-400">
+          {{ f.value }}<span class="ml-0.5 text-xs font-normal text-slate-500">{{ f.unit }}</span>
+        </p>
+        <p class="mt-0.5 text-xs text-slate-500">{{ f.label }} · {{ f.source }}</p>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
 
   {# ---- 最近测量流水（import_raw 留档，双监听端合并去重后的结果） ---- #}
   <section class="card">
     <h2 class="card-title">最近测量</h2>
+    {% if profile_missing %}
+    <p class="mb-2 text-xs text-amber-400/90">
+      有测量带阻抗但档案不全，只记了体重——到设置里填性别/生日/身高后才能算体成分。
+    </p>
+    {% endif %}
     {% if not items %}
     <p class="text-sm text-slate-500">暂无记录</p>
     {% else %}
@@ -57,6 +70,9 @@
             <span class="badge-accent animate-pulse ml-1">新</span>
             {% endif %}
           </p>
+          {% if it.comp %}
+          <p class="mt-0.5 text-xs text-slate-400 tabular-nums">{{ it.comp }}</p>
+          {% endif %}
           <p class="mt-0.5 text-xs text-slate-500">秤时间 {{ it.scale_ts }} · 收到 {{ it.ago }}</p>
         </div>
         <span class="shrink-0 text-xs {{ 'text-emerald-400' if it.status == 'parsed'
