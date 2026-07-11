@@ -88,6 +88,7 @@ public class MainActivity extends Activity {
     private String lastError;  // 最近一次加载失败原因，本地页状态栏展示
     private boolean clearHistoryOnNextLoad;  // 本地启动页不留在返回历史里
     private String erroredUrl;  // 加载失败的 URL 也会触发 onPageFinished，需忽略以免复位标志
+    private boolean pendingTimedScan;  // 称重模式等权限授予后再启动
     private ValueCallback<Uri[]> filePathCallback;  // <input type=file> 的回调，选择结果回传给 WebView
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -473,6 +474,21 @@ public class MainActivity extends Activity {
         startForegroundService(new Intent(this, ScaleScanService.class));
     }
 
+    /** 称重模式（页面按钮触发）：监听 3 分钟自动停，不留常驻通知。 */
+    private void startTimedScaleScan() {
+        List<String> missing = missingScalePermissions();
+        if (!missing.isEmpty()) {
+            pendingTimedScan = true;
+            requestPermissions(missing.toArray(new String[0]), REQ_SCALE_PERMS);
+            return;
+        }
+        startForegroundService(new Intent(this, ScaleScanService.class)
+                .putExtra(ScaleScanService.EXTRA_TIMED, true));
+        Toast.makeText(this,
+                "秤监听已开启 " + (ScaleScanService.TIMED_SCAN_MS / 60_000) + " 分钟，请上秤",
+                Toast.LENGTH_SHORT).show();
+    }
+
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         if (requestCode == REQ_FILE_CHOOSER) {
@@ -492,9 +508,13 @@ public class MainActivity extends Activity {
         if (requestCode != REQ_SCALE_PERMS) {
             return;
         }
+        boolean timed = pendingTimedScan;  // 称重模式的授权失败不动常驻开关设置
+        pendingTimedScan = false;
         if (permissions.length == 0) {
             // 系统取消了权限请求（来电/分屏等）：按未授予处理，不能默认放行
-            prefs.edit().putBoolean(KEY_SCALE_SCAN, false).apply();
+            if (!timed) {
+                prefs.edit().putBoolean(KEY_SCALE_SCAN, false).apply();
+            }
             Toast.makeText(this, "权限请求被中断，秤监听未开启", Toast.LENGTH_LONG).show();
             return;
         }
@@ -506,9 +526,15 @@ public class MainActivity extends Activity {
             }
         }
         if (scanGranted) {
-            startScaleService();
+            if (timed) {
+                startTimedScaleScan();
+            } else {
+                startScaleService();
+            }
         } else {
-            prefs.edit().putBoolean(KEY_SCALE_SCAN, false).apply();
+            if (!timed) {
+                prefs.edit().putBoolean(KEY_SCALE_SCAN, false).apply();
+            }
             Toast.makeText(this, "未授予蓝牙权限，秤监听未开启", Toast.LENGTH_LONG).show();
         }
     }
@@ -539,6 +565,12 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void openOfflinePage() {
             handler.post(() -> showLocalPage(null));
+        }
+
+        /** 称重模式：监听 3 分钟自动停（今日页/离线页按钮触发，见 ScaleScanService）。 */
+        @JavascriptInterface
+        public void startScaleScan() {
+            handler.post(MainActivity.this::startTimedScaleScan);
         }
 
         /** 本地页手动重试：探测通了自动切服务器页，不通回调 window.onProbeResult(false)。

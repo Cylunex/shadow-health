@@ -56,12 +56,20 @@ import java.util.concurrent.Executors;
  *   [1] 标志 bit1=带阻抗 bit5=已稳定 bit7=离秤
  *   [2:4] 年(LE) [4]月 [5]日 [6]时 [7]分 [8]秒（秤 RTC，本地时间）
  *   [9:11] 阻抗Ω(LE, 0<z<3000 有效)  [11:13] 体重原始值(LE)
+ *
+ * 两种运行模式：
+ *   - 常驻（连接设置勾选「后台监听体脂秤」）：START_STICKY，永不自停
+ *   - 称重模式（EXTRA_TIMED，页面按钮触发）：监听 TIMED_SCAN_MS 后自动 stopSelf，
+ *     START_NOT_STICKY——不想要常驻通知的人按需点一下即可
  */
 public class ScaleScanService extends Service {
 
     private static final String TAG = "ScaleScan";
     private static final String CHANNEL_ID = "miscale";
     private static final int NOTIFICATION_ID = 1001;
+    /** 限时称重模式：boolean extra；常驻开关开着时忽略（本来就不停）。 */
+    static final String EXTRA_TIMED = "timed";
+    static final long TIMED_SCAN_MS = 3 * 60_000;
     private static final ParcelUuid UUID_BODY_COMPOSITION =
             ParcelUuid.fromString("0000181b-0000-1000-8000-00805f9b34fb");
 
@@ -129,9 +137,16 @@ public class ScaleScanService extends Service {
         registerReceiver(btStateReceiver, new IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED));
     }
 
+    private final Runnable timedStop = this::stopSelf;
+
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        Notification n = buildNotification("等待上秤…");
+        SharedPreferences prefs = getSharedPreferences("shell", MODE_PRIVATE);
+        boolean alwaysOn = prefs.getBoolean("scale_scan_enabled", false);
+        boolean timed = !alwaysOn && intent != null && intent.getBooleanExtra(EXTRA_TIMED, false);
+
+        Notification n = buildNotification(
+                timed ? "称重模式：" + (TIMED_SCAN_MS / 60_000) + " 分钟内上秤即记" : "等待上秤…");
         if (Build.VERSION.SDK_INT >= 29) {
             startForeground(NOTIFICATION_ID, n,
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE);
@@ -139,14 +154,18 @@ public class ScaleScanService extends Service {
             startForeground(NOTIFICATION_ID, n);
         }
         startScan();
+        handler.removeCallbacks(timedStop);
+        if (timed) {
+            handler.postDelayed(timedStop, TIMED_SCAN_MS);  // 到点自停，通知随服务消失
+        }
         // 上次失败积压的测量：服务启动即尝试补发
-        SharedPreferences prefs = getSharedPreferences("shell", MODE_PRIVATE);
         final String server = prefs.getString("server_url", "");
         final String token = prefs.getString("ingest_token", "");
         if (!server.isEmpty() && !token.isEmpty()) {
             io.execute(() -> drainQueue(server, token));
         }
-        return START_STICKY;
+        // 称重模式不复活：系统回收后自动拉起一个没人等的监听没有意义
+        return timed ? START_NOT_STICKY : START_STICKY;
     }
 
     private Notification buildNotification(String text) {

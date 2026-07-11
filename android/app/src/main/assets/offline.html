@@ -100,6 +100,8 @@
   <label for="weight">体重 kg</label>
   <input id="weight" type="number" inputmode="decimal" min="20" max="500" step="0.1">
   <button class="save" onclick="saveWeight()">暂存体重</button>
+  <button class="save" style="background:transparent;color:#34d399;border:1px solid #34d399"
+          onclick="startScale()">⚖️ 开秤监听 3 分钟（上秤即记，秤数据走独立队列）</button>
 </section>
 
 <div class="toast" id="toast"></div>
@@ -265,6 +267,11 @@
   window.changeAddress = function () {
     var b = bridge();
     if (b) b.changeAddress();  // 地址错了（服务器搬家/手滑）不能只会干等重试
+  };
+  window.startScale = function () {
+    var b = bridge();
+    if (b && b.startScaleScan) { b.startScaleScan(); }
+    else toast('壳接口不可用');
   };
 
   // ---- 初始化 ----
