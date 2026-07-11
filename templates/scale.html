@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block page_title %}秤接收状态{% endblock %}
+{% block content %}
+<div class="space-y-4">
+
+  {# 壳内专属：一页完成 开监听 → 上秤 → 看结果；浏览器里只看状态。
+     注意用内联 display:none——btn-primary 的 display:inline-flex 会压过 hidden 属性 #}
+  <button type="button" style="display:none" id="scale-scan-btn"
+          onclick="ShellBridge.startScaleScan()"
+          class="btn-primary w-full">⚖️ 开秤监听 3 分钟（上秤即记）</button>
+  <script>
+    if (window.ShellBridge && window.ShellBridge.startScaleScan) {
+      document.getElementById('scale-scan-btn').style.display = '';
+    }
+  </script>
+
+  <div hx-get="/fragments/scale/status" hx-trigger="every 3s" hx-swap="innerHTML">
+    {% include "fragments/scale_status.html" %}
+  </div>
+
+  <p class="text-xs text-slate-500 leading-relaxed">
+    此页每 3 秒自动刷新。上秤后（光脚、等数字稳定）几秒内会出现带「新」标的记录；
+    「含体成分」表示拿到了阻抗，会按档案计算体脂等指标。手机壳与 NAS 网关同时监听
+    也只会记一条（按秤时间戳去重）。若持续收不到：确认蓝牙权限、秤单位为 kg、
+    监听已开启（本页按钮限时 3 分钟，常驻监听在连接设置里勾选）。
+  </p>
+
+</div>
+{% endblock %}

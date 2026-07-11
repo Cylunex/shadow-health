@@ -1,0 +1,72 @@
+{# 秤接收状态片段：/scale 页每 3s 轮询整体替换（内容全服务端渲染，零 JS 状态） #}
+<div class="space-y-4">
+
+  {# ---- 通道健康度 ---- #}
+  <section class="card">
+    <h2 class="card-title">上报通道</h2>
+    {% if state is none %}
+    <p class="text-sm text-slate-400">还没收到过任何秤数据——开监听后光脚上秤试试。</p>
+    {% else %}
+    <div class="space-y-1.5 text-sm">
+      <p class="flex items-center justify-between">
+        <span class="text-slate-400">最近上报成功</span>
+        <span class="tabular-nums {{ 'text-emerald-400' if state.last_success_at else 'text-slate-500' }}">
+          {{ state_ago or '—' }}
+        </span>
+      </p>
+      {% if state.consecutive_failures %}
+      <p class="flex items-center justify-between">
+        <span class="text-slate-400">连续失败</span>
+        <span class="text-red-400 tabular-nums">{{ state.consecutive_failures }} 次</span>
+      </p>
+      {% if state.last_error %}
+      <p class="text-xs text-red-400/80 break-all">{{ state.last_error[:200] }}</p>
+      {% endif %}
+      {% endif %}
+    </div>
+    {% endif %}
+    {% if bm and bm.weight_kg is not none %}
+    <p class="mt-2 flex items-center justify-between border-t border-slate-800/70 pt-2 text-sm">
+      <span class="text-slate-400">今日体重</span>
+      <span class="tabular-nums text-slate-200">
+        {{ bm.weight_kg }} kg
+        <span class="ml-1 text-xs text-slate-500">{{ weight_source }}</span>
+      </span>
+    </p>
+    {% endif %}
+  </section>
+
+  {# ---- 最近测量流水（import_raw 留档，双监听端合并去重后的结果） ---- #}
+  <section class="card">
+    <h2 class="card-title">最近测量</h2>
+    {% if not items %}
+    <p class="text-sm text-slate-500">暂无记录</p>
+    {% else %}
+    <ul class="divide-y divide-slate-800/60">
+      {% for it in items %}
+      <li class="flex items-center gap-3 py-2.5 {{ 'rounded-lg bg-emerald-950/40 px-2 -mx-2' if it.fresh }}">
+        <div class="min-w-0 flex-1">
+          <p class="text-sm text-slate-200 tabular-nums">
+            {{ it.weight }} kg
+            {% if it.impedance %}
+            <span class="text-xs text-emerald-400/90">含体成分</span>
+            {% else %}
+            <span class="text-xs text-slate-500">仅体重</span>
+            {% endif %}
+            {% if it.fresh %}
+            <span class="badge-accent animate-pulse ml-1">新</span>
+            {% endif %}
+          </p>
+          <p class="mt-0.5 text-xs text-slate-500">秤时间 {{ it.scale_ts }} · 收到 {{ it.ago }}</p>
+        </div>
+        <span class="shrink-0 text-xs {{ 'text-emerald-400' if it.status == 'parsed'
+                     else ('text-red-400' if it.status == 'failed' else 'text-slate-500') }}">
+          {{ {'parsed': '已入库', 'failed': '失败', 'pending': '处理中', 'skipped': '已跳过'}[it.status] }}
+        </span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </section>
+
+</div>

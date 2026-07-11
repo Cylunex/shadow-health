@@ -32,13 +32,14 @@
     </label>
   </div>
 
-  {# 壳内专属：按需开秤监听 3 分钟（常驻监听关着也能称），浏览器里不显示 #}
-  <button type="button" hidden id="scale-scan-btn"
+  {# 壳内专属：按需开秤监听 3 分钟（常驻监听关着也能称），浏览器里不显示。
+     内联 display:none——chip 的 display:inline-flex 会压过 hidden 属性 #}
+  <button type="button" style="display:none" id="quick-scale-scan-btn"
           onclick="ShellBridge.startScaleScan()"
           class="chip min-h-[44px] w-full">⚖️ 开秤监听 3 分钟（上秤即记）</button>
   <script>
     if (window.ShellBridge && window.ShellBridge.startScaleScan) {
-      document.getElementById('scale-scan-btn').hidden = false;
+      document.getElementById('quick-scale-scan-btn').style.display = '';
     }
   </script>
 
