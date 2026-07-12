@@ -29,7 +29,14 @@
    （新增 test_agent_channel.py 22 个）+ stdio 实调 9 工具 18 项全过。
    剩余（NAS 侧）：supervisor [program:shealth-mcp]、Hermes/OpenClaw 注册、
    skill v2 与 cron 迁移——照 mcp_server/README 执行
-3. **P3 迁移脚本**：只交付脚本+冻结 SQL+执行手册，不实际连生产执行
+3. ~~**P3 迁移脚本**~~ ✅ **已交付（2026-07-12，脚本就绪待 NAS 执行）**：
+   scripts/migrate_personal_data.py（幂等可重跑：import_raw source='legacy'
+   留档 + parse_status 门控 + 单行 begin_nested 隔离；--dry-run 整体回滚；
+   源列名运行时解析；映射定案见计划 §3 落地记录）+ scripts/
+   freeze_personal_data.sql（REVOKE 为主、*_frozen 改名备用）+
+   docs/legacy-migration-runbook.md（NAS 一页手册：备份→dry-run→迁移→核对→冻结）。
+   验收：tests/test_migrate_legacy.py 端到端（模拟源重跑四遍幂等），127 测全绿。
+   **NAS 执行由用户照 runbook 做，本机未连生产**
 4. 环境边界：这台 Mac 的 .env 是本地临时 PG（≠生产）；真机回归与 §1.8 上线切换由用户做
 
 ## ✅ 已完成：手机离线记录 + 自动补同步（2026-07-11，阶段一~三全落地）
