@@ -65,8 +65,14 @@
    -360、2020-01/02，新测试另选
 7. 剩余（NAS 侧，用户做）：supervisor [program:shealth-mcp]、Hermes/OpenClaw
    注册、skill v2（话术规则含 update_record）、cron 迁移——照 mcp_server/README；
-   V6 候选：DietLog source 列（饮食行徽标）、餐照识别 agent 通道、训练计划操作面、
-   周/月复盘写端点、重算冻结快照端点、per-agent token、pending 审阅流
+   Agent 向 V6 候选：DietLog source 列（饮食行徽标）、餐照识别 agent 通道、
+   训练计划操作面、周/月复盘写端点、重算冻结快照端点、per-agent token、
+   pending 审阅流
+8. **产品路线图**：docs/future-roadmap.md（2026-07-12 生成）——5 路竞品/趋势
+   调研 + 本地数据利用盘点，40+ 机会点按主题分组（恢复与准备度/训练进阶/
+   饮食智能化/降摩擦/主动洞察/睡眠/数据源/长期主义）+ 淘汰清单 + 推荐 V6
+   组合（P1-P8，核心结论：采集面远大于利用面，优先在已有数据上补「基线引擎+
+   分数合成+趋势巡检+主动推送」，全程零新增外网依赖）
 
 ## ✅ 已完成：V4 优化批次（2026-07-12，六项全落地）
 
