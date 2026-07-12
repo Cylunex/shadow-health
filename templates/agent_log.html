@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block page_title %}Agent 记录{% endblock %}
+{% block content %}
+<div class="space-y-4">
+
+  <div id="agent-log-status" hx-get="{{ u('/fragments/agent-log/status') }}"
+       hx-trigger="every 5s" hx-swap="innerHTML">
+    {% include "fragments/agent_log_status.html" %}
+  </div>
+
+  <p class="text-xs text-slate-500 leading-relaxed">
+    此页每 5 秒自动刷新，展示 agent（Hermes 等）经统一写入通道记录的最近 30 条流水，
+    刚收到 90 秒内带「新」标。饮食/训练记录 agent 记错时可行内「撤销」（删的就是
+    落库那一行）；习惯打卡与身体指标不支持撤销，到对应页面改。
+  </p>
+
+</div>
+{% endblock %}

@@ -151,8 +151,10 @@ def build_context(db: Session, days: int = 30) -> str:
         if anchor:
             lines.append(f"- （{label}锚点）{anchor.log_date}: {_fmt(anchor.weight_kg)}kg")
 
-    # 围度（区间内首末对比，只列有数据的部位）
+    # 围度：月度采样趋势（每月最后一次测量，近 12 个月）——围度变化慢，
+    # 短区间首末对比几乎恒为「无变化」，月粒度才看得出趋势
     girth_lines: list[str] = []
+    girth_since = today - timedelta(days=365)
     for field, label in (
         ("waist_cm", "腰围"), ("chest_cm", "胸围"), ("hip_cm", "臀围"),
         ("thigh_cm", "大腿围"), ("arm_cm", "臂围"),
@@ -160,17 +162,36 @@ def build_context(db: Session, days: int = 30) -> str:
         col = getattr(BodyMetrics, field)
         pts = db.execute(
             select(BodyMetrics.log_date, col)
-            .where(BodyMetrics.log_date >= since, col.is_not(None))
+            .where(BodyMetrics.log_date >= girth_since, col.is_not(None))
             .order_by(BodyMetrics.log_date)
         ).all()
-        if pts:
-            seg = f"- {label}: {pts[0][0]} {_fmt(pts[0][1])}cm → {pts[-1][0]} {_fmt(pts[-1][1])}cm"
-            if len(pts) >= 2:
-                seg += f"（变化 {float(pts[-1][1]) - float(pts[0][1]):+.1f}cm）"
-            girth_lines.append(seg)
+        if not pts:
+            continue
+        by_month: dict[str, Any] = {}
+        for d, v in pts:  # 已按日期升序：同月后写胜出 = 每月最后一次
+            by_month[f"{d:%Y-%m}"] = v
+        seg = " ".join(f"{m}:{_fmt(v)}" for m, v in by_month.items())
+        change = ""
+        if len(pts) >= 2:
+            change = f"（{pts[0][0]}→{pts[-1][0]} 变化 {float(pts[-1][1]) - float(pts[0][1]):+.1f}cm）"
+        girth_lines.append(f"- {label}(cm): {seg}{change}")
     if girth_lines:
-        lines.append("\n## 围度")
+        lines.append("\n## 围度（近一年月度采样，每月最后一次测量）")
         lines.extend(girth_lines)
+
+    # 心情分（1-10 手记/agent，近 30 天全序列，紧凑单行）
+    mood_since = today - timedelta(days=29)
+    moods = db.execute(
+        select(BodyMetrics.log_date, BodyMetrics.mood_score)
+        .where(BodyMetrics.log_date >= mood_since, BodyMetrics.mood_score.is_not(None))
+        .order_by(BodyMetrics.log_date)
+    ).all()
+    if moods:
+        avg_mood = sum(m for _, m in moods) / len(moods)
+        lines.append(
+            f"\n## 心情分（1-10，近30天 {len(moods)} 天有记录，均值 {_fmt(avg_mood)}）"
+        )
+        lines.append("- " + " ".join(f"{d:%m-%d}:{m}" for d, m in moods))
 
     # 睡眠（body_metrics.sleep_hours 已含自动回填）
     sleep_days, sleep_avg = db.execute(
@@ -256,6 +277,20 @@ def build_context(db: Session, days: int = 30) -> str:
                     )
                 ).scalar_one()
                 lines.append(f"- {h.name}: {done} 天")
+            # 饮水类习惯（计数型）：光「达标天数」看不出每天喝了几杯，补近 14 天
+            # 逐日计数明细（0 = 否决/未喝，缺日 = 没记）
+            if "水" in h.name:
+                cnts = db.execute(
+                    select(HabitLog.log_date, HabitLog.done_count).where(
+                        HabitLog.habit_id == h.id,
+                        HabitLog.log_date >= today - timedelta(days=13),
+                    ).order_by(HabitLog.log_date)
+                ).all()
+                if cnts:
+                    lines.append(
+                        f"  · 近14天逐日计数（目标 {target}/天）："
+                        + " ".join(f"{d:%m-%d}:{c}" for d, c in cnts)
+                    )
 
     # 周报快照（最近 4 份）
     reviews = db.execute(

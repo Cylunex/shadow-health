@@ -41,14 +41,16 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.models import DietLog, Habit, HabitLog, ImportRaw, SyncState, WorkoutLog
+from app.models import DietLog, Habit, HabitLog, ImportRaw, WorkoutLog
 from app.routers.diet import MEALS, _parse_decimal
-from app.routers.ingest import MAX_BODY_BYTES, RAW_BATCH, _bearer_reject
+from app.routers.ingest import (
+    MAX_BODY_BYTES, RAW_BATCH, _bearer_reject, _mark_raw, _touch_sync_state,
+)
 from app.routers.metrics import _FIELD_DEFS
 from app.routers.workout import SESSION_TYPE_HINTS
 from app.services.autofill import get_or_create_day, mark_manual
@@ -254,20 +256,6 @@ def _normalize_metric(db: Session, payload: dict, d: date) -> int | None:
     return None
 
 
-def _mark(
-    db: Session, source: str, rtype: str, ext_id: str, status: str, error: str | None = None
-) -> None:
-    db.execute(
-        update(ImportRaw)
-        .where(
-            ImportRaw.source == source,
-            ImportRaw.record_type == rtype,
-            ImportRaw.external_id == ext_id,
-        )
-        .values(parse_status=status, parse_error=error, parse_version=PARSER_VERSION)
-    )
-
-
 # ---------- 端点（管线按 source 参数化：offline 本尊 + agent 薄别名） ----------
 
 async def ingest_batch(
@@ -413,23 +401,18 @@ async def ingest_batch(
                         row_id = _normalize_workout(db, pl, d, f"{source}-{e['client_id']}")
                     else:
                         row_id = _normalize_metric(db, pl, d)
-                _mark(db, source, rtype, ext_id, "parsed")
+                _mark_raw(db, source, rtype, ext_id, "parsed", version=PARSER_VERSION)
                 new_ok += 1
                 results.append({"client_id": e["client_id"], "status": "new", "row_id": row_id})
             except Exception as exc:
-                _mark(db, source, rtype, ext_id, "failed", str(exc)[:500])
+                _mark_raw(db, source, rtype, ext_id, "failed", str(exc)[:500],
+                          version=PARSER_VERSION)
                 results.append({
                     "client_id": e["client_id"], "status": "failed", "row_id": None,
                     "error": str(exc)[:200],
                 })
 
-        state = db.get(SyncState, source)
-        if state is None:
-            state = SyncState(source=source)
-            db.add(state)
-        state.last_success_at = now
-        state.last_error = None
-        state.consecutive_failures = 0
+        _touch_sync_state(db, source, True, now=now)
         db.commit()
     except Exception as exc:
         # 批级失败（DB 抖动等系统性错误）：raw 标 failed 留痕后回 503——壳端保队列
@@ -437,14 +420,9 @@ async def ingest_batch(
         db.rollback()
         try:
             for e in todo:
-                _mark(db, source, e["rtype"], e["ext_id"], "failed",
-                      f"批次归一化失败：{str(exc)[:400]}")
-            state = db.get(SyncState, source)
-            if state is None:
-                state = SyncState(source=source)
-                db.add(state)
-            state.consecutive_failures = (state.consecutive_failures or 0) + 1
-            state.last_error = str(exc)[:2000]
+                _mark_raw(db, source, e["rtype"], e["ext_id"], "failed",
+                          f"批次归一化失败：{str(exc)[:400]}", version=PARSER_VERSION)
+            _touch_sync_state(db, source, False, str(exc))
             db.commit()
         except Exception:
             db.rollback()

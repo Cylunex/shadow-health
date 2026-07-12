@@ -1,0 +1,76 @@
+{# Agent 通道状态片段：/agent-log 页每 5s 轮询整体替换（内容全服务端渲染，零 JS 状态） #}
+<div class="space-y-4">
+
+  {% if revoke_error %}
+  <p class="rounded-lg bg-red-950/50 px-3 py-2 text-sm text-red-400">{{ revoke_error }}</p>
+  {% endif %}
+
+  {# ---- 通道健康度 ---- #}
+  <section class="card">
+    <h2 class="card-title">Agent 写入通道</h2>
+    {% if state is none %}
+    <p class="text-sm text-slate-400">还没收到过任何 agent 写入——Hermes 等接入后这里会出现流水。</p>
+    {% else %}
+    <div class="space-y-1.5 text-sm">
+      <p class="flex items-center justify-between">
+        <span class="text-slate-400">最近写入成功</span>
+        <span class="tabular-nums {{ 'text-emerald-400' if state.last_success_at else 'text-slate-500' }}">
+          {{ state_ago or '—' }}
+        </span>
+      </p>
+      {% if state.consecutive_failures %}
+      <p class="flex items-center justify-between">
+        <span class="text-slate-400">连续失败</span>
+        <span class="text-red-400 tabular-nums">{{ state.consecutive_failures }} 次</span>
+      </p>
+      {% if state.last_error %}
+      <p class="text-xs text-red-400/80 break-all">{{ state.last_error[:200] }}</p>
+      {% endif %}
+      {% endif %}
+    </div>
+    {% endif %}
+  </section>
+
+  {# ---- 最近写入流水（import_raw source='agent' 留档） ---- #}
+  <section class="card">
+    <h2 class="card-title">最近写入</h2>
+    {% if not items %}
+    <p class="text-sm text-slate-500">暂无记录</p>
+    {% else %}
+    <ul class="divide-y divide-slate-800/60">
+      {% for it in items %}
+      <li class="flex items-center gap-3 py-2.5 {{ 'rounded-lg bg-emerald-950/40 px-2 -mx-2' if it.fresh }}">
+        <div class="min-w-0 flex-1">
+          <p class="text-sm text-slate-200">
+            <span class="badge mr-1">{{ it.type_label }}</span>{{ it.summary }}
+            {% if it.fresh %}
+            <span class="badge-accent animate-pulse ml-1">新</span>
+            {% endif %}
+          </p>
+          <p class="mt-0.5 text-xs text-slate-500">记录日期 {{ it.rec_date }} · 收到 {{ it.ago }}</p>
+          {% if it.error %}
+          <p class="mt-0.5 text-xs text-red-400/80 break-all">{{ it.error }}</p>
+          {% endif %}
+        </div>
+        {% if it.revoked %}
+        <span class="shrink-0 text-xs text-slate-500">已撤销</span>
+        {% else %}
+        <span class="shrink-0 text-xs {{ 'text-emerald-400' if it.status == 'parsed'
+                     else ('text-red-400' if it.status == 'failed' else 'text-slate-500') }}">
+          {{ {'parsed': '已入库', 'failed': '失败', 'pending': '处理中', 'skipped': '已跳过'}[it.status] }}
+        </span>
+        {% if it.revocable %}
+        <button type="button" class="btn-danger shrink-0 !min-h-0 !px-2.5 !py-1.5 !rounded-lg text-xs"
+                hx-post="{{ u('/agent-log/revoke') }}"
+                hx-vals='{"raw_id": {{ it.raw_id }}}'
+                hx-confirm="撤销这条{{ it.type_label }}记录？会删除已入库的那一行。"
+                hx-target="#agent-log-status" hx-swap="innerHTML">撤销</button>
+        {% endif %}
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </section>
+
+</div>

@@ -4,10 +4,46 @@
 > docs/mobile-sync.md（三星直读背景）· gateway/README.md（体脂秤双端）·
 > docs/audit-2026-07-10.md（全面审查清单，已全清、归档备忘）·
 > docs/offline-plan.md（手机离线记录方案，阶段一~三已落地，待真机回归）·
-> **docs/subpath-agent-plan.md（▶ V3 批次执行计划：/shealth 子路径 + 多 Agent MCP +
-> personal_data 迁移，2026-07-12 定稿，按 P1→P2→P3 顺序做）**。
+> docs/subpath-agent-plan.md（V3 批次执行计划：/shealth 子路径 + 多 Agent MCP +
+> personal_data 迁移——**三段已全部完成**，见下）。
+> **当前无进行中批次**：剩余事项 = 真机回归（V3/V4 壳与 APK 改动）+
+> offline-plan 阶段四（视真机手感决定）+ NAS 上线切换（§1.8 与 P3 runbook，用户做）。
 
-## ▶ 进行中：V3 批次（照 docs/subpath-agent-plan.md，任务已拆三段）
+## ✅ 已完成：V4 优化批次（2026-07-12，六项全落地）
+
+1. **A1 Agent 写入流水页**：GET /agent-log + /fragments/agent-log/status（5s 轮询，
+   照 /scale 范本；app/routers/agent_log.py）——import_raw source='agent' 最近
+   30 条流水（类型徽标 + 摘要：diet 提 meal/free_text、workout 提 session_type、
+   metric 列字段名、habit 反查名字），90s 内带「新」高亮；行内「撤销」（仅
+   diet/workout 且 parsed）复用 agent.delete_record（与 /api/agent/delete 同一实现，
+   已抽共享函数）——留档没存行 id，workout 按 external_id='agent-{client_id}' 唯一
+   索引反查、diet 按解析后全字段内容匹配（多条命中取 id 最小），撤销成功往留档行
+   blob 记 {revoked_row_id, revoked_at}（raw 不动），行没了（含 MCP 端删的）如实标
+   「已撤销」；顶部 sync_state('agent') 健康度；更多页入口「Agent 记录」。
+   验收：INGEST_TOKEN 实发 diet/workout/metric 三条 → 流水出现带「新」→ 页面撤销
+   diet（内容匹配）与 workout（ext_id 反查）均真删行 → 测试留档按 external_id 精确
+   删 + 当日 mood 还原
+2. **A2 mood_score 全链路**：指标页图表加「心情」（1-10 折线，_CHART_METRICS/
+   _COLORS/_chart_context）；日报「身体」卡显示心情（report._BODY_FIELDS）；
+   周/月快照聚合纳入 avg_mood/mood_days（review._aggregate_week +
+   report._aggregate_month），卡片「心情均分」**旧快照缺字段容错不显示**（快照
+   惰性落库不可再生，只影响未来快照）；tests/test_mood_chain.py 9 个口径锁
+3. **A3 build_context 升级**（services/llm.py）：mood 近 30 天全序列单行；饮水类
+   习惯（名字含「水」）补近 14 天逐日计数明细；围度改近一年月度采样（每月最后
+   一次测量）替代 30 天首末对比。实测总量 ~1.8k 字符，远低预算
+4. **C1** .env.example 补 OPENAI_API_KEY/BASE_URL/MODEL 注释（设置页可配，.env 回退）
+5. **C2 复用重构（行为不变）**：ingest.py 新增共享 `_mark_raw(db, source, rtype,
+   ext_id, status, error, version)` 与 `_touch_sync_state(db, source, ok, error,
+   now=)`——HC/秤/三星直读/offline 全部改调（原 _mark/_mark_miscale/_mark_sd/
+   offline._mark 与 6 处 sync_state 更新块删除）。136 测全绿零行为变化
+6. **C3 Android postJson 统一**：新增 HttpPost.java 静态助手（tag + 连接/读取超时
+   参数化），ScaleScanService(8s/8s)、OfflineStore(8s/15s)、SamsungSyncWorker.kt
+   (10s/20s) 三处改薄封装调用，各自超时不变；assembleDebug 构建通过，APK 已拷
+   static/shadow-health.apk（**待真机回归**）
+
+其他：Tailwind 重建 + SW v14；全量 pytest 136 绿（127 + 9 新增）
+
+## ✅ 已完成：V3 批次（照 docs/subpath-agent-plan.md，任务已拆三段）
 
 1. ~~**P1 子路径适配**~~ ✅ **已完成（2026-07-12，含 SnapshotCache 计划外项）**：
    X-Forwarded-Prefix 中间件（存 scope 私有键——**不是 root_path**，那会让

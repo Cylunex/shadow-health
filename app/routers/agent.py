@@ -226,6 +226,35 @@ def agent_food_search(request: Request, q: str = "", db: Session = Depends(get_d
 
 # ---------- 改口纠错删除 ----------
 
+def delete_record(db: Session, rtype: str, row_id: int) -> tuple[int, dict[str, Any]]:
+    """diet/workout 纠错删除的共享实现（Bearer 端点与 /agent-log 撤销共用）。
+
+    返回 (HTTP 状态码, 响应体)；200 时已 flush（commit 交给请求收尾）。
+    """
+    if rtype == "diet":
+        log = db.get(DietLog, row_id)
+        if log is None:
+            return 404, {"error": f"diet 记录不存在：{row_id}"}
+        summary = f"{log.log_date.isoformat()} {log.meal} {log.free_text or log.food_id}"
+        if log.kcal is not None:
+            summary += f" {_num(log.kcal):g}kcal"
+        db.delete(log)
+    else:
+        w = db.get(WorkoutLog, row_id)
+        if w is None:
+            return 404, {"error": f"workout 记录不存在：{row_id}"}
+        if w.source != "manual":
+            # 外部同步源禁删：删了会被下次同步复活，且不是 agent 记错的东西
+            return 403, {"error": f"外部来源（{w.source}）禁删，仅手动/agent 记录可删"}
+        summary = f"{w.log_date.isoformat()} {w.session_type or '训练'}"
+        if w.duration_min:
+            summary += f" {w.duration_min}分钟"
+        db.delete(w)
+
+    db.flush()
+    return 200, {"deleted": True, "type": rtype, "row_id": row_id, "summary": summary}
+
+
 @router.post("/api/agent/delete")
 async def agent_delete(request: Request, db: Session = Depends(get_db)) -> Response:
     reject = _bearer_reject(request)
@@ -247,28 +276,5 @@ async def agent_delete(request: Request, db: Session = Depends(get_db)) -> Respo
     except (TypeError, ValueError):
         return JSONResponse({"error": "row_id 不是合法整数"}, status_code=400)
 
-    if rtype == "diet":
-        log = db.get(DietLog, row_id)
-        if log is None:
-            return JSONResponse({"error": f"diet 记录不存在：{row_id}"}, status_code=404)
-        summary = f"{log.log_date.isoformat()} {log.meal} {log.free_text or log.food_id}"
-        if log.kcal is not None:
-            summary += f" {_num(log.kcal):g}kcal"
-        db.delete(log)
-    else:
-        w = db.get(WorkoutLog, row_id)
-        if w is None:
-            return JSONResponse({"error": f"workout 记录不存在：{row_id}"}, status_code=404)
-        if w.source != "manual":
-            # 外部同步源禁删：删了会被下次同步复活，且不是 agent 记错的东西
-            return JSONResponse(
-                {"error": f"外部来源（{w.source}）禁删，仅手动/agent 记录可删"},
-                status_code=403,
-            )
-        summary = f"{w.log_date.isoformat()} {w.session_type or '训练'}"
-        if w.duration_min:
-            summary += f" {w.duration_min}分钟"
-        db.delete(w)
-
-    db.flush()
-    return JSONResponse({"deleted": True, "type": rtype, "row_id": row_id, "summary": summary})
+    status, body = delete_record(db, rtype, row_id)
+    return JSONResponse(body, status_code=status)

@@ -162,6 +162,15 @@ def _aggregate_week(db: Session, week_start: date) -> dict[str, Any]:
     ).one()
     avg_steps = round(float(steps_sum) / step_days) if step_days and steps_sum is not None else None
 
+    # 心情：周内均分（mood_score 1~10，表单/agent 手记；无记录为 None）
+    mood_days, mood_sum = db.execute(
+        select(func.count(), func.avg(BodyMetrics.mood_score)).where(
+            BodyMetrics.log_date.between(week_start, week_end),
+            BodyMetrics.mood_score.is_not(None),
+        )
+    ).one()
+    avg_mood = round(float(mood_sum), 1) if mood_days and mood_sum is not None else None
+
     # 周有氧目标（app_settings，值可能为 JSON null）
     setting = db.get(AppSetting, "target_weekly_cardio_min")
     try:
@@ -190,6 +199,8 @@ def _aggregate_week(db: Session, week_start: date) -> dict[str, Any]:
         "habit_count": len(habits),
         "avg_steps": avg_steps,
         "step_days": step_days,
+        "avg_mood": avg_mood,
+        "mood_days": mood_days,
     }
 
 
@@ -324,6 +335,13 @@ def _snapshot_cards(snap: dict[str, Any]) -> list[dict[str, Any]]:
         "value": f"{g('habit_rate')}%" if g("habit_rate") is not None else "—",
         "sub": f"{g('habit_count') or 0} 项 daily 习惯 × 7 天",
     })
+    # 旧快照没有 avg_mood 字段：缺失不显示（快照惰性落库不可再生，只影响未来快照）
+    if g("avg_mood") is not None:
+        cards.append({
+            "label": "心情均分",
+            "value": f"{g('avg_mood')}/10",
+            "sub": f"{g('mood_days') or 0} 天有记录",
+        })
     cards.append({
         "label": "周均步数",
         "value": f"{g('avg_steps'):,}" if g("avg_steps") is not None else "—",

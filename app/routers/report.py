@@ -80,6 +80,7 @@ _BODY_FIELDS = (
     ("resting_hr", "静息心率", "bpm"),
     ("spo2_pct", "血氧", "%"),
     ("energy_level", "精力", "/5"),
+    ("mood_score", "心情", "/10"),
 )
 
 
@@ -425,6 +426,14 @@ def _aggregate_month(db: Session, ms: date) -> dict[str, Any]:
         )
     ).scalar_one()
 
+    # 心情：月内均分（口径与周报快照一致）
+    mood_days, mood_sum = db.execute(
+        select(func.count(), func.avg(BodyMetrics.mood_score)).where(
+            BodyMetrics.log_date.between(ms, me), BodyMetrics.mood_score.is_not(None)
+        )
+    ).one()
+    avg_mood = round(float(mood_sum), 1) if mood_days and mood_sum is not None else None
+
     return {
         "month_start": ms.isoformat(),
         "month_end": me.isoformat(),
@@ -457,6 +466,8 @@ def _aggregate_month(db: Session, ms: date) -> dict[str, Any]:
         "step_days": step_days,
         "steps_ok_days": steps_ok_days,
         "target_steps": target_steps,
+        "avg_mood": avg_mood,
+        "mood_days": mood_days,
     }
 
 
@@ -614,6 +625,13 @@ def _month_cards(snap: dict[str, Any]) -> list[dict[str, Any]]:
         "value": f"{g('habit_rate')}%" if g("habit_rate") is not None else "—",
         "sub": f"{g('habit_count') or 0} 项 daily 习惯 × {g('days_in_month')} 天",
     })
+    # 旧快照没有 avg_mood 字段：缺失不显示（快照惰性落库不可再生，只影响未来快照）
+    if g("avg_mood") is not None:
+        cards.append({
+            "label": "心情均分",
+            "value": f"{g('avg_mood')}/10",
+            "sub": f"{g('mood_days') or 0} 天有记录",
+        })
 
     diet_days = g("diet_days") or 0
     macro_parts = [

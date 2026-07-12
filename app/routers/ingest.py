@@ -384,17 +384,45 @@ def _normalize_exercise(db: Session, rec: dict, ext_id: str) -> None:
     ))
 
 
-def _mark(db: Session, record_type: str, ext_id: str, status: str, error: str | None = None) -> None:
-    """更新 import_raw 行的解析状态。"""
+def _mark_raw(
+    db: Session,
+    source: str,
+    record_type: str,
+    ext_id: str,
+    status: str,
+    error: str | None = None,
+    version: int = PARSER_VERSION,
+) -> None:
+    """import_raw 行解析状态统一更新（HC/秤/三星直读/offline/agent 各通道共享）。"""
     db.execute(
         update(ImportRaw)
         .where(
-            ImportRaw.source == SOURCE,
+            ImportRaw.source == source,
             ImportRaw.record_type == record_type,
             ImportRaw.external_id == ext_id,
         )
-        .values(parse_status=status, parse_error=error, parse_version=PARSER_VERSION)
+        .values(parse_status=status, parse_error=error, parse_version=version)
     )
+
+
+def _touch_sync_state(
+    db: Session, source: str, ok: bool, error: str | None = None,
+    *, now: datetime | None = None,
+) -> None:
+    """sync_state 通道状态统一更新（各通道共享）：成功记 last_success_at 并清失败
+    计数；失败累加 consecutive_failures 记 last_error。不触碰 watermark；
+    不 commit（跟随调用方事务边界）。"""
+    state = db.get(SyncState, source)
+    if state is None:
+        state = SyncState(source=source)
+        db.add(state)
+    if ok:
+        state.last_success_at = now if now is not None else now_local()
+        state.last_error = None
+        state.consecutive_failures = 0
+    else:
+        state.consecutive_failures = (state.consecutive_failures or 0) + 1
+        state.last_error = error[:2000] if error else None
 
 
 # ---------- 端点 ----------
@@ -501,7 +529,7 @@ async def ingest_health_connect(request: Request, db: Session = Depends(get_db))
             rec, rtype, ext_id = e["rec"], e["rtype"], e["ext_id"]
             rec_ts = _record_time(rec)
             if watermark is not None and rec_ts is not None and rec_ts <= watermark:
-                _mark(db, rtype, ext_id, "skipped")  # 水位线以内：zip 历史已覆盖
+                _mark_raw(db, SOURCE, rtype, ext_id, "skipped")  # 水位线以内：zip 历史已覆盖
                 continue
             if rtype not in ("steps", "weight", "sleep", "exercise"):
                 continue  # heart_rate / unknown：留档 pending，供后续解析器重放
@@ -519,9 +547,9 @@ async def ingest_health_connect(request: Request, db: Session = Depends(get_db))
                         sleep_dates.add(_normalize_sleep(db, rec, ext_id))
                     else:
                         _normalize_exercise(db, rec, ext_id)
-                _mark(db, rtype, ext_id, "parsed")
+                _mark_raw(db, SOURCE, rtype, ext_id, "parsed")
             except Exception as exc:
-                _mark(db, rtype, ext_id, "failed", str(exc)[:500])
+                _mark_raw(db, SOURCE, rtype, ext_id, "failed", str(exc)[:500])
 
         # steps：按日增量累加进 daily_activity（区间记录求和）。
         # 该日已被三星直读接管（SET 当日总数）时不累加，防双通道双计。
@@ -546,26 +574,15 @@ async def ingest_health_connect(request: Request, db: Session = Depends(get_db))
                 autofill_fields(db, d, SOURCE, {"sleep_hours": round(total / 60.0, 1)})
 
         # 6. 成功：sync_state 记 last_success_at、清零失败计数（不触碰 watermark）
-        state = db.get(SyncState, SOURCE)
-        if state is None:
-            state = SyncState(source=SOURCE)
-            db.add(state)
-        state.last_success_at = now
-        state.last_error = None
-        state.consecutive_failures = 0
+        _touch_sync_state(db, SOURCE, True, now=now)
         db.commit()
     except Exception as exc:  # 归一化整体失败：本批 raw 标 failed（导入中心可见），只记状态
         db.rollback()
         try:
             # 标记本批新行为 failed：重发因 xmax 门控不会重新归一化，必须留下可见痕迹
             for rtype, ext_id in new_keys:
-                _mark(db, rtype, ext_id, "failed", f"批次归一化失败：{str(exc)[:400]}")
-            state = db.get(SyncState, SOURCE)
-            if state is None:
-                state = SyncState(source=SOURCE)
-                db.add(state)
-            state.consecutive_failures = (state.consecutive_failures or 0) + 1
-            state.last_error = str(exc)[:2000]
+                _mark_raw(db, SOURCE, rtype, ext_id, "failed", f"批次归一化失败：{str(exc)[:400]}")
+            _touch_sync_state(db, SOURCE, False, str(exc))
             db.commit()
         except Exception:
             db.rollback()
@@ -705,44 +722,22 @@ async def ingest_miscale(request: Request, db: Session = Depends(get_db)) -> Res
             values = compute_body_metrics(m["weight"], m["impedance"], sex, age, height_cm)
             autofill_fields(db, d, MISCALE_SOURCE, values)
         for ext_id in new_ids:
-            _mark_miscale(db, ext_id, "parsed")
+            _mark_raw(db, MISCALE_SOURCE, "measurement", ext_id, "parsed")
 
-        state = db.get(SyncState, MISCALE_SOURCE)
-        if state is None:
-            state = SyncState(source=MISCALE_SOURCE)
-            db.add(state)
-        state.last_success_at = now
-        state.last_error = None
-        state.consecutive_failures = 0
+        _touch_sync_state(db, MISCALE_SOURCE, True, now=now)
         db.commit()
     except Exception as exc:  # 批次失败：raw 标 failed 留痕（重发不会重新归一化）；绝不 5xx
         db.rollback()
         try:
             for ext_id in new_ids:
-                _mark_miscale(db, ext_id, "failed", f"批次归一化失败：{str(exc)[:400]}")
-            state = db.get(SyncState, MISCALE_SOURCE)
-            if state is None:
-                state = SyncState(source=MISCALE_SOURCE)
-                db.add(state)
-            state.consecutive_failures = (state.consecutive_failures or 0) + 1
-            state.last_error = str(exc)[:2000]
+                _mark_raw(db, MISCALE_SOURCE, "measurement", ext_id, "failed",
+                          f"批次归一化失败：{str(exc)[:400]}")
+            _touch_sync_state(db, MISCALE_SOURCE, False, str(exc))
             db.commit()
         except Exception:
             db.rollback()
 
     return JSONResponse({"received": received, "new": len(new_ids)})
-
-
-def _mark_miscale(db: Session, ext_id: str, status: str, error: str | None = None) -> None:
-    db.execute(
-        update(ImportRaw)
-        .where(
-            ImportRaw.source == MISCALE_SOURCE,
-            ImportRaw.record_type == "measurement",
-            ImportRaw.external_id == ext_id,
-        )
-        .values(parse_status=status, parse_error=error, parse_version=PARSER_VERSION)
-    )
 
 
 # ---------- 三星健康 Data SDK 直读通道（docs/mobile-sync.md） ----------
@@ -940,17 +935,6 @@ async def ingest_samsung_direct(request: Request, db: Session = Depends(get_db))
                 new_keys.add((rtype, ext_id))
     db.commit()
 
-    def _mark_sd(rtype: str, ext_id: str, status: str, error: str | None = None) -> None:
-        db.execute(
-            update(ImportRaw)
-            .where(
-                ImportRaw.source == SAMSUNG_DIRECT_SOURCE,
-                ImportRaw.record_type == rtype,
-                ImportRaw.external_id == ext_id,
-            )
-            .values(parse_status=status, parse_error=error, parse_version=PARSER_VERSION)
-        )
-
     try:
         state = db.get(SyncState, SAMSUNG_DIRECT_SOURCE)
         watermark = state.watermark if state is not None else None
@@ -967,10 +951,10 @@ async def ingest_samsung_direct(request: Request, db: Session = Depends(get_db))
                 # 时刻）之后的步数/心率增量会被冻结到次日
                 if rtype == "daily":
                     if e["rec_ts"].astimezone(LOCAL_TZ).date() < watermark.astimezone(LOCAL_TZ).date():
-                        _mark_sd(rtype, ext_id, "skipped")
+                        _mark_raw(db, SAMSUNG_DIRECT_SOURCE, rtype, ext_id, "skipped")
                         continue
                 elif e["rec_ts"] <= watermark:
-                    _mark_sd(rtype, ext_id, "skipped")
+                    _mark_raw(db, SAMSUNG_DIRECT_SOURCE, rtype, ext_id, "skipped")
                     continue
             try:
                 with db.begin_nested():
@@ -1044,9 +1028,9 @@ async def ingest_samsung_direct(request: Request, db: Session = Depends(get_db))
                         prev = body_by_day.get(d)
                         if prev is None or ts >= prev[0]:
                             body_by_day[d] = (ts, data)
-                _mark_sd(rtype, ext_id, "parsed")
+                _mark_raw(db, SAMSUNG_DIRECT_SOURCE, rtype, ext_id, "parsed")
             except Exception as exc:
-                _mark_sd(rtype, ext_id, "failed", str(exc)[:500])
+                _mark_raw(db, SAMSUNG_DIRECT_SOURCE, rtype, ext_id, "failed", str(exc)[:500])
 
         for d in sorted(body_by_day):
             _, data = body_by_day[d]
@@ -1058,24 +1042,15 @@ async def ingest_samsung_direct(request: Request, db: Session = Depends(get_db))
             if total > 0:
                 autofill_fields(db, d, SAMSUNG_DIRECT_SOURCE, {"sleep_hours": round(total / 60.0, 1)})
 
-        if state is None:
-            state = SyncState(source=SAMSUNG_DIRECT_SOURCE)
-            db.add(state)
-        state.last_success_at = now
-        state.last_error = None
-        state.consecutive_failures = 0
+        _touch_sync_state(db, SAMSUNG_DIRECT_SOURCE, True, now=now)
         db.commit()
     except Exception as exc:  # 批次失败：raw 标 failed 留痕（重发不会重新归一化）
         db.rollback()
         try:
             for rtype, ext_id in new_keys:
-                _mark_sd(rtype, ext_id, "failed", f"批次归一化失败：{str(exc)[:400]}")
-            state = db.get(SyncState, SAMSUNG_DIRECT_SOURCE)
-            if state is None:
-                state = SyncState(source=SAMSUNG_DIRECT_SOURCE)
-                db.add(state)
-            state.consecutive_failures = (state.consecutive_failures or 0) + 1
-            state.last_error = str(exc)[:2000]
+                _mark_raw(db, SAMSUNG_DIRECT_SOURCE, rtype, ext_id, "failed",
+                          f"批次归一化失败：{str(exc)[:400]}")
+            _touch_sync_state(db, SAMSUNG_DIRECT_SOURCE, False, str(exc))
             db.commit()
         except Exception:
             db.rollback()

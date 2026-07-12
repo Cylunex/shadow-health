@@ -79,6 +79,7 @@ _CHART_METRICS: list[tuple[str, str]] = [
     ("steps", "步数"),
     ("running", "跑步"),
     ("girth", "围度"),
+    ("mood", "心情"),
 ]
 # 跑步图的 session_type 命中词（跑步/慢跑/running…；快走等走路类不算）
 _RUN_KEYWORDS = ("跑", "run")
@@ -92,6 +93,7 @@ _COLORS = {
     "sleep": "#a78bfa",
     "steps": "#34d399",
     "waist": "#38bdf8",
+    "mood": "#f472b6",
 }
 # 睡眠分期堆叠色：(字段, 图例, 颜色)
 _STAGE_DEFS = [
@@ -412,6 +414,7 @@ def _chart_context(db: Session, metric: str, days: int) -> dict[str, Any]:
         field, label = {
             "weight": ("weight_kg", "体重 (kg)"),
             "body_fat": ("body_fat_pct", "体脂率 (%)"),
+            "mood": ("mood_score", "心情分 (1-10)"),
         }[metric]
         datasets.append(_line_dataset(label, _bm_field_map(db, field, start, today), day_list, _COLORS[metric]))
 

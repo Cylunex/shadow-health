@@ -19,9 +19,6 @@ import com.samsung.android.sdk.health.data.request.LocalTimeGroup
 import com.samsung.android.sdk.health.data.request.LocalTimeGroupUnit
 import org.json.JSONArray
 import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
-import java.nio.charset.StandardCharsets
 import java.time.Duration
 import java.time.LocalDate
 
@@ -247,29 +244,9 @@ class SamsungSyncWorker(ctx: Context, params: WorkerParameters) : CoroutineWorke
             .put("body", body)
     }
 
-    private fun postJson(url: String, token: String, json: String): Boolean {
-        var conn: HttpURLConnection? = null
-        return try {
-            conn = URL(url).openConnection() as HttpURLConnection
-            conn.requestMethod = "POST"
-            conn.connectTimeout = 10_000
-            conn.readTimeout = 20_000
-            conn.doOutput = true
-            conn.setRequestProperty("Authorization", "Bearer $token")
-            conn.setRequestProperty("Content-Type", "application/json")
-            val bytes = json.toByteArray(StandardCharsets.UTF_8)
-            conn.setFixedLengthStreamingMode(bytes.size)
-            conn.outputStream.use { it.write(bytes) }
-            val code = conn.responseCode
-            Log.i(TAG, "POST $url -> $code")
-            code in 200..299
-        } catch (e: Exception) {
-            Log.w(TAG, "POST 失败: $e")
-            false
-        } finally {
-            conn?.disconnect()
-        }
-    }
+    // 整包（步数/睡眠/训练/体成分数天）体积大，超时给最宽
+    private fun postJson(url: String, token: String, json: String): Boolean =
+        HttpPost.postJson(TAG, url, token, json, 10_000, 20_000)
 
     companion object {
         private const val TAG = "SamsungSyncWorker"

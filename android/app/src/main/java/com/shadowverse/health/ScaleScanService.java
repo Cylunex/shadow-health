@@ -29,10 +29,6 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-import java.io.OutputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.HashMap;
@@ -437,31 +433,8 @@ public class ScaleScanService extends Service {
     }
 
     private static boolean postJson(String url, String token, String json) {
-        HttpURLConnection conn = null;
-        try {
-            conn = (HttpURLConnection) new URL(url).openConnection();
-            conn.setRequestMethod("POST");
-            conn.setConnectTimeout(8000);
-            conn.setReadTimeout(8000);
-            conn.setDoOutput(true);
-            conn.setRequestProperty("Authorization", "Bearer " + token);
-            conn.setRequestProperty("Content-Type", "application/json");
-            byte[] body = json.getBytes(StandardCharsets.UTF_8);
-            conn.setFixedLengthStreamingMode(body.length);
-            try (OutputStream out = conn.getOutputStream()) {
-                out.write(body);
-            }
-            int code = conn.getResponseCode();
-            Log.i(TAG, "POST " + url + " -> " + code);
-            return code >= 200 && code < 300;
-        } catch (Exception e) {
-            Log.w(TAG, "POST failed: " + e);
-            return false;
-        } finally {
-            if (conn != null) {
-                conn.disconnect();
-            }
-        }
+        // 读超时短：上报失败要尽快转入本地队列，不能吊着 IO 线程
+        return HttpPost.postJson(TAG, url, token, json, 8000, 8000);
     }
 
     // ---- 生命周期 -------------------------------------------------------------

@@ -172,8 +172,8 @@ def logout(request: Request):
 
 def _register_routers() -> None:
     from app.routers import (
-        agent, ai, diet, habits, ingest, metrics, offline, reminders, report, review,
-        scale, settings, today, workout,
+        agent, agent_log, ai, diet, habits, ingest, metrics, offline, reminders,
+        report, review, scale, settings, today, workout,
     )
 
     app.include_router(today.router)
@@ -188,6 +188,7 @@ def _register_routers() -> None:
     app.include_router(ingest.router)
     app.include_router(offline.router)
     app.include_router(agent.router)
+    app.include_router(agent_log.router)
     app.include_router(scale.router)
     app.include_router(reminders.router)
 
