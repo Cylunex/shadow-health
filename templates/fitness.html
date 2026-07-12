@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+{% block page_title %}体测{% endblock %}
+{% block content %}
+<div class="space-y-4">
+
+  {% if retest_due %}
+  <div class="rounded-xl border border-amber-800/50 bg-amber-950/30 px-3.5 py-3 text-sm text-amber-300">
+    距上次体测已 {{ weeks_since }} 周（建议 4-8 周复测一次），今天测一组？
+  </div>
+  {% endif %}
+
+  {# ---- 记录表单：四项协议，留空的不保存（同日重测覆盖） ---- #}
+  <section class="card">
+    <h2 class="card-title">记一次体测</h2>
+    {% if saved %}
+    <div class="mb-3 rounded-xl bg-emerald-600/15 border border-emerald-600/40 text-emerald-400 text-sm px-3 py-2 fade-in">已保存</div>
+    {% endif %}
+    {% if error %}
+    <div class="mb-3 rounded-xl bg-red-600/15 border border-red-600/40 text-red-400 text-sm px-3 py-2 fade-in">{{ error }}</div>
+    {% endif %}
+    <form method="post" action="{{ u('/fitness') }}" class="space-y-3">
+      <label class="block">
+        <span class="field-label">日期</span>
+        <input type="date" name="test_date" value="{{ today }}" max="{{ today }}" class="field tabular-nums">
+      </label>
+      <div class="grid grid-cols-2 gap-3">
+        {% for key, name, unit, anchor, lo, hi in items %}
+        <label class="block">
+          <span class="field-label">{{ name }} ({{ unit }})</span>
+          <input type="text" inputmode="decimal" name="{{ key }}" placeholder="留空不记"
+                 autocomplete="off" class="field tabular-nums">
+        </label>
+        {% endfor %}
+      </div>
+      <button type="submit" class="btn-primary w-full">保存体测</button>
+      <p class="text-xs text-slate-600 leading-relaxed">
+        协议：俯卧撑做到力竭计次 · 平板撑到姿势垮掉计秒 · 坐位体前屈指尖过脚尖为正 ·
+        心率恢复 = 运动结束即刻心率 − 1 分钟后心率（手表读数）。
+      </p>
+    </form>
+  </section>
+
+  {# ---- 最新结果 + 分档 ---- #}
+  {% if latest_d %}
+  <section class="card">
+    <h2 class="card-title">最新体测（{{ latest_d }}）</h2>
+    <ul class="space-y-2">
+      {% for r in rows %}
+      <li class="flex items-center justify-between gap-3 rounded-xl border border-slate-800/70 bg-slate-900/60 px-3.5 py-2.5">
+        <div class="min-w-0">
+          <div class="text-sm text-slate-200">{{ r.name }}</div>
+          <div class="mt-0.5 text-xs text-slate-500 tabular-nums">
+            {% if r.latest is not none %}{{ r.latest | round(1) }} {{ r.unit }}
+              {# 四项协议全部「越大越好」，进步统一绿 #}
+              {% if r.delta is not none %}<span class="{{ 'text-emerald-400' if r.delta > 0 else 'text-slate-500' }}">（较上次 {{ '%+.1f' | format(r.delta) }}）</span>{% endif %}
+            {% else %}未测{% endif %}
+          </div>
+        </div>
+        {% if r.score is not none %}
+        <span class="shrink-0 text-xs tabular-nums {{ 'text-emerald-400' if r.score >= 70 else ('text-sky-400' if r.score >= 40 else 'text-amber-400') }}">
+          {{ r.score }} 分 · {{ r.level }}
+        </span>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+
+  {# ---- 能力雷达（最新 vs 上次） ---- #}
+  {% if radar_json %}
+  <section class="card">
+    <h2 class="card-title">能力雷达</h2>
+    <div class="relative h-64"><canvas id="fitness-radar"></canvas></div>
+    <script type="application/json" id="fitness-radar-data">{{ radar_json | safe }}</script>
+    <script>
+    (function () {
+      if (!window.__ensureChartJs) {
+        window.__ensureChartJs = function (cb) {
+          if (window.Chart) { cb(); return; }
+          if (window.__chartJsQueue) { window.__chartJsQueue.push(cb); return; }
+          window.__chartJsQueue = [cb];
+          var s1 = document.createElement("script");
+          s1.src = "{{ u('/static/vendor/chart.umd.min.js') }}";
+          s1.onload = function () {
+            var q = window.__chartJsQueue || []; window.__chartJsQueue = null;
+            q.forEach(function (f) { f(); });
+          };
+          document.head.appendChild(s1);
+        };
+      }
+      var el = document.getElementById("fitness-radar-data");
+      if (!el) return;
+      var p = JSON.parse(el.textContent);
+      setTimeout(function () {
+        window.__ensureChartJs(function () {
+          var colors = ["#34d399", "#64748b"];
+          new Chart(document.getElementById("fitness-radar"), {
+            type: "radar",
+            data: {
+              labels: p.labels,
+              datasets: p.datasets.map(function (d, i) {
+                return {
+                  label: d.label, data: d.data,
+                  borderColor: colors[i], pointBackgroundColor: colors[i],
+                  backgroundColor: i === 0 ? "rgba(52,211,153,0.15)" : "rgba(100,116,139,0.08)",
+                };
+              }),
+            },
+            options: {
+              responsive: true, maintainAspectRatio: false,
+              scales: { r: { min: 0, max: 100, ticks: { display: false },
+                grid: { color: "rgba(51,65,85,0.5)" }, angleLines: { color: "rgba(51,65,85,0.5)" },
+                pointLabels: { color: "#94a3b8", font: { size: 11 } } } },
+              plugins: { legend: { labels: { color: "#94a3b8", boxWidth: 12 } } },
+            },
+          });
+        });
+      }, 60);
+    })();
+    </script>
+  </section>
+  {% endif %}
+
+  {# ---- 历史 ---- #}
+  {% if history_dates | length > 1 %}
+  <section class="card">
+    <h2 class="card-title">历史</h2>
+    <div class="overflow-x-auto -mx-4 px-4">
+      <table class="w-full text-xs tabular-nums">
+        <thead>
+          <tr class="text-slate-500 border-b border-slate-800">
+            <th class="py-2 pr-3 text-left font-normal">日期</th>
+            {% for key, name, unit, anchor, lo, hi in items %}
+            <th class="py-2 px-3 text-right font-normal">{{ name }}</th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for d in history_dates %}
+          <tr class="odd:bg-slate-900/40 border-b border-slate-800/60 last:border-0">
+            <td class="py-2 pr-3 text-slate-300">{{ d.strftime('%y-%m-%d') }}</td>
+            {% for key, name, unit, anchor, lo, hi in items %}
+            <td class="py-2 px-3 text-right text-slate-300">
+              {% if by_date[d].get(key) is not none %}{{ by_date[d][key] | round(1) }}{% else %}<span class="text-slate-700">—</span>{% endif %}
+            </td>
+            {% endfor %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
+  {% endif %}
+
+</div>
+{% endblock %}

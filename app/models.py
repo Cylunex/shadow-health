@@ -127,6 +127,61 @@ class Food(Base):
     carb_g: Mapped[float | None] = mapped_column(Numeric(5, 1))
     tcm_tags: Mapped[list[str] | None] = mapped_column(ARRAY(Text))
     notes: Mapped[str | None] = mapped_column(Text)
+    barcode: Mapped[str | None] = mapped_column(Text, unique=True)  # V7 扫码直达
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=_tz_now
+    )
+
+
+class OffProduct(Base):
+    """Open Food Facts 中国区子集本地缓存（V7 D3）：条码 → 每 100g 营养。
+    scripts/import_off_products.py 导入；扫码未命中 foods 时从这里一键建档。"""
+    __tablename__ = "off_products"
+    __table_args__ = ({"schema": SCHEMA},)
+
+    barcode: Mapped[str] = mapped_column(Text, primary_key=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    brand: Mapped[str | None] = mapped_column(Text)
+    kcal_per_100g: Mapped[float | None] = mapped_column(Numeric(7, 1))
+    protein_g: Mapped[float | None] = mapped_column(Numeric(6, 1))
+    fat_g: Mapped[float | None] = mapped_column(Numeric(6, 1))
+    carb_g: Mapped[float | None] = mapped_column(Numeric(6, 1))
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=_tz_now
+    )
+
+
+class FitnessTest(Base):
+    """周期体测记录（V7 B5）：同日同项目唯一（重测覆盖）。"""
+    __tablename__ = "fitness_tests"
+    __table_args__ = (
+        UniqueConstraint("test_date", "item", name="ux_fitness_tests_day_item"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, Identity(always=True), primary_key=True)
+    test_date: Mapped[date] = mapped_column(Date, nullable=False)
+    item: Mapped[str] = mapped_column(Text, nullable=False)
+    value: Mapped[float] = mapped_column(Numeric(7, 1), nullable=False)
+
+
+class LabResult(Base):
+    """体检化验档案（V7 G6）：结构化指标多年趋势；(report_date, item_key) 唯一。"""
+    __tablename__ = "lab_results"
+    __table_args__ = (
+        UniqueConstraint("report_date", "item_key", name="ux_lab_results_day_item"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, Identity(always=True), primary_key=True)
+    report_date: Mapped[date] = mapped_column(Date, nullable=False)
+    item_key: Mapped[str] = mapped_column(Text, nullable=False)
+    item_label: Mapped[str] = mapped_column(Text, nullable=False)
+    value: Mapped[float] = mapped_column(Numeric(10, 3), nullable=False)
+    unit: Mapped[str | None] = mapped_column(Text)
+    ref_low: Mapped[float | None] = mapped_column(Numeric(10, 3))
+    ref_high: Mapped[float | None] = mapped_column(Numeric(10, 3))
+    notes: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=_tz_now
     )

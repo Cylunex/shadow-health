@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block page_title %}化验档案{% endblock %}
+{% block content %}
+<div class="space-y-4">
+
+  {% if saved %}
+  <div class="rounded-xl bg-emerald-600/15 border border-emerald-600/40 text-emerald-400 text-sm px-3 py-2 fade-in">已保存</div>
+  {% endif %}
+  {% if error %}
+  <div class="rounded-xl bg-red-600/15 border border-red-600/40 text-red-400 text-sm px-3 py-2 fade-in">{{ error }}</div>
+  {% endif %}
+
+  {# ---- AI 预览确认（拍照解析后出现） ---- #}
+  {% if parsed %}
+  <section class="card border-emerald-900/50">
+    <h2 class="card-title">识别结果确认</h2>
+    <form method="post" action="{{ u('/labs/bulk') }}" class="space-y-2">
+      <label class="block">
+        <span class="field-label">报告日期</span>
+        <input type="date" name="report_date" value="{{ parsed.report_date }}" class="field tabular-nums">
+      </label>
+      <div class="space-y-1.5">
+        {% for it in parsed['items'] %}
+        <div class="grid grid-cols-[1fr_5rem_4rem_auto] items-center gap-1.5 text-xs">
+          <input type="text" name="label_{{ loop.index0 }}" value="{{ it.label }}" class="field !min-h-0 !py-1.5">
+          <input type="text" inputmode="decimal" name="value_{{ loop.index0 }}" value="{{ it.value }}" class="field !min-h-0 !py-1.5 tabular-nums">
+          <input type="text" name="unit_{{ loop.index0 }}" value="{{ it.unit or '' }}" class="field !min-h-0 !py-1.5">
+          <label class="flex items-center gap-1 text-slate-500"><input type="checkbox" name="skip_{{ loop.index0 }}" value="1">跳过</label>
+          <input type="hidden" name="ref_low_{{ loop.index0 }}" value="{{ it.ref_low if it.ref_low is not none else '' }}">
+          <input type="hidden" name="ref_high_{{ loop.index0 }}" value="{{ it.ref_high if it.ref_high is not none else '' }}">
+        </div>
+        {% endfor %}
+      </div>
+      <button type="submit" class="btn-primary w-full">确认入库</button>
+      <p class="text-xs text-slate-600">核对数值后再入库；识别有误直接改，不想要的勾「跳过」。</p>
+    </form>
+  </section>
+  {% endif %}
+
+  {# ---- 录入：手动 + AI 拍照 ---- #}
+  <section class="card">
+    <div class="mb-3 flex items-center justify-between">
+      <h2 class="card-title mb-0">录一条化验值</h2>
+      {% if ai_on %}
+      <form method="post" action="{{ u('/labs/photo') }}" enctype="multipart/form-data"
+            onchange="if (this.file.files.length) this.submit()" class="shrink-0">
+        <label class="chip text-xs text-emerald-400 cursor-pointer">
+          ✨ 拍化验单识别
+          <input type="file" name="file" accept="image/*" class="hidden">
+        </label>
+      </form>
+      {% endif %}
+    </div>
+    <form method="post" action="{{ u('/labs') }}" x-data="{ item: 'total_chol' }" class="space-y-3">
+      <div class="grid grid-cols-2 gap-3">
+        <label class="block">
+          <span class="field-label">日期</span>
+          <input type="date" name="report_date" value="{{ today }}" max="{{ today }}" class="field tabular-nums">
+        </label>
+        <label class="block">
+          <span class="field-label">项目</span>
+          <select name="item" x-model="item" class="field">
+            {% for key, label, unit, lo, hi in common_items %}
+            <option value="{{ key }}">{{ label }}</option>
+            {% endfor %}
+            <option value="custom">自定义…</option>
+          </select>
+        </label>
+        <label class="block" x-show="item === 'custom'" style="display: none">
+          <span class="field-label">自定义项目名</span>
+          <input type="text" name="custom_label" class="field">
+        </label>
+        <label class="block">
+          <span class="field-label">数值</span>
+          <input type="text" inputmode="decimal" name="value" autocomplete="off" class="field tabular-nums">
+        </label>
+        <label class="block">
+          <span class="field-label">单位（可空=默认）</span>
+          <input type="text" name="unit" class="field">
+        </label>
+        <label class="block">
+          <span class="field-label">参考下限（可空）</span>
+          <input type="text" inputmode="decimal" name="ref_low" class="field tabular-nums">
+        </label>
+        <label class="block">
+          <span class="field-label">参考上限（可空）</span>
+          <input type="text" inputmode="decimal" name="ref_high" class="field tabular-nums">
+        </label>
+      </div>
+      <button type="submit" class="btn-primary w-full">保存</button>
+    </form>
+  </section>
+
+  {# ---- 档案：按项目分组的多年序列 ---- #}
+  {% if groups %}
+  <section class="card">
+    <h2 class="card-title">档案（{{ groups | length }} 项）</h2>
+    <div class="space-y-3">
+      {% for key, g in groups.items() %}
+      <div class="rounded-xl border border-slate-800/70 bg-slate-900/60 px-3.5 py-3">
+        <div class="flex items-baseline justify-between gap-2">
+          <span class="text-sm text-slate-200">{{ g.label }}</span>
+          <span class="text-xs text-slate-500">{{ g.unit or '' }}</span>
+        </div>
+        <div class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs tabular-nums">
+          {% for p in g.points %}
+          <span class="inline-flex items-center gap-1 {{ 'text-amber-400' if p.flag else 'text-slate-300' }}"
+                title="{% if p.ref_low is not none or p.ref_high is not none %}参考 {{ p.ref_low if p.ref_low is not none else '' }}–{{ p.ref_high if p.ref_high is not none else '' }}{% endif %}">
+            <span class="text-slate-600">{{ p.date.strftime('%y-%m') }}</span>
+            {{ p.value | round(2) }}{% if p.flag %}{{ '↑' if p.flag == 'high' else '↓' }}{% endif %}
+            <button type="button" class="text-slate-700 hover:text-red-400"
+                    hx-delete="{{ u('/labs/') }}{{ p.id }}" hx-target="closest span" hx-swap="outerHTML"
+                    hx-confirm="删除 {{ g.label }} {{ p.date }} 这条记录？">✕</button>
+          </span>
+          {% endfor %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    <p class="mt-3 text-xs text-slate-600 leading-relaxed">
+      ↑↓ = 超出参考范围（以化验单原范围为准），持续异常请就医确认——这里只做档案与趋势，不做诊断。
+    </p>
+  </section>
+  {% endif %}
+
+</div>
+{% endblock %}

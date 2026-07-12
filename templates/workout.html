@@ -48,6 +48,35 @@
     {% include "fragments/workout_load.html" %}
   </section>
 
+  {% if cpr %}
+  {# ---- 跑步 PR（V7 B4）：客观进步证据 ---- #}
+  <section class="card">
+    <h2 class="card-title">跑步 PR</h2>
+    <div class="grid grid-cols-2 gap-2">
+      <div class="rounded-xl border border-slate-800/70 bg-slate-900/60 px-3.5 py-3">
+        <div class="text-xs text-slate-500">最长单次</div>
+        <div class="mt-1 stat-num">{{ cpr.longest_km }} km</div>
+        <div class="mt-0.5 text-xs text-slate-500 tabular-nums">{{ cpr.longest_date.strftime('%Y-%m-%d') }}</div>
+      </div>
+      <div class="rounded-xl border border-slate-800/70 bg-slate-900/60 px-3.5 py-3">
+        <div class="text-xs text-slate-500">最快均配（≥3km）</div>
+        <div class="mt-1 stat-num">{% if cpr.best_pace_min_per_km %}{{ '%d'|format(cpr.best_pace_min_per_km|int) }}'{{ '%02d'|format(((cpr.best_pace_min_per_km % 1) * 60)|round|int) }}"{% else %}—{% endif %}</div>
+        <div class="mt-0.5 text-xs text-slate-500 tabular-nums">{% if cpr.best_pace_date %}{{ cpr.best_pace_date.strftime('%Y-%m-%d') }} · {{ cpr.best_pace_km }} km{% else %}还没有 ≥3km 的跑{% endif %}</div>
+      </div>
+      <div class="rounded-xl border border-slate-800/70 bg-slate-900/60 px-3.5 py-3">
+        <div class="text-xs text-slate-500">单月最大跑量</div>
+        <div class="mt-1 stat-num">{{ cpr.top_month_km }} km</div>
+        <div class="mt-0.5 text-xs text-slate-500 tabular-nums">{{ cpr.top_month }}</div>
+      </div>
+      <div class="rounded-xl border border-slate-800/70 bg-slate-900/60 px-3.5 py-3">
+        <div class="text-xs text-slate-500">累计跑量</div>
+        <div class="mt-1 stat-num">{{ cpr.total_km }} km</div>
+        <div class="mt-0.5 text-xs text-slate-500 tabular-nums">{{ cpr.runs }} 次</div>
+      </div>
+    </div>
+  </section>
+  {% endif %}
+
   {# ---- 训练日历热力图（服务端渲染，格子点开当日详情） ---- #}
   <section class="card">
     <h2 class="card-title">训练日历</h2>

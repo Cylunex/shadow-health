@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block page_title %}{{ year }} 年度回顾{% endblock %}
+{% block content %}
+<div class="space-y-4">
+
+  <div class="flex gap-2 overflow-x-auto scrollbar-none -mx-4 px-4">
+    {% for yy in years %}
+    <a href="{{ u('/report/annual') }}?y={{ yy }}"
+       class="chip shrink-0 min-h-[44px] tabular-nums {% if yy == year %}chip-active{% endif %}">{{ yy }}</a>
+    {% endfor %}
+  </div>
+
+  <section class="px-1">
+    <h2 class="text-2xl font-bold tracking-tight">{{ year }} 年度回顾</h2>
+    <p class="mt-1 text-xs text-slate-500">{% if in_progress %}进行中——数字还在增长{% else %}全年定格{% endif %}</p>
+  </section>
+
+  <div class="grid grid-cols-2 gap-2">
+    <div class="card !p-4">
+      <div class="text-xs text-slate-500">训练</div>
+      <div class="mt-1 text-2xl font-bold tabular-nums text-emerald-400">{{ workout_count }} 次</div>
+      <div class="mt-0.5 text-xs text-slate-500 tabular-nums">{{ '{:,}'.format(workout_min) }} 分钟 · 负荷 {{ '{:,}'.format(training_load) }}</div>
+    </div>
+    <div class="card !p-4">
+      <div class="text-xs text-slate-500">跑量</div>
+      <div class="mt-1 text-2xl font-bold tabular-nums text-emerald-400">{{ run_km }} km</div>
+      <div class="mt-0.5 text-xs text-slate-500">
+        {% for t, n in top_types %}{{ t }}×{{ n }}{% if not loop.last %} · {% endif %}{% endfor %}
+      </div>
+    </div>
+    <div class="card !p-4">
+      <div class="text-xs text-slate-500">体重</div>
+      <div class="mt-1 text-2xl font-bold tabular-nums {{ 'text-emerald-400' if weight_change is not none and weight_change < 0 else 'text-slate-100' }}">
+        {% if weight_change is not none %}{{ '%+.1f' | format(weight_change) }} kg{% else %}—{% endif %}
+      </div>
+      <div class="mt-0.5 text-xs text-slate-500 tabular-nums">
+        {% if weight_start %}{{ weight_start }} → {{ weight_end }} kg{% endif %}
+        {% if fat_change is not none %} · 体脂 {{ '%+.1f' | format(fat_change) }}%{% endif %}
+      </div>
+    </div>
+    <div class="card !p-4">
+      <div class="text-xs text-slate-500">饮食记录</div>
+      <div class="mt-1 text-2xl font-bold tabular-nums text-slate-100">{{ diet_days }} 天</div>
+      <div class="mt-0.5 text-xs text-slate-500 tabular-nums">最长连击 {{ diet_streak_max }} 天</div>
+    </div>
+    <div class="card !p-4">
+      <div class="text-xs text-slate-500">习惯达标</div>
+      <div class="mt-1 text-2xl font-bold tabular-nums text-slate-100">{{ '{:,}'.format(habit_days) }} 天次</div>
+      <div class="mt-0.5 text-xs text-slate-500">&nbsp;</div>
+    </div>
+    <div class="card !p-4">
+      <div class="text-xs text-slate-500">步数</div>
+      <div class="mt-1 text-2xl font-bold tabular-nums text-slate-100">{{ '{:,}'.format(steps_sum) }}</div>
+      <div class="mt-0.5 text-xs text-slate-500 tabular-nums">{{ steps_days }} 天有数据{% if avg_sleep_h %} · 睡眠均 {{ avg_sleep_h }}h{% endif %}</div>
+    </div>
+  </div>
+
+  {% if badges %}
+  <section class="card">
+    <h2 class="card-title">今年解锁的成就</h2>
+    <div class="flex flex-wrap gap-1.5">
+      {% for b in badges %}
+      <span class="badge text-emerald-300 border-emerald-800/60 bg-emerald-950/50 tabular-nums">🏅 {{ b.label }} · {{ b.earned_on.strftime('%m-%d') }}</span>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  <p class="text-xs text-slate-600 text-center">数字都来自你自己的记录 · 截图即可分享</p>
+
+</div>
+{% endblock %}

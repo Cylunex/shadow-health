@@ -821,6 +821,89 @@ def report_month_detail(month_start: str, request: Request, db: Session = Depend
     )
 
 
+@router.get("/report/annual")
+def report_annual(request: Request, y: int = 0, db: Session = Depends(get_db)):
+    """年度回顾（V7 H2）：全年聚合卡片墙（Wrapped 式，纯本地渲染）。"""
+    from collections import Counter
+
+    from app.models import Achievement
+    from app.services.achievements import _max_streak
+    from app.services.pr import _is_run
+
+    today = today_local()
+    earliest = _earliest_data_date(db)
+    first_year = earliest.year if earliest is not None else today.year
+    year = y if first_year <= y <= today.year else today.year
+    ys, ye = date(year, 1, 1), min(date(year, 12, 31), today)
+
+    wl = db.execute(
+        select(
+            WorkoutLog.session_type, WorkoutLog.duration_min,
+            WorkoutLog.rpe, WorkoutLog.distance_km,
+        ).where(WorkoutLog.log_date.between(ys, ye))
+    ).all()
+    workout_min = sum(r[1] or 0 for r in wl)
+    load = sum((r[2] or 0) * (r[1] or 0) for r in wl)
+    run_km = sum(float(r[3]) for r in wl if r[3] and _is_run(r[0]))
+    types = Counter((r[0] or "?") for r in wl)
+
+    w_start, w_end, w_change, _ = _first_last_change(db, BodyMetrics.weight_kg, ys, ye)
+    _, _, fat_change, _ = _first_last_change(db, BodyMetrics.body_fat_pct, ys, ye, nd=1)
+
+    diet_days = {
+        d for (d,) in db.execute(
+            select(func.distinct(DietLog.log_date)).where(DietLog.log_date.between(ys, ye))
+        )
+    }
+    habit_targets = {
+        h.id: h.target_per_period or 1 for h in db.execute(select(Habit)).scalars()
+    }
+    habit_days = sum(
+        1 for hid, c in db.execute(
+            select(HabitLog.habit_id, HabitLog.done_count).where(
+                HabitLog.log_date.between(ys, ye)
+            )
+        ) if c >= habit_targets.get(hid, 1)
+    )
+    steps_sum, steps_days = db.execute(
+        select(func.coalesce(func.sum(DailyActivity.steps), 0), func.count()).where(
+            DailyActivity.log_date.between(ys, ye), DailyActivity.steps.is_not(None)
+        )
+    ).one()
+    sstats = sleep.stage_stats(db, ys, ye) or {}
+    badges = db.execute(
+        select(Achievement).where(
+            Achievement.earned_on.between(ys, ye)
+        ).order_by(Achievement.earned_on)
+    ).scalars().all()
+
+    return templates.TemplateResponse(
+        request,
+        "report_annual.html",
+        {
+            "year": year,
+            "years": list(range(today.year, first_year - 1, -1)),
+            "in_progress": ye < date(year, 12, 31),
+            "workout_count": len(wl),
+            "workout_min": workout_min,
+            "training_load": load,
+            "run_km": round(run_km, 1),
+            "top_types": types.most_common(3),
+            "weight_start": w_start,
+            "weight_end": w_end,
+            "weight_change": w_change,
+            "fat_change": fat_change,
+            "diet_days": len(diet_days),
+            "diet_streak_max": _max_streak(diet_days),
+            "habit_days": habit_days,
+            "steps_sum": int(steps_sum),
+            "steps_days": steps_days,
+            "avg_sleep_h": sstats.get("avg_sleep_h"),
+            "badges": badges,
+        },
+    )
+
+
 @router.put("/report/monthly/{month_start}")
 async def report_month_save(month_start: str, request: Request, db: Session = Depends(get_db)):
     ms = _parse_month_start(month_start)

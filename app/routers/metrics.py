@@ -461,29 +461,41 @@ def _chart_context(db: Session, metric: str, days: int) -> dict[str, Any]:
         rows = db.execute(
             select(
                 WorkoutLog.log_date, WorkoutLog.session_type,
-                WorkoutLog.duration_min, WorkoutLog.distance_km,
+                WorkoutLog.duration_min, WorkoutLog.distance_km, WorkoutLog.avg_hr,
             ).where(
                 WorkoutLog.log_date.between(start, today),
                 WorkoutLog.duration_min.is_not(None),
                 WorkoutLog.distance_km.is_not(None),
             )
         ).all()
-        per: dict[date, tuple[float, float]] = {}  # d -> (km 合计, 分钟合计)
-        for d, stype, dur, km in rows:
+        # d -> (km 合计, 分钟合计, Σhr×分钟, 有 hr 的分钟)
+        per: dict[date, tuple[float, float, float, float]] = {}
+        for d, stype, dur, km, hr in rows:
             s = (stype or "").lower()
             if not any(k in s for k in _RUN_KEYWORDS):
                 continue
             km_f = float(km)
             if km_f <= 0 or not dur:
                 continue
-            k0, m0 = per.get(d, (0.0, 0.0))
-            per[d] = (k0 + km_f, m0 + dur)
+            k0, m0, h0, hm0 = per.get(d, (0.0, 0.0, 0.0, 0.0))
+            if hr:
+                h0 += float(hr) * dur
+                hm0 += dur
+            per[d] = (k0 + km_f, m0 + dur, h0, hm0)
         pace_by_day = {
-            d: (round(m / k, 2), True) for d, (k, m) in per.items() if k >= 0.2
+            d: (round(m / k, 2), True) for d, (k, m, _h, _hm) in per.items() if k >= 0.2
         }
-        km_by_day = {d: (round(k, 2), True) for d, (k, _m) in per.items()}
+        km_by_day = {d: (round(k, 2), True) for d, (k, _m, _h, _hm) in per.items()}
+        # 有氧效率 EF（V7 B4）= 速度(m/min) ÷ 心率——同配速心率变低 = 有氧基础变好
+        ef_by_day = {
+            d: (round(k * 1000 / m / (h / hm), 2), True)
+            for d, (k, m, h, hm) in per.items()
+            if k >= 0.2 and m > 0 and hm > 0
+        }
         datasets.append(_line_dataset("配速 (min/km)", pace_by_day, day_list, "#fbbf24"))
         datasets.append(_line_dataset("距离 (km)", km_by_day, day_list, _COLORS["steps"]))
+        if ef_by_day:
+            datasets.append(_line_dataset("有氧效率 (m/min/bpm)", ef_by_day, day_list, "#f472b6"))
     elif metric == "girth":
         # 多线围度：只画区间内有数据的部位
         for field, label, color in _GIRTH_DEFS:

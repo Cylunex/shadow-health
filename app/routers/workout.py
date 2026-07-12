@@ -551,6 +551,7 @@ def workout_page(request: Request, db: Session = Depends(get_db)):
     ctx.update(_recent_ctx(db))
     ctx.update(_load_ctx(db))
     ctx.update(_heatmap_ctx(db, 3))
+    ctx["cpr"] = pr.cardio_prs(db)  # 跑步 PR 卡（V7 B4，无跑步记录不显示）
     return templates.TemplateResponse(request, "workout.html", ctx)
 
 

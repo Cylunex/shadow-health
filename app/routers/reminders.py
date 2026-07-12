@@ -130,6 +130,13 @@ def reminders_digest(request: Request, db: Session = Depends(get_db)) -> Respons
         parts.append(f"本周有氧还差 {round(t_cardio - cardio_min)} 分钟")
     parts.extend(weekly_gaps[:2])
 
+    # 体测复测提醒（V7 B5）：做过体测且距上次 ≥6 周才提（没用过该功能不催）
+    from app.routers.fitness import RETEST_WEEKS, last_test_date
+
+    lt = last_test_date(db)
+    if lt is not None and (today - lt).days >= RETEST_WEEKS * 7:
+        parts.append(f"距上次体测 {round((today - lt).days / 7)} 周了，安排一次自测")
+
     all_done = not parts
 
     # Agent 通道健康告警（不计入 all_done——是系统故障提示，不是目标缺口）：

@@ -70,6 +70,12 @@
       <button type="button" class="btn-primary min-h-[52px] text-lg" x-show="running" @click="pause()">暂停</button>
       <button type="button" class="chip min-h-[52px] text-base" @click="reset()">重置</button>
     </div>
+    {# 语音口令开关（V7 B1）：本地 TTS 播报组开始/休息/下一动作；不支持则不显示 #}
+    <button type="button" x-show="speechOK" style="display: none"
+            class="mt-2 w-full chip min-h-[44px] text-sm"
+            :class="voiceOn ? 'chip-active' : ''"
+            @click="toggleVoice()"
+            x-text="voiceOn ? '🔊 语音口令 开' : '🔇 语音口令 关'"></button>
     <p class="mt-4 text-emerald-400 font-semibold" x-show="phase === 'done'">全部完成 💪</p>
 
     {# 练完一键记入训练：消灭「练完记得回训练页手动记一笔」的断点 #}
@@ -100,6 +106,9 @@ function workoutTimer(guided) {
     running: false,
     guided: guided || [],   // 跟练队列 [{name, desc}]，每组轮换
     logged: false,          // 「记入训练」已提交
+    // TTS 语音口令（V7 B1）：本地 speechSynthesis，WebView 不支持则隐藏开关
+    speechOK: 'speechSynthesis' in window,
+    voiceOn: false,
     _timer: null,
     _audio: null,
     _wakeLock: null,
@@ -109,6 +118,23 @@ function workoutTimer(guided) {
       if (this.guided.length) {
         this.cfg.rounds = Math.min(99, this.guided.length * 2);
       }
+      this.voiceOn = this.speechOK && localStorage.getItem('timer-voice') === '1';
+    },
+    toggleVoice() {
+      this.voiceOn = !this.voiceOn;
+      localStorage.setItem('timer-voice', this.voiceOn ? '1' : '0');
+      if (this.voiceOn) this.say('语音已开启');
+      else if (this.speechOK) speechSynthesis.cancel();
+    },
+    say(text) {
+      if (!this.voiceOn || !this.speechOK) return;
+      try {
+        speechSynthesis.cancel();  // 新口令顶掉没念完的旧口令
+        var u = new SpeechSynthesisUtterance(text);
+        u.lang = 'zh-CN';
+        u.rate = 1.1;
+        speechSynthesis.speak(u);
+      } catch (e) { /* 无声也能用 */ }
     },
     currentEx() {
       return this.guided[(this.round - 1) % this.guided.length] || { name: '', desc: '' };
@@ -170,6 +196,7 @@ function workoutTimer(guided) {
         this.phase = this.cfg.work > 0 ? 'work' : 'rest';
         this.remaining = this.cfg.work > 0 ? this.cfg.work : this.cfg.rest;
         this.beep(1, 880, 0.15);
+        this.say(this.guided.length ? '开始，' + this.currentEx().name : '开始');
       }
       this.running = true;
       this.acquireWakeLock();
@@ -199,17 +226,28 @@ function workoutTimer(guided) {
         this.phase = 'rest';
         this.remaining = this.cfg.rest;
         this.beep(2, 520, 0.15);
+        this.say(
+          this.guided.length && this.round < this.cfg.rounds
+            ? '休息。下一个，' + this.nextEx().name
+            : '休息'
+        );
       } else {
         if (this.round >= this.cfg.rounds) {
           this.phase = 'done';
           this.pause();
           this.beep(3, 880, 0.3);
+          this.say('全部完成，干得漂亮');
           return;
         }
         this.round++;
         this.phase = this.cfg.work > 0 ? 'work' : 'rest';
         this.remaining = this.cfg.work > 0 ? this.cfg.work : this.cfg.rest;
         this.beep(1, 880, 0.2);
+        this.say(
+          this.guided.length
+            ? this.currentEx().name
+            : '第 ' + this.round + ' 组'
+        );
       }
     }
   };

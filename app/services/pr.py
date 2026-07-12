@@ -28,6 +28,55 @@ ADVANCE_REPS = 15
 MAX_ITEMS = 20
 MAX_SETS = 12
 
+# 跑步判定（与 metrics 页跑步图同口径）
+RUN_KEYWORDS = ("跑", "run")
+BEST_PACE_MIN_KM = 3.0  # 最快均配速只认 ≥3km 的跑（太短的冲刺没有可比性）
+
+
+def _is_run(session_type: str | None) -> bool:
+    s = (session_type or "").lower()
+    return any(k in s for k in RUN_KEYWORDS)
+
+
+def cardio_prs(db: Session) -> dict[str, Any] | None:
+    """跑步 PR（V7 B4）：最长单次距离 / 最快均配速（≥3km）/ 单月最大跑量 / 累计。
+    没有任何带距离的跑步记录返回 None。纯 sRPE 之外的「客观进步」证据。"""
+    rows = db.execute(
+        select(
+            WorkoutLog.log_date, WorkoutLog.session_type,
+            WorkoutLog.duration_min, WorkoutLog.distance_km,
+        ).where(WorkoutLog.distance_km.is_not(None))
+    ).all()
+    runs = [
+        (d, float(km), dur)
+        for d, stype, dur, km in rows
+        if _is_run(stype) and km and float(km) > 0
+    ]
+    if not runs:
+        return None
+    longest = max(runs, key=lambda r: r[1])
+    paced = [
+        (d, km, dur / km) for d, km, dur in runs
+        if dur and km >= BEST_PACE_MIN_KM
+    ]
+    best_pace = min(paced, key=lambda r: r[2]) if paced else None
+    by_month: dict[str, float] = {}
+    for d, km, _dur in runs:
+        key = f"{d:%Y-%m}"
+        by_month[key] = by_month.get(key, 0.0) + km
+    top_month = max(by_month.items(), key=lambda kv: kv[1])
+    return {
+        "total_km": round(sum(km for _, km, _d in runs), 1),
+        "runs": len(runs),
+        "longest_km": round(longest[1], 2),
+        "longest_date": longest[0],
+        "best_pace_min_per_km": round(best_pace[2], 2) if best_pace else None,
+        "best_pace_date": best_pace[0] if best_pace else None,
+        "best_pace_km": round(best_pace[1], 2) if best_pace else None,
+        "top_month": top_month[0],
+        "top_month_km": round(top_month[1], 1),
+    }
+
 
 def normalize_strength(raw: Any) -> list[dict[str, Any]] | None:
     """表单 JSON → 校验后的明细；无有效内容返回 None（不入库）。"""

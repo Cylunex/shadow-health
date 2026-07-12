@@ -1,0 +1,32 @@
+{# 扫码结果片段（V7 D3）：ctx = code, food, off, adopted? #}
+<div class="rounded-xl border border-slate-800/70 bg-slate-900/60 px-3.5 py-3 text-sm fade-in">
+  {% if food %}
+  <div class="flex items-center justify-between gap-2">
+    <div class="min-w-0">
+      <div class="text-slate-200">{{ food.name }}{% if adopted %} <span class="badge-accent">已建档</span>{% endif %}</div>
+      <div class="mt-0.5 text-xs text-slate-500 tabular-nums">
+        {{ code }} · 每100g {{ food.kcal_per_100g or '?' }} kcal / 蛋白 {{ food.protein_g or '?' }} g
+      </div>
+    </div>
+    <button type="button" class="btn-primary shrink-0 !min-h-0 !px-3 !py-2 text-xs"
+            hx-post="{{ u('/diet/quick/') }}{{ food.id }}" hx-swap="none"
+            hx-include="#diet-date" hx-disabled-elt="this">一键记录</button>
+  </div>
+  {% elif off %}
+  <div class="flex items-center justify-between gap-2">
+    <div class="min-w-0">
+      <div class="text-slate-200">{{ off.name }}{% if off.brand %} <span class="text-slate-500">{{ off.brand }}</span>{% endif %}</div>
+      <div class="mt-0.5 text-xs text-slate-500 tabular-nums">
+        {{ code }} · 每100g {{ off.kcal_per_100g or '?' }} kcal / 蛋白 {{ off.protein_g or '?' }} g · 来自离线库
+      </div>
+    </div>
+    <button type="button" class="btn-ghost shrink-0 !min-h-0 !px-3 !py-2 text-xs"
+            hx-post="{{ u('/diet/barcode/') }}{{ code }}/adopt"
+            hx-target="closest div.fade-in" hx-swap="outerHTML"
+            hx-disabled-elt="this">建档并可记录</button>
+  </div>
+  {% else %}
+  <p class="text-slate-400">条码 <span class="tabular-nums">{{ code or '—' }}</span> 没查到——
+    离线库未导入或不含该产品，可到 <a href="{{ u('/diet/foods') }}" class="text-emerald-400 underline decoration-emerald-800">食物库</a> 手动建档。</p>
+  {% endif %}
+</div>

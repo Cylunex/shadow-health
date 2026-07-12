@@ -1,6 +1,6 @@
 # 会话交接（自包含，新会话从这里继续）
 
-> 最后更新：2026-07-12（V5 + V6 批次落地）。配套阅读：README（功能全貌）·
+> 最后更新：2026-07-12（V5 + V6 + V7 批次落地）。配套阅读：README（功能全貌）·
 > docs/deploy.md（NAS 部署照单）· docs/mobile-sync.md（三星直读背景）·
 > gateway/README.md（体脂秤双端）· docs/audit-2026-07-10.md（全面审查清单，
 > 已全清、归档备忘）· docs/offline-plan.md（手机离线记录方案，阶段一~三已落地，
@@ -9,6 +9,52 @@
 > **当前无进行中批次**：剩余事项 = 真机回归（V3/V4 壳与 APK 改动）+
 > offline-plan 阶段四（视真机手感决定）+ NAS 上线切换（§1.8 与 P3 runbook，用户做）+
 > NAS 侧 MCP 接入（supervisor/Hermes/OpenClaw 注册照 mcp_server/README，用户做）。
+
+## ✅ 已完成：V7 批次（2026-07-12，roadmap 顺延清单，238 测全绿）
+
+1. **B4 跑步进阶包**：services/pr.py 加 cardio_prs（最长单次/最快均配速仅认
+   ≥3km/单月最大跑量/累计），workout 页「跑步 PR」卡（无带距离跑步记录不显示，
+   dev 数据全是 walking 故当前隐藏——正确门控）；跑步图加第三条线有氧效率
+   EF=速度(m/min)÷心率（时长加权均心率，仅 avg_hr 非空日）——同配速心率变低
+   = 有氧基础变好
+2. **H2 年度回顾** GET /report/annual?y=（更多页入口）：年聚合卡片墙——训练
+   次数/分钟/负荷、跑量+类型 top3、体重与体脂年变化（_first_last_change 复用）、
+   饮食天数+最长连击、习惯达标天次、步数、睡眠均值、今年解锁的成就徽章；
+   年份 chips 从最早数据年到今年；进行中年份标注
+3. **B5 体测协议**：迁移 14 fitness_tests（(test_date,item) 唯一，重测覆盖）；
+   /fitness 页（更多页入口）——四项协议（俯卧撑力竭/平板支撑秒/坐位体前屈
+   ±cm/1 分钟心率恢复），0-100 分线性锚（40 次/180s/+15cm/40bpm，体前屈从
+   -10 起算量程）+ 优秀/良好/待提高分档 + 较上次差值 + Chart.js 雷达图
+   （最新 vs 上次，__ensureChartJs 同款按需加载）；digest 距上次体测 ≥6 周
+   提醒（从未测过不催）
+4. **B1 计时器语音口令**：workout_timer speechSynthesis 播报（开始+动作名/
+   休息+下一动作预告/新一组/完成），🔊 开关存 localStorage，'speechSynthesis'
+   feature-detect 不支持即隐藏——**WebView 内 TTS 可用性待真机回归**
+5. **D3 条码 + OFF 离线库**：迁移 14 foods.barcode（唯一）+ off_products 缓存表；
+   scripts/import_off_products.py（官方全量 CSV 流式导入，69 前缀或
+   countries=china，幂等 upsert，--dry-run；NAS 上跑，见脚本 docstring）；
+   GET /diet/barcode/{code}（foods 优先 → off_products「建档并可记录」一键
+   进自建库挂条码 → 没查到提示手动建档）；饮食页「扫码记录」卡
+   （BarcodeDetector+getUserMedia 扫码，feature-detect 隐藏相机钮，手输条码
+   兜底永远可用）——**壳内相机权限需 WebChromeClient onPermissionRequest
+   放行，真机回归项**
+6. **G6 化验档案**：迁移 14 lab_results（(report_date,item_key) 唯一）；/labs 页
+   （更多页入口）——常见 10 项词表（血脂四项/血糖/糖化/尿酸/肝肾）带默认单位
+   与参考范围（化验单原范围优先可改）+ 自定义项目；按项目分组多年序列，
+   超范围 ↑↓ 标黄（就医确认提示，不做诊断）；AI 拍化验单结构化（vision →
+   可编辑预览 → 确认入库 /labs/bulk，同名与词表对齐保趋势连续；无 Key 隐藏
+   入口，手动录入永远可用）
+7. **G3 BLE 血压计——本批不做（有意）**：omblepy/hass-omron 协议按具体型号
+   （HEM-7361T 等）逐款适配，手上没有设备盲写协议必然不可验证；等用户确认
+   血压计型号后照小米秤模式（gateway/ 或壳内 BLE）单独立项。血压手输通道
+   与趋势图（V6 E7）已可用
+8. 测试：tests/test_v7_features.py 8 个（体测锚点分/化验超范围方向/条码归一化/
+   OFF 解析口径/跑步关键词/体测与化验 DB 链路——错峰日期 2020-03-01）；
+   全量 238 绿；Tailwind 重建 + SW v17
+9. 真机回归新增项：计时器 TTS（WebView speechSynthesis）、扫码相机权限
+   （getUserMedia + BarcodeDetector，壳需 onPermissionRequest 放行 CAMERA）、
+   /fitness /labs /report/annual /achievements 四个新页面走查 + SnapshotCache
+   排除名单核对
 
 ## ✅ 已完成：V6 批次「面向未来」（2026-07-12，照 docs/future-roadmap.md 推荐组合 P1-P8，230 测全绿）
 

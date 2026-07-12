@@ -46,7 +46,7 @@ from app.db import get_db
 from app.deps import require_login, templates
 from app.models import (
     AppSetting, BodyMetrics, DailyActivity, DietLog, DietPhoto, Food, MealTemplate,
-    Recipe, WorkoutLog,
+    OffProduct, Recipe, WorkoutLog,
 )
 from app.timeutil import now_local, today_local
 
@@ -670,6 +670,56 @@ def diet_template_delete(template_id: int, request: Request, db: Session = Depen
         db.flush()
     return templates.TemplateResponse(
         request, "fragments/diet_templates.html", _templates_ctx(db)
+    )
+
+
+# ---------- 条码（V7 D3）：foods 优先 → OFF 离线库一键建档 → 手输兜底 ----------
+
+def _norm_barcode(code: str) -> str:
+    return "".join(c for c in str(code) if c.isdigit())[:14]
+
+
+@router.get("/diet/barcode/{code}")
+def diet_barcode_lookup(code: str, request: Request, db: Session = Depends(get_db)):
+    """扫码/手输条码查询：命中自建食物 → 直接可记；命中 OFF 缓存 → 一键建档；
+    都没有 → 提示手动建档。返回扫码结果片段。"""
+    code = _norm_barcode(code)
+    ctx: dict[str, Any] = {"code": code, "food": None, "off": None}
+    if len(code) >= 8:
+        ctx["food"] = db.execute(
+            select(Food).where(Food.barcode == code)
+        ).scalar_one_or_none()
+        if ctx["food"] is None:
+            ctx["off"] = db.get(OffProduct, code)
+    return templates.TemplateResponse(request, "fragments/diet_barcode_result.html", ctx)
+
+
+@router.post("/diet/barcode/{code}/adopt")
+def diet_barcode_adopt(code: str, request: Request, db: Session = Depends(get_db)):
+    """从 OFF 缓存一键建档进自建食物库（挂条码，下次扫码直达）。"""
+    code = _norm_barcode(code)
+    off = db.get(OffProduct, code)
+    if off is None:
+        raise HTTPException(status_code=404, detail="离线库没有这个条码")
+    existing = db.execute(select(Food).where(Food.barcode == code)).scalar_one_or_none()
+    if existing is None:
+        name = off.name if off.brand is None else f"{off.name}（{off.brand}）"
+        name = name[:50]
+        # 名称撞车（同名不同条码）时缀条码尾四位保唯一
+        if db.execute(select(Food).where(Food.name == name)).scalar_one_or_none() is not None:
+            name = f"{name[:44]} #{code[-4:]}"
+        db.add(Food(
+            name=name, category="包装食品", barcode=code,
+            kcal_per_100g=off.kcal_per_100g, protein_g=off.protein_g,
+            fat_g=off.fat_g, carb_g=off.carb_g,
+        ))
+        db.flush()
+    return templates.TemplateResponse(
+        request, "fragments/diet_barcode_result.html",
+        {"code": code, "food": existing or db.execute(
+            select(Food).where(Food.barcode == code)
+        ).scalar_one(), "off": None, "adopted": existing is None},
+        headers=dict(FOODS_HX_TRIGGER),
     )
 
 
