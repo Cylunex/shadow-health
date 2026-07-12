@@ -54,6 +54,7 @@ _FIELD_DEFS: list[tuple[str, str, str, float, float]] = [
     ("sleep_hours", "睡眠时长", "decimal", 0, 24),
     ("sleep_quality", "睡眠质量", "int", 1, 5),
     ("energy_level", "精力", "int", 1, 5),
+    ("mood_score", "心情分", "int", 1, 10),
     ("muscle_mass_kg", "肌肉量", "decimal", 1, 300),
     ("skeletal_muscle_kg", "骨骼肌", "decimal", 1, 300),
     ("bmr_kcal", "基础代谢", "int", 300, 10000),
@@ -203,6 +204,7 @@ def _form_context(
         "chips": {
             "sleep_quality": row.sleep_quality if row else None,
             "energy_level": row.energy_level if row else None,
+            "mood_score": row.mood_score if row else None,
             "morning_erection": row.morning_erection if row else None,
         },
         "saved": saved,
@@ -221,6 +223,7 @@ def _quick_context(db: Session, saved: bool = False, errors: list[str] | None = 
         "quick_weight": _fmt(row.weight_kg) if row else "",
         "quick_sleep": _fmt(row.sleep_hours) if row else "",
         "quick_me": row.morning_erection if row else None,
+        "quick_mood": row.mood_score if row else None,
         "quick_saved": saved,
         "quick_errors": errors or [],
     }

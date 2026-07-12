@@ -28,6 +28,12 @@ dev = [
     "pytest>=8.3",
     "httpx>=0.28",
 ]
+# MCP server（mcp_server/）专用：不进主依赖——web 应用本体不需要，
+# NAS 上 `uv sync --group mcp` 才装（docs/subpath-agent-plan.md §2.3）
+mcp = [
+    "mcp>=1.9",
+    "httpx>=0.28",
+]
 
 [tool.uv]
 package = false

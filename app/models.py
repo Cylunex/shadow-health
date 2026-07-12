@@ -42,6 +42,7 @@ class BodyMetrics(TimestampMixin, Base):
     __table_args__ = (
         CheckConstraint("sleep_quality BETWEEN 1 AND 5", name="ck_sleep_quality"),
         CheckConstraint("energy_level BETWEEN 1 AND 5", name="ck_energy_level"),
+        CheckConstraint("mood_score BETWEEN 1 AND 10", name="ck_mood_score"),
         {"schema": SCHEMA},
     )
 
@@ -67,6 +68,7 @@ class BodyMetrics(TimestampMixin, Base):
     sleep_quality: Mapped[int | None] = mapped_column(Integer)
     morning_erection: Mapped[bool | None] = mapped_column(Boolean)
     energy_level: Mapped[int | None] = mapped_column(Integer)
+    mood_score: Mapped[int | None] = mapped_column(SmallInteger)
     notes: Mapped[str | None] = mapped_column(Text)
     # 字段级来源标记 {"sleep_hours":"samsung_zip"}；自动回填只写 NULL 或 autofilled 内字段
     autofilled: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
@@ -357,7 +359,7 @@ class ImportRaw(Base):
     __table_args__ = (
         CheckConstraint(
             "source IN ('samsung_zip','health_connect','keep_api','keep_file',"
-            "'miscale','samsung_direct','offline')",
+            "'miscale','samsung_direct','offline','agent','legacy')",
             name="ck_import_source",
         ),
         CheckConstraint(

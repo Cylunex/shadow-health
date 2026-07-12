@@ -18,11 +18,17 @@
    剥前缀再匹配、前缀外同域不代理；壳/网关全部拼接点核对为 baseUrl+"/api/…"。
    验收：125 测全绿 + 本地前缀代理全页面走查（htmx/图表/hx-push-url 均正常）+
    APK 构建拷至 static/shadow-health.apk。剩余：真机回归 + §1.8 上线切换（用户做）
-2. **P2 REST+MCP**（用户 2026-07-12 拍板的增补）：mood_score 加列**提前**到本阶段，
-   与 'agent'/'legacy' 来源词表并成一个迁移（12）；/api/ingest/agent 响应带
-   per-record 明细（client_id/status/row_id）；MCP 工具加第 9 个 delete_record
-   （diet/workout 限定，改口纠错用）；工具层同参数短窗去重防 agent 超时重调双写；
-   record_* 返回附当日累计
+2. ~~**P2 REST+MCP**~~ ✅ **已完成（2026-07-12，含全部增补）**：迁移 12
+   （'agent'/'legacy' 词表 + mood_score 加列，metrics 页三处 + 白名单自动继承）；
+   /api/ingest/agent（offline 管线 ingest_batch(source=...) 薄别名 + per-record
+   明细 results[{client_id,status,row_id}]）；/api/agent/summary、
+   /api/agent/report/weekly、/api/agent/foods（计划外，search_food 需要）、
+   /api/agent/delete（仅 diet/workout，外部来源 403）；mcp_server/ FastMCP
+   双模式（127.0.0.1:8180/mcp + --stdio）9 工具 + 60s 同参数短窗去重（理由与
+   话术规则在 mcp_server/README）+ record_* 附当日累计。验收：125 测全绿
+   （新增 test_agent_channel.py 22 个）+ stdio 实调 9 工具 18 项全过。
+   剩余（NAS 侧）：supervisor [program:shealth-mcp]、Hermes/OpenClaw 注册、
+   skill v2 与 cron 迁移——照 mcp_server/README 执行
 3. **P3 迁移脚本**：只交付脚本+冻结 SQL+执行手册，不实际连生产执行
 4. 环境边界：这台 Mac 的 .env 是本地临时 PG（≠生产）；真机回归与 §1.8 上线切换由用户做
 
