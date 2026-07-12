@@ -45,9 +45,11 @@ supervisor/nginx 配置在容器可写层，改完备份到 `deploy/`。）
 - stdio 场景（本地 spawn）：命令
   `/data/project/shadow-health/.venv/bin/python -m mcp_server --stdio`，
   workdir 仓库根（读 .env 用）。
-- Hermes 旧 skill（直写 personal_data 裸 SQL）由 skill v2 替换：数据一律经
-  MCP 工具；**禁止直连 PG**；保留「先和用户确认日期」铁律。cron 迁移
-  （每日提醒播报 / 每周周报）在 NAS 侧做，不在本仓库。
+- Hermes 旧 skill（直写 personal_data 裸 SQL）由 **skills/ 目录的四个技能文档**
+  替换（记录员/晨间简报/周月复盘/数据分析，见 skills/README.md）：数据一律经
+  MCP 工具；**禁止直连 PG**；「先和用户确认日期」「确认话术引用 new 计数」
+  铁律已写进每个 skill。cron 迁移（每日提醒播报 / 每周周报）在 NAS 侧做：
+  cron 只发触发语（「播报晨间简报」/「播报上周周报」），流程由对应 skill 承担。
 
 ## 工具集（16 个，V5 批次扩至）
 

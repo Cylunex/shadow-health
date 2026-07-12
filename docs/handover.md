@@ -55,6 +55,13 @@
    （getUserMedia + BarcodeDetector，壳需 onPermissionRequest 放行 CAMERA）、
    /fitness /labs /report/annual /achievements 四个新页面走查 + SnapshotCache
    排除名单核对
+10. **Agent skills（skill v2 实体）**：mcp_server/skills/ 四个技能文档——
+    recorder（记录与纠错，food_id 优先/反假确认/update 与 delete 流程）、
+    morning-briefing（晨间简报，digest 一次拿全+体征预警优先）、
+    weekly-review（周月复盘播报+能量账本对账话术+run_analysis 轮询规矩）、
+    analyst（按问题粒度选工具，get_health_context 优先，三板斧套路）。
+    NAS 注册 Hermes/OpenClaw 时把文件内容挂进各自技能库（README 有挂载说明），
+    cron 只发触发语
 
 ## ✅ 已完成：V6 批次「面向未来」（2026-07-12，照 docs/future-roadmap.md 推荐组合 P1-P8，230 测全绿）
 
