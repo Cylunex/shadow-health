@@ -3,15 +3,26 @@
 {% block content %}
 <div class="space-y-4">
 
-  <div id="agent-log-status" hx-get="{{ u('/fragments/agent-log/status') }}"
+  {# 类型筛选：状态放 URL query（轮询整块替换留不住 DOM 态），点击整页跳转 #}
+  <div class="flex flex-wrap gap-1.5 text-xs">
+    <a href="{{ u('/agent-log') }}"
+       class="rounded-full px-3 py-1.5 {{ 'bg-emerald-600 text-white' if not rtype else 'bg-slate-800 text-slate-300' }}">全部</a>
+    {% for t, label in type_labels.items() %}
+    <a href="{{ u('/agent-log') }}?t={{ t }}"
+       class="rounded-full px-3 py-1.5 {{ 'bg-emerald-600 text-white' if rtype == t else 'bg-slate-800 text-slate-300' }}">{{ label }}</a>
+    {% endfor %}
+  </div>
+
+  <div id="agent-log-status"
+       hx-get="{{ u('/fragments/agent-log/status') }}?t={{ rtype }}&n={{ limit }}"
        hx-trigger="every 5s" hx-swap="innerHTML">
     {% include "fragments/agent_log_status.html" %}
   </div>
 
   <p class="text-xs text-slate-500 leading-relaxed">
-    此页每 5 秒自动刷新，展示 agent（Hermes 等）经统一写入通道记录的最近 30 条流水，
+    此页每 5 秒自动刷新，展示 agent（Hermes 等）经统一写入通道记录的流水，
     刚收到 90 秒内带「新」标。饮食/训练记录 agent 记错时可行内「撤销」（删的就是
-    落库那一行）；习惯打卡与身体指标不支持撤销，到对应页面改。
+    落库那一行）；习惯打卡与身体指标不支持撤销，点「去改」到对应页面改。
   </p>
 
 </div>

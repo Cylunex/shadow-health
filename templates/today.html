@@ -14,6 +14,11 @@
     </a>
   </section>
 
+  <!-- 1.5 Agent 最近写入提示（近 10 分钟有 agent 通道写入才显示；60s 轮询，
+       片段 outerHTML 自替换，空态 hidden 不占 space-y 间距） -->
+  <div hidden hx-get="{{ u('/fragments/today/agent-fresh') }}"
+       hx-trigger="load, every 60s" hx-swap="outerHTML"></div>
+
   <!-- 2. 今日三环（步数 / 训练分钟 / 打卡完成；打卡/训练写操作后被动刷新） -->
   <section class="card">
     <h2 class="card-title">今日三环</h2>

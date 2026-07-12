@@ -49,23 +49,46 @@ supervisor/nginx 配置在容器可写层，改完备份到 `deploy/`。）
   MCP 工具；**禁止直连 PG**；保留「先和用户确认日期」铁律。cron 迁移
   （每日提醒播报 / 每周周报）在 NAS 侧做，不在本仓库。
 
-## 工具集（9 个）
+## 工具集（16 个，V5 批次扩至）
+
+**写入（4）**
 
 | 工具 | 说明 |
 |---|---|
-| `record_diet(items, meal, date?)` | 批量饮食条目（名称/克数/热量/蛋白/碳水/脂肪） |
-| `record_weight(weight_kg?, body_fat_pct?, mood_score?, 围度…, date?)` | metric 通道，字段白名单，同日=覆盖更新 |
+| `record_diet(items, meal, date?)` | 批量饮食条目；items 支持 `food_id`（search_food 拿的，营养按食物库自动算）或自报营养值 |
+| `record_weight(20 个指标字段…, date?)` | metric 通道：体重/体脂/围度/血压/静息心率/血氧/睡眠/心情等（metrics 页全白名单），同日=覆盖更新 |
 | `record_workout(type, duration_min, date?, distance_km?, calories?, rpe?, notes?)` | 手动训练 |
-| `record_habit(habit_name, date?)` | 按名称匹配 active 习惯打卡（饮水也走这个） |
-| `query_today_summary(date?)` | 当日全景（含 diet/workout 行 id，删除纠错要用） |
+| `record_habit(habit_name, date?, count?)` | 按名称打卡；count=N 为计数累计 +N（喝水等 target>1 习惯），缺省为声明式打卡（同日重复 skipped） |
+
+**查询（8）**
+
+| 工具 | 说明 |
+|---|---|
+| `query_today_summary(date?)` | 当日全景（含 diet/workout 行 id、当日全部非空指标字段） |
 | `query_weekly_report(week?)` | 周报数据（YYYY-Wnn，缺省=上一完整周） |
-| `search_food(keyword)` | 食物库（每 100g 营养，常吃优先） |
+| `query_monthly_report(month?)` | 月报数据（YYYY-MM，缺省=上一完整月；与报告中心同口径） |
+| `query_metric_series(field, days?)` | 单指标逐日序列（20 指标字段 + steps；manual=是否手动值） |
+| `get_health_context(days?)` | 全景文本快照（与内置 AI 注入的上下文完全一致），趋势分析一次拿全 |
+| `get_daily_digest()` | 今日缺口提醒摘要（message 已拼好中文文案） |
+| `search_food(keyword)` | 食物库（每 100g 营养 + food_id，常吃优先） |
 | `list_habits()` | active 习惯清单（供 record_habit 对名） |
+
+**纠错（2）+ 分析（2）**
+
+| 工具 | 说明 |
+|---|---|
+| `update_record(type, row_id, fields)` | 改口修正（不必删了重记）：diet 改 meal/free_text/营养（food 关联行只能改 meal/amount_g），workout 改六字段；外部同步来源 403 |
 | `delete_record(type, row_id)` | 改口纠错删除，仅 diet/workout；外部同步来源 403 |
+| `run_analysis(days?)` | 触发内置 AI 分析报告（后台 1-2 分钟，days ∈ 7/30/90） |
+| `get_analysis()` | 读最近一次分析报告与任务状态（job=running 时稍后再查） |
 
 `record_*` 回执统一为服务器原样计数 `{received, new, skipped, results}` +
 `day_totals`（当日累计 kcal/蛋白/训练分钟，复述时不用再查一次）；
-`results[].row_id` 即落库行 id（diet/workout），供 `delete_record`。
+`results[].row_id` 即落库行 id（diet/workout），供 `update_record`/`delete_record`。
+
+**归属标识（V5）**：写入自动携带 `agent_name`（MCP initialize 握手的
+clientInfo.name，取不到记 'mcp'）落 `import_raw.blob`，/agent-log 流水按名
+显示「来自 Hermes/OpenClaw/…」；应用内置 AI 的写入记 '内置AI'。
 
 ## skill 确认话术规则（反假确认，写进每个 agent 的 skill）
 
@@ -76,9 +99,11 @@ supervisor/nginx 配置在容器可写层，改完备份到 `deploy/`。）
    **禁止**输出任何「已记录」措辞。
 2. `skipped > 0` 时如实说明（重复补发/当日已打卡），不得把 skipped 说成新记录。
 3. 补记历史必须先向用户确认日期（YYYY-MM-DD），date 参数永远显式传。
-4. 删除前用 `query_today_summary` 找到 row_id，向用户复述内容确认后再
-   `delete_record`，并引用返回的 `summary` 复述删了什么。
+4. 删除/修改前用 `query_today_summary` 找到 row_id，向用户复述内容确认后再
+   `delete_record`/`update_record`，并引用返回的 `summary` 复述改/删了什么。
 5. 工具报错（API 4xx/5xx）原样告知用户，不得掩饰成成功。
+6. 记饮食优先 `search_food` 拿 `food_id`（营养按食物库自动算，只报用量即可）；
+   库里没有的才自报营养数值。
 
 ## 同参数短窗去重（防超时重调双写）
 

@@ -1,0 +1,14 @@
+{# 「Agent 最近写入」迷你提示：近 10 分钟有 agent 写入才显示（today 页 60s 轮询）。
+   outerHTML 自替换 + 空态 hidden：space-y 跳过 hidden 元素，不留空隙 #}
+<div {% if not count %}hidden {% endif %}hx-get="{{ u('/fragments/today/agent-fresh') }}"
+     hx-trigger="every 60s" hx-swap="outerHTML">
+  {% if count %}
+  <a href="{{ u('/agent-log') }}"
+     class="flex items-center gap-2 rounded-xl bg-emerald-950/50 px-3 py-2.5 text-sm text-emerald-300 active:bg-emerald-950/80 transition-colors">
+    <span>🤖</span>
+    <span class="flex-1">Agent 刚记了 {{ count }} 条，点这里核对</span>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5"><path d="m9 6 6 6-6 6"/></svg>
+  </a>
+  {% endif %}
+</div>

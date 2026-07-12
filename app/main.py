@@ -40,9 +40,11 @@ async def forwarded_prefix(request: Request, call_next):
 
 @app.middleware("http")
 async def csrf_same_origin(request: Request, call_next):
-    """最小 CSRF：非 GET 请求校验同源（§7.2）；/api/ingest/* 走 Bearer 豁免。"""
+    """最小 CSRF：非 GET 请求校验同源（§7.2）；/api/ingest/* 与 /api/agent/*
+    走 Bearer 豁免（Authorization 头跨站伪造不了——此前 agent POST 靠非浏览器
+    客户端不带 Origin 隐性放行，V5 显式化）。"""
     if request.method not in ("GET", "HEAD", "OPTIONS") and not request.url.path.startswith(
-        "/api/ingest/"
+        ("/api/ingest/", "/api/agent/")
     ):
         sec_fetch_site = request.headers.get("Sec-Fetch-Site")
         if sec_fetch_site is not None:

@@ -8,5 +8,17 @@
               [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-1.5 [&_strong]:text-slate-50">
     {{ html | safe }}
   </div>
+  {% if actions %}
+  {# 本次问答执行的写操作（走 agent 通道留档，/agent-log 可核对撤销） #}
+  <div class="rounded-xl border border-slate-800 bg-slate-900/60 px-4 py-2.5 space-y-1">
+    <p class="text-xs text-slate-400">本次执行的操作</p>
+    {% for a in actions %}
+    <p class="text-xs {{ 'text-emerald-400' if a.ok else 'text-red-400' }}">
+      {{ '✓' if a.ok else '✗' }} {{ a.label }} · {{ a.summary }}
+    </p>
+    {% endfor %}
+    <a href="{{ u('/agent-log') }}" class="inline-block text-xs text-slate-500 underline decoration-slate-700">到 Agent 记录页核对/撤销</a>
+  </div>
+  {% endif %}
 </div>
 {% endif %}

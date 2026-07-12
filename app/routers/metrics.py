@@ -39,6 +39,7 @@ SOURCE_LABELS = {
     "keep_api": "Keep",
     "keep_file": "Keep",
     "miscale": "体脂秤",
+    "agent": "Agent",  # agent 写入的指标登记 autofilled='agent'（offline._normalize_metric）
 }
 
 # 表单字段定义：(字段名, 中文名, 类型, 下限, 上限)。上下限做轻量合法性校验，

@@ -177,13 +177,18 @@ async def ai_ask(request: Request, db: Session = Depends(get_db)):
     try:
         from starlette.concurrency import run_in_threadpool
 
-        answer = await run_in_threadpool(llm.ask, db, question)
+        answer, actions = await run_in_threadpool(llm.ask, db, question)
     except llm.LLMError as e:
         return templates.TemplateResponse(
             request, "fragments/ai_answer.html", {"error": str(e)}
         )
+    # 有写操作时广播刷新（今日页三环/饮食汇总等片段监听这些事件）
+    headers = {"HX-Trigger": "diet-changed, workout-changed, habit-changed"} if any(
+        a.get("ok") for a in actions
+    ) else {}
     return templates.TemplateResponse(
         request,
         "fragments/ai_answer.html",
-        {"question": question, "html": _render_md(answer)},
+        {"question": question, "html": _render_md(answer), "actions": actions},
+        headers=headers,
     )

@@ -17,11 +17,15 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.models import AppSetting, DailyActivity, DietLog, Habit, HabitLog, WorkoutLog
+from app.models import AppSetting, DailyActivity, DietLog, Habit, HabitLog, SyncState, WorkoutLog
 from app.routers.review import _is_cardio
 from app.timeutil import today_local
 
 router = APIRouter(prefix="/api/reminders")
+
+# agent 写入通道连续失败达到该阈值时随 digest 提醒（壳通知是唯一主动触达渠道；
+# 偶发一两次网络抖动不吵人）
+AGENT_FAIL_ALERT_THRESHOLD = 3
 
 
 def _setting_num(db: Session, key: str) -> float | None:
@@ -127,6 +131,15 @@ def reminders_digest(request: Request, db: Session = Depends(get_db)) -> Respons
     parts.extend(weekly_gaps[:2])
 
     all_done = not parts
+
+    # Agent 通道健康告警（不计入 all_done——是系统故障提示，不是目标缺口）：
+    # 连续失败说明 Hermes 等在反复写不进来，尽早发现免得数据断档
+    agent_state = db.get(SyncState, "agent")
+    agent_fails = agent_state.consecutive_failures if agent_state is not None else 0
+    agent_alert = (
+        f"⚠️ Agent 写入通道连续失败 {agent_fails} 次，到「Agent 记录」页看错误"
+        if agent_fails >= AGENT_FAIL_ALERT_THRESHOLD else None
+    )
     payload: dict[str, Any] = {
         "date": today.isoformat(),
         "habits_pending": len(pending),
@@ -136,6 +149,9 @@ def reminders_digest(request: Request, db: Session = Depends(get_db)) -> Respons
         "steps": steps,
         "weekly_cardio_min": cardio_min,
         "all_done": all_done,
-        "message": "今日目标全部达成 🎉" if all_done else " · ".join(parts),
+        "message": " · ".join(
+            ([agent_alert] if agent_alert else [])
+            + (["今日目标全部达成 🎉"] if all_done else parts)
+        ),
     }
     return JSONResponse(payload)

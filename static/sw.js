@@ -6,7 +6,7 @@
  * 注意：服务器对 /static 不发 Cache-Control，install/回源必须显式绕过浏览器
  * HTTP 缓存（cache: 'reload'/'no-cache'），否则新版本缓存会固化到旧资源。
  */
-const SW_VERSION = 'v14';
+const SW_VERSION = 'v15';
 const CACHE_NAME = 'shadow-health-' + SW_VERSION;
 // 子路径部署（/shealth）时本文件在 <前缀>/sw.js 下发，从自身 URL 反推前缀
 const ROOT = self.location.pathname.replace(/\/sw\.js$/, '');

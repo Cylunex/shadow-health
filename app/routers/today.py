@@ -5,7 +5,7 @@
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy import func, select
@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.deps import require_login, templates
-from app.models import AppSetting, DailyActivity, Habit, HabitLog, WorkoutLog
+from app.models import AppSetting, DailyActivity, Habit, HabitLog, ImportRaw, WorkoutLog
 from app.timeutil import now_local, today_local
 
 router = APIRouter(dependencies=[Depends(require_login)])
@@ -21,6 +21,7 @@ router = APIRouter(dependencies=[Depends(require_login)])
 WEEKDAY_CN = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
 DEFAULT_TARGET_STEPS = 8000  # 设计文档 §5.6：target_steps 默认 8000（源 06）
 DAILY_WORKOUT_TARGET_MIN = 30  # 三环之「训练环」日目标（Apple Fitness 同款默认值）
+AGENT_FRESH_SECONDS = 600  # 「Agent 最近写入」提示窗口（60s 轮询，窗口放宽到 10 分钟）
 
 
 def _greeting(hour: int) -> str:
@@ -106,6 +107,23 @@ def today_page(request: Request, db: Session = Depends(get_db)):
         "weekday_cn": WEEKDAY_CN[today.isoweekday() - 1],
     }
     return templates.TemplateResponse(request, "today.html", ctx)
+
+
+@router.get("/fragments/today/agent-fresh")
+def agent_fresh_fragment(request: Request, db: Session = Depends(get_db)):
+    """「Agent 最近写入」迷你提示：近 10 分钟经 agent 通道收到的留档条数，
+    有才显示（无写入渲染空片段）。60s 轮询——agent 在外面记了东西，
+    正开着今日页也能看见，点进 /agent-log 核对。"""
+    since = now_local() - timedelta(seconds=AGENT_FRESH_SECONDS)
+    count = db.execute(
+        select(func.count()).select_from(ImportRaw).where(
+            ImportRaw.source == "agent",
+            func.coalesce(ImportRaw.last_seen_at, ImportRaw.imported_at) >= since,
+        )
+    ).scalar_one()
+    return templates.TemplateResponse(
+        request, "fragments/today_agent_fresh.html", {"count": count}
+    )
 
 
 @router.get("/fragments/today/rings")

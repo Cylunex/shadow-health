@@ -15,10 +15,11 @@ app_settings['llm_config'] 结构（设置页「AI 模型」表单维护）：
 """
 from __future__ import annotations
 
+import json
 import os
 from collections import Counter
 from datetime import date, timedelta
-from typing import Any
+from typing import Any, Callable
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -31,8 +32,10 @@ from app.models import (
     Habit,
     HabitLog,
     MonthlyReview,
+    PlanEnrollment,
     WeeklyReview,
     WorkoutLog,
+    WorkoutPlan,
 )
 from app.timeutil import today_local
 
@@ -193,6 +196,41 @@ def build_context(db: Session, days: int = 30) -> str:
         )
         lines.append("- " + " ".join(f"{d:%m-%d}:{m}" for d, m in moods))
 
+    # 生命体征（血压/静息心率/血氧/内脏脂肪）：有记录才输出——这是 SYSTEM_PROMPT
+    # 「值得就医的信号」提示的数据来源，此前一直没注入
+    vitals_lines: list[str] = []
+    for field, label, nd in (
+        ("bp_systolic", "收缩压", 0), ("bp_diastolic", "舒张压", 0),
+        ("resting_hr", "静息心率", 0), ("spo2_pct", "血氧%", 1),
+        ("visceral_fat_level", "内脏脂肪等级", 0),
+    ):
+        col = getattr(BodyMetrics, field)
+        pts = db.execute(
+            select(BodyMetrics.log_date, col)
+            .where(BodyMetrics.log_date >= since, col.is_not(None))
+            .order_by(BodyMetrics.log_date)
+        ).all()
+        if pts:
+            avg = sum(float(v) for _, v in pts) / len(pts)
+            vitals_lines.append(
+                f"- {label}: 最近 {pts[-1][0]} 为 {_fmt(pts[-1][1], nd)}，"
+                f"{len(pts)} 天均值 {_fmt(avg, nd)}"
+            )
+    if vitals_lines:
+        lines.append("\n## 生命体征")
+        lines.extend(vitals_lines)
+
+    # 手记备注（body_metrics.notes）：用户当天的主观记录，分析时是重要线索
+    notes_rows = db.execute(
+        select(BodyMetrics.log_date, BodyMetrics.notes)
+        .where(BodyMetrics.log_date >= since, BodyMetrics.notes.is_not(None))
+        .order_by(BodyMetrics.log_date)
+    ).all()
+    notes_rows = [(d, n.strip()) for d, n in notes_rows if n and n.strip()]
+    if notes_rows:
+        lines.append("\n## 手记备注（最近 10 条）")
+        lines.extend(f"- {d}: {n[:80]}" for d, n in notes_rows[-10:])
+
     # 睡眠（body_metrics.sleep_hours 已含自动回填）
     sleep_days, sleep_avg = db.execute(
         select(func.count(), func.avg(BodyMetrics.sleep_hours)).where(
@@ -232,6 +270,34 @@ def build_context(db: Session, days: int = 30) -> str:
         f"\n## 训练：{len(wl)} 次，共 {total_min} 分钟（≈{_fmt(total_min / max(days / 7, 1), 0)} 分钟/周）；"
         f"sRPE 负荷 {load}（未评级 {unrated_min} 分钟）；类型分布 {dict(types.most_common(8))}"
     )
+
+    # 进行中的训练计划（enrollment status='active'）
+    active_plans = db.execute(
+        select(WorkoutPlan.name, PlanEnrollment.start_date)
+        .join(WorkoutPlan, PlanEnrollment.plan_id == WorkoutPlan.id)
+        .where(PlanEnrollment.status == "active")
+        .order_by(PlanEnrollment.start_date)
+    ).all()
+    if active_plans:
+        lines.append(
+            "- 进行中计划：" + "；".join(f"「{n}」（{sd} 开始）" for n, sd in active_plans)
+        )
+
+    # 力量动作 PR（detail.strength 组次明细汇总，按最近练过排前 8）
+    from app.services.pr import exercise_prs
+
+    prs = exercise_prs(db)
+    if prs:
+        lines.append("\n## 力量动作 PR（✓=达 3×15 可进阶加重）")
+        top = sorted(
+            prs.items(), key=lambda kv: kv[1]["last_date"] or date.min, reverse=True
+        )[:8]
+        for name, p in top:
+            seg = f"- {name}: 最多 {p['max_reps']} 次"
+            if p["max_weight"]:
+                seg += f"，最重 {_fmt(p['max_weight'])}kg"
+            seg += f"（{p['sessions']} 次会话，最近 {p['last_date']}{'，✓' if p['ready'] else ''}）"
+            lines.append(seg)
 
     # 饮食（近 14 天更有代表性）
     diet_since = today - timedelta(days=13)
@@ -306,6 +372,8 @@ def build_context(db: Session, days: int = 30) -> str:
                 f"{snap.get('workout_min', '-')}min（有氧{snap.get('cardio_min', '-')}min），"
                 f"打卡率{snap.get('habit_rate', '-')}%，日均步数{snap.get('avg_steps', '-')}"
             )
+            if r.summary and r.summary.strip():  # 手写复盘：主观感受是数字之外的关键线索
+                lines.append(f"  · 复盘：{r.summary.strip()[:120]}")
 
     # 月报快照（最近 3 份）
     months = db.execute(
@@ -323,6 +391,8 @@ def build_context(db: Session, days: int = 30) -> str:
                 f"饮食记录{snap.get('diet_days', '-')}天（日均{snap.get('avg_kcal', '-')}kcal），"
                 f"日均步数{snap.get('avg_steps', '-')}（达标{snap.get('steps_ok_days', '-')}天）"
             )
+            if r.summary and r.summary.strip():
+                lines.append(f"  · 复盘：{r.summary.strip()[:120]}")
 
     return "\n".join(lines)
 
@@ -332,28 +402,49 @@ class LLMError(Exception):
     """带用户可读中文信息的 LLM 调用错误。"""
 
 
+# tool use 循环轮数上限：正常一问最多两三轮（查→记→复核），8 轮兜住失控循环
+MAX_TOOL_ROUNDS = 8
+
+# 工具执行回调：(工具名, 参数 dict) -> JSON 可序列化结果 dict（错误折成 {"error": ...}）
+ToolExecutor = Callable[[str, dict], dict]
+
+
+def _tool_result_json(result: Any) -> str:
+    return json.dumps(result, ensure_ascii=False, default=str)
+
+
 def _call(
     db: Session,
     system: str,
     user_text: str,
     images: list[tuple[str, str]] | None = None,
     max_tokens: int = 8000,
+    tools: list[dict[str, Any]] | None = None,
+    tool_executor: ToolExecutor | None = None,
 ) -> str:
-    """统一入口：images 为 (media_type, base64) 列表，由各家适配器拼内容块。"""
+    """统一入口：images 为 (media_type, base64) 列表，由各家适配器拼内容块。
+
+    tools（Claude 原生 {name, description, input_schema} 形态，OpenAI 由适配器
+    转换）+ tool_executor 一起给才启用工具调用循环；不传即与旧行为完全一致。
+    """
     cfg = get_config(db)
     if not cfg["configured"]:
         raise LLMError(
             f"未配置 {PROVIDER_LABELS[cfg['provider']]} API Key——"
             "到 设置 →「AI 模型」填入（或写进 .env）后即可使用。"
         )
+    if tools is not None and tool_executor is None:
+        raise ValueError("tools 与 tool_executor 必须成对提供")
     if cfg["provider"] == "openai":
-        return _call_openai(cfg, system, user_text, images, max_tokens)
-    return _call_claude(cfg, system, user_text, images, max_tokens)
+        return _call_openai(cfg, system, user_text, images, max_tokens, tools, tool_executor)
+    return _call_claude(cfg, system, user_text, images, max_tokens, tools, tool_executor)
 
 
 def _call_claude(
     cfg: dict, system: str, user_text: str,
     images: list[tuple[str, str]] | None, max_tokens: int,
+    tools: list[dict[str, Any]] | None = None,
+    tool_executor: ToolExecutor | None = None,
 ) -> str:
     import anthropic
 
@@ -370,14 +461,38 @@ def _call_claude(
             {"type": "image", "source": {"type": "base64", "media_type": mt, "data": b64}}
             for mt, b64 in images
         ] + [{"type": "text", "text": user_text}]
+    create_kwargs: dict[str, Any] = {}
+    if tools:
+        create_kwargs["tools"] = tools  # 已是 Claude 原生 {name, description, input_schema}
+    messages: list[dict[str, Any]] = [{"role": "user", "content": content}]
     try:
-        response = client.messages.create(
-            model=cfg["model"],
-            max_tokens=max_tokens,
-            thinking={"type": "adaptive"},
-            system=system,
-            messages=[{"role": "user", "content": content}],
-        )
+        for _ in range(MAX_TOOL_ROUNDS):
+            response = client.messages.create(
+                model=cfg["model"],
+                max_tokens=max_tokens,
+                thinking={"type": "adaptive"},
+                system=system,
+                messages=messages,
+                **create_kwargs,
+            )
+            if response.stop_reason == "tool_use" and tool_executor is not None:
+                tool_results = []
+                for block in response.content:
+                    if block.type == "tool_use":
+                        out = tool_executor(block.name, dict(block.input or {}))
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": _tool_result_json(out),
+                        })
+                # assistant 回合原样回传（含 thinking 块——adaptive thinking 下
+                # 工具循环必须带回 signature，缺了 API 会拒）
+                messages.append({"role": "assistant", "content": response.content})
+                messages.append({"role": "user", "content": tool_results})
+                continue
+            break
+        else:
+            raise LLMError("工具调用超过轮数上限，请换个问法或分步来。")
     except anthropic.AuthenticationError:
         raise LLMError("API Key 无效或已失效（401）——检查 设置→AI 模型 或 .env 的 Key。")
     except anthropic.NotFoundError:
@@ -400,6 +515,8 @@ def _call_claude(
 def _call_openai(
     cfg: dict, system: str, user_text: str,
     images: list[tuple[str, str]] | None, max_tokens: int,
+    tools: list[dict[str, Any]] | None = None,
+    tool_executor: ToolExecutor | None = None,
 ) -> str:
     import openai
 
@@ -421,15 +538,65 @@ def _call_openai(
     model_l = cfg["model"].lower()
     reasoning = model_l.startswith(("gpt-5", "o1", "o3", "o4"))
     limit_kw = {"max_completion_tokens" if reasoning else "max_tokens": max_tokens}
+    if tools:
+        # Claude 原生工具形态 → OpenAI function calling
+        limit_kw["tools"] = [
+            {
+                "type": "function",
+                "function": {
+                    "name": t["name"],
+                    "description": t["description"],
+                    "parameters": t["input_schema"],
+                },
+            }
+            for t in tools
+        ]
+    messages: list[dict[str, Any]] = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": content},
+    ]
     try:
-        response = client.chat.completions.create(
-            model=cfg["model"],
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": content},
-            ],
-            **limit_kw,
-        )
+        for _ in range(MAX_TOOL_ROUNDS):
+            response = client.chat.completions.create(
+                model=cfg["model"], messages=messages, **limit_kw
+            )
+            if not response.choices:
+                raise LLMError("模型没有返回内容，请重试。")
+            choice = response.choices[0]
+            tool_calls = getattr(choice.message, "tool_calls", None)
+            if tool_calls and tool_executor is not None:
+                messages.append({
+                    "role": "assistant",
+                    "content": choice.message.content or None,
+                    "tool_calls": [
+                        {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.function.name,
+                                "arguments": tc.function.arguments or "{}",
+                            },
+                        }
+                        for tc in tool_calls
+                    ],
+                })
+                for tc in tool_calls:
+                    try:
+                        args = json.loads(tc.function.arguments or "{}")
+                    except ValueError:
+                        args = {}
+                    out = tool_executor(
+                        tc.function.name, args if isinstance(args, dict) else {}
+                    )
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": _tool_result_json(out),
+                    })
+                continue
+            break
+        else:
+            raise LLMError("工具调用超过轮数上限，请换个问法或分步来。")
     except openai.AuthenticationError:
         raise LLMError("API Key 无效或已失效（401）——检查 设置→AI 模型 或 .env 的 Key。")
     except openai.NotFoundError:
@@ -444,9 +611,6 @@ def _call_openai(
     except openai.APIConnectionError:
         raise LLMError("连不上 OpenAI API——检查网络；自建/代理端点在设置里填 Base URL。")
 
-    if not response.choices:
-        raise LLMError("模型没有返回内容，请重试。")
-    choice = response.choices[0]
     refusal = getattr(choice.message, "refusal", None)
     if refusal:
         raise LLMError("模型拒绝了本次请求，请调整提问后重试。")
@@ -527,13 +691,46 @@ def analyze(db: Session, days: int = 30) -> str:
     )
 
 
-def ask(db: Session, question: str, days: int = 30) -> str:
-    """带数据上下文的自由问答。"""
+ASK_ACTION_RULES = """
+
+你还配备了一组工具，可以查询与写入用户的健康数据（记录饮食/训练/身体指标/习惯打卡、查当日汇总、查食物库、删除记错的记录）。使用规则（历史伤疤，必须严格遵守）：
+1. 写入后的确认话术必须引用工具回执的 new 计数（如「已入库 new=2，今日累计 1830 kcal」）；没有回执或 new=0 时**禁止**使用任何「已记录」措辞，如实说明失败原因。
+2. skipped>0 时如实说明（重复补发/当日已打卡），不得把 skipped 说成新记录。
+3. 用户要补记历史但没给日期时，先反问确认日期（YYYY-MM-DD），不要猜。
+4. 删除前先用 query_summary 找到 row_id 并向用户复述要删的内容；工具报错原样告知，不得掩饰成成功。
+5. 记饮食优先 search_food 拿 food_id（营养按食物库自动算）；纯咨询问题不要调用写入工具。"""
+
+
+def ask(db: Session, question: str, days: int = 30) -> tuple[str, list[dict[str, Any]]]:
+    """带数据上下文与工具调用的自由问答（V5：能真正动手记录/纠错）。
+
+    返回 (回答文本, 执行的写操作列表 [{tool, label, summary, ok}])——写操作
+    经 ai_tools 走 agent 通道（import_raw 留档，/agent-log 可核对撤销）。
+    """
+    from app.services import ai_tools  # 延迟 import：ai_tools → routers → llm，防环
+
+    actions: list[dict[str, Any]] = []
+
+    def _exec(name: str, args: dict) -> dict:
+        result = ai_tools.run_tool(db, name, args)
+        if name in ai_tools.WRITE_TOOLS:  # 只把写操作列给用户核对，查询不刷屏
+            actions.append({
+                "tool": name,
+                "label": ai_tools.TOOL_LABELS.get(name, name),
+                "summary": ai_tools.receipt_summary(name, result),
+                "ok": "error" not in result,
+            })
+        return result
+
     context = build_context(db, days=days)
-    return _call(
+    answer = _call(
         db,
         SYSTEM_PROMPT
-        + "\n\n当前任务是回答用户的具体问题：直接针对问题作答，简洁为先，不必输出完整报告结构。",
+        + "\n\n当前任务是回答用户的具体问题：直接针对问题作答，简洁为先，不必输出完整报告结构。"
+        + ASK_ACTION_RULES,
         f"{context}\n\n用户的问题：{question}",
         max_tokens=4000,
+        tools=ai_tools.TOOL_DEFS,
+        tool_executor=_exec,
     )
+    return answer, actions

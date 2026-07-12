@@ -48,6 +48,8 @@ SOURCE_LABELS = {
     "health_connect": "HC",
     "samsung_direct": "手表",
     "keep": "Keep",
+    # agent 写入行 source='manual'+external_id='agent-…'，徽标在模板按前缀识别
+    "agent": "Agent",
 }
 STATUS_LABELS = {"active": "执行中", "done": "已完成", "abandoned": "已放弃"}
 WEEKDAY_NAMES = {1: "周一", 2: "周二", 3: "周三", 4: "周四", 5: "周五", 6: "周六", 7: "周日"}

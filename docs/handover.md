@@ -1,13 +1,72 @@
 # 会话交接（自包含，新会话从这里继续）
 
-> 最后更新：2026-07-12。配套阅读：README（功能全貌）· docs/deploy.md（NAS 部署照单）·
-> docs/mobile-sync.md（三星直读背景）· gateway/README.md（体脂秤双端）·
-> docs/audit-2026-07-10.md（全面审查清单，已全清、归档备忘）·
-> docs/offline-plan.md（手机离线记录方案，阶段一~三已落地，待真机回归）·
-> docs/subpath-agent-plan.md（V3 批次执行计划：/shealth 子路径 + 多 Agent MCP +
-> personal_data 迁移——**三段已全部完成**，见下）。
+> 最后更新：2026-07-12（V5 批次落地）。配套阅读：README（功能全貌）·
+> docs/deploy.md（NAS 部署照单）· docs/mobile-sync.md（三星直读背景）·
+> gateway/README.md（体脂秤双端）· docs/audit-2026-07-10.md（全面审查清单，
+> 已全清、归档备忘）· docs/offline-plan.md（手机离线记录方案，阶段一~三已落地，
+> 待真机回归）· docs/subpath-agent-plan.md（V3 批次计划，三段已完成）·
+> mcp_server/README.md（MCP 16 工具 + 话术规则 + NAS 部署）。
 > **当前无进行中批次**：剩余事项 = 真机回归（V3/V4 壳与 APK 改动）+
-> offline-plan 阶段四（视真机手感决定）+ NAS 上线切换（§1.8 与 P3 runbook，用户做）。
+> offline-plan 阶段四（视真机手感决定）+ NAS 上线切换（§1.8 与 P3 runbook，用户做）+
+> NAS 侧 MCP 接入（supervisor/Hermes/OpenClaw 注册照 mcp_server/README，用户做）。
+
+## ✅ 已完成：V5 批次「Agent 深度使用」（2026-07-12，五段全落地，218 测全绿）
+
+1. **P1 读面扩展**：GET /api/agent/context?days=N（直出 llm.build_context，与内置
+   AI 注入完全一致）、/api/agent/report/monthly?month=YYYY-MM（report._aggregate_month
+   同一查询，complete 口径照 weekly）、/api/agent/metrics/series?field=&days=
+   （metrics._bm_field_map 同一取数，白名单 _FIELD_DEFS 20 字段 + steps，带
+   manual 标记）；summary 加 metrics 字段（当日全部非空指标——血压等此前写得进
+   读不出）；MCP 新工具 get_health_context/query_monthly_report/query_metric_series/
+   get_daily_digest（包装既有 /api/reminders/digest）；record_weight 白名单 8→20
+2. **P2 写面扩展**：diet payload 支持 food_id+amount_g（offline._normalize_diet
+   存在性校验 + diet._food_macros 服务端重算营养，agent 自报 kcal 被忽略防漂移；
+   free_text 与 food_id 二选一）；habit payload mode='increment'（done_count 累加，
+   照 habits increment upsert 语义；防重放靠 client_id+parse_status 门控）；
+   归一化 row_id 写 import_raw.blob（ingest._mark_raw 加 blob_patch 参数，JSONB
+   || 合并）——/agent-log 撤销改为 blob.row_id 优先直查，内容匹配退化为老留档
+   兜底（food_id 留档无 blob.row_id 视为已撤销）；POST /api/agent/update
+   {type,row_id,fields}（部分字段修正，diet food 关联行仅 meal/amount_g 可改并
+   重算营养；workout merge 后整体过 parse_workout_payload 重校验，外部来源 403）
+   + MCP update_record（带短窗去重）
+3. **P3 身份与 UI**：/api/ingest/agent 顶层可选 agent_name（≤50 字）落留档 blob，
+   MCP 自动带 clientInfo.name（Hermes/OpenClaw 共用实例也分得清谁写的，兜底
+   'mcp'，内置 AI 记 '内置AI'），/agent-log 流水行显「来自 X」；来源徽标三处
+   （workout 行按 external_id 'agent-' 前缀，**保持可编辑**；metric 改登记
+   autofilled='agent' 而非 mark_manual——徽标零改动显示，代价=同日秤实测可
+   覆盖 agent 转述值，offline 通道语义不变；settings._SOURCE_LABELS 补
+   agent/offline）；today 页「Agent 刚记了 N 条」迷你卡（60s 轮询、近 10 分钟
+   窗口、空态 hidden 不占 space-y 间距）；/agent-log 类型筛选 + 加载更多
+   （t/n 进 URL query 兼容 5s 轮询，revoke 透传保持视图）+ habit/metric 行
+   「去改」链接；digest 附 agent 通道连续失败 ≥3 次告警（不计入 all_done）
+4. **P4 内置 AI 工具化**：app/services/ai_tools.py 进程内执行器（7 工具：
+   record_diet/workout/weight/habit + delete_record + query_summary + search_food；
+   **不 import mcp**）——写入走 offline.ingest_records（从 ingest_batch 抽出的
+   HTTP 无关核心，返回 (status, body)）source='agent'；llm._call 加 tools +
+   tool_executor（Claude 原生工具循环——assistant 回合含 thinking 块必须原样回传；
+   OpenAI function calling 循环；上限 8 轮），不传 tools 的 analyze/餐照路径零变化；
+   llm.ask 升级为 (answer, actions) 带反假确认话术规则（new 计数/skipped 如实/
+   补记先确认日期/删除先复述），ai_answer.html 显「本次执行的操作」+ 撤销入口，
+   写操作成功后 HX-Trigger 广播刷新今日页；build_context 补：生命体征（血压/
+   静息心率/血氧/内脏脂肪）、手记备注、进行中训练计划、力量 PR（pr.exercise_prs
+   前 8）、周/月报手写复盘 summary；GET/POST /api/agent/analysis（读缓存报告 +
+   触发后台分析，与 /ai/analyze 同 _JOB_KEY 互斥）+ MCP run_analysis/get_analysis
+5. **P5 测试文档**：tests/test_mcp_tools.py 33 个（MockTransport 全 mock：
+   record_habit 三态匹配、_ingest 503 同 client_id 重试、20 字段白名单锁、
+   update_record 去重）+ tests/test_agent_log.py 27 个（blob.row_id 优先/内容
+   匹配兜底/revoke 幂等与 blob 合并/筛选分页；登录用 auth.create_session 直发
+   token）+ tests/test_agent_v5.py 22 个（新端点口径/food_id 重算/increment/
+   update 边界/agent_name 落 blob/ai_tools 直测；错峰日期 today-360，agent_log
+   用 today-340）；/api/agent/ 加入 CSRF Bearer 豁免前缀（main.py，显式化）；
+   mcp_server/README 工具表 9→16 + 话术规则补 update/food_id；README 补多 Agent
+   通道段落。Tailwind 重建 + SW v15
+6. 环境注意：**开发机要 `uv sync --group mcp`**，否则 test_mcp_tools 整文件
+   importorskip 静默跳过（假全绿）；测试错峰日期已占 today-300/-320/-340/-350/
+   -360、2020-01/02，新测试另选
+7. 剩余（NAS 侧，用户做）：supervisor [program:shealth-mcp]、Hermes/OpenClaw
+   注册、skill v2（话术规则含 update_record）、cron 迁移——照 mcp_server/README；
+   V6 候选：DietLog source 列（饮食行徽标）、餐照识别 agent 通道、训练计划操作面、
+   周/月复盘写端点、重算冻结快照端点、per-agent token、pending 审阅流
 
 ## ✅ 已完成：V4 优化批次（2026-07-12，六项全落地）
 

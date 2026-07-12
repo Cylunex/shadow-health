@@ -4,7 +4,9 @@
 
 四大模块：**饮食记录+营养分析 · 运动训练管理 · 身体指标追踪 · 养生任务打卡**，外加三星健康历史数据一次性导入、Health Connect 增量同步、小米体脂秤 2 蓝牙直连（上秤即记录，见 [gateway/README.md](gateway/README.md)）。
 
-亮点：餐次拍照 + **AI 识别热量**（Claude Vision）· 自定义食物库 · 身体围度追踪 · 图表目标参考线 · 睡眠分期堆叠图 · 习惯/训练打卡热力图 · 训练周负荷（sRPE）· HIIT/组间计时器 · 累计成就 · 每日提醒 · 报告中心（日报/周报/月报 + 手写复盘）· AI 分析（Claude）· PWA 离线可用。
+亮点：餐次拍照 + **AI 识别热量**（Claude Vision）· 自定义食物库 · 身体围度追踪 · 图表目标参考线 · 睡眠分期堆叠图 · 习惯/训练打卡热力图 · 训练周负荷（sRPE）· HIIT/组间计时器 · 累计成就 · 每日提醒 · 报告中心（日报/周报/月报 + 手写复盘）· AI 分析与**能动手记录的 AI 问答**（Claude/OpenAI 双通道 tool use）· PWA 离线可用。
+
+**多 Agent 通道**：外部 AI Agent（Hermes/OpenClaw 等）经 [MCP server](mcp_server/README.md)（16 工具）或 REST（`/api/ingest/agent` + `/api/agent/*`，Bearer）读写数据——写入全部幂等留档（`import_raw`），`/agent-log` 页可核对/撤销，写入按 `agent_name` 归属展示；内置 AI 问答走同一通道同一审计。
 
 > `app/seed/data/*.md` 训练计划内容素材为私人整理，不入仓库；缺失时 seed 自动跳过对应计划，说明见 [app/seed/data/README.md](app/seed/data/README.md)。
 > 另有 **5 套内置通用计划**（徒手入门/减脂 HIIT/久坐修复/核心强化/我的·常用全身循环，`app/seed/plans_builtin.py`）与 **68 个动作的动作库**（`/workout/exercises`，含要领与进阶链），不依赖私人素材、开箱即用。

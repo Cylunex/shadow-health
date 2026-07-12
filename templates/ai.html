@@ -53,7 +53,7 @@
   {# ---- 自由问答 ---- #}
   <section class="card">
     <h2 class="card-title">问一问</h2>
-    <p class="text-xs text-slate-500 mb-2">带上你近 30 天的数据上下文回答，例如"我最近的减脂速度合理吗""下周训练该怎么排"。</p>
+    <p class="text-xs text-slate-500 mb-2">带上你近 30 天的数据上下文回答，也能直接动手记录——例如"我最近的减脂速度合理吗""帮我记午餐：牛肉面一碗""昨天那条跑步记错了，删掉"。写入会留档到 Agent 记录页，可核对撤销。</p>
     <form hx-post="{{ u('/ai/ask') }}" hx-target="#ai-answer" hx-swap="innerHTML"
           hx-disabled-elt="find button[type='submit']" hx-indicator="#ai-ask-spinner"
           class="space-y-2">

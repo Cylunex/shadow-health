@@ -33,7 +33,7 @@
 
   {# ---- 最近写入流水（import_raw source='agent' 留档） ---- #}
   <section class="card">
-    <h2 class="card-title">最近写入</h2>
+    <h2 class="card-title">最近写入{% if rtype %} · {{ type_labels[rtype] }}{% endif %}</h2>
     {% if not items %}
     <p class="text-sm text-slate-500">暂无记录</p>
     {% else %}
@@ -47,7 +47,9 @@
             <span class="badge-accent animate-pulse ml-1">新</span>
             {% endif %}
           </p>
-          <p class="mt-0.5 text-xs text-slate-500">记录日期 {{ it.rec_date }} · 收到 {{ it.ago }}</p>
+          <p class="mt-0.5 text-xs text-slate-500">
+            记录日期 {{ it.rec_date }} · 收到 {{ it.ago }}{% if it.agent %} · 来自 {{ it.agent }}{% endif %}
+          </p>
           {% if it.error %}
           <p class="mt-0.5 text-xs text-red-400/80 break-all">{{ it.error }}</p>
           {% endif %}
@@ -61,15 +63,24 @@
         </span>
         {% if it.revocable %}
         <button type="button" class="btn-danger shrink-0 !min-h-0 !px-2.5 !py-1.5 !rounded-lg text-xs"
-                hx-post="{{ u('/agent-log/revoke') }}"
+                hx-post="{{ u('/agent-log/revoke') }}?t={{ rtype }}&n={{ limit }}"
                 hx-vals='{"raw_id": {{ it.raw_id }}}'
                 hx-confirm="撤销这条{{ it.type_label }}记录？会删除已入库的那一行。"
                 hx-target="#agent-log-status" hx-swap="innerHTML">撤销</button>
+        {% elif it.edit_url %}
+        <a href="{{ u(it.edit_url) }}"
+           class="btn-ghost shrink-0 !min-h-0 !px-2.5 !py-1.5 !rounded-lg text-xs">去改</a>
         {% endif %}
         {% endif %}
       </li>
       {% endfor %}
     </ul>
+    {% if has_more %}
+    <a href="{{ u('/agent-log') }}?t={{ rtype }}&n={{ limit + 30 }}"
+       class="mt-3 block rounded-lg bg-slate-800/60 py-2 text-center text-xs text-slate-300">
+      加载更多（当前 {{ items | length }} 条）
+    </a>
+    {% endif %}
     {% endif %}
   </section>
 

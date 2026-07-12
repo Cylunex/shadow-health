@@ -6,6 +6,9 @@
       <span class="font-medium truncate max-w-[11rem]">{{ log.session_type or '训练' }}</span>
       {% if log.source != 'manual' %}
       <span class="badge">{{ source_labels.get(log.source, log.source) }}</span>
+      {% elif log.external_id and log.external_id.startswith('agent-') %}
+      {# agent 写入行（manual+external_id 前缀）：标注来源但保持可编辑 #}
+      <span class="badge">Agent</span>
       {% elif log.detail is mapping and log.detail.get('from_template') %}
       <span class="badge-accent">模板</span>
       {% endif %}

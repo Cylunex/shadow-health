@@ -30,7 +30,8 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
-from sqlalchemy import func, literal_column, select, text, update
+from sqlalchemy import cast, func, literal_column, select, text, update
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -392,8 +393,18 @@ def _mark_raw(
     status: str,
     error: str | None = None,
     version: int = PARSER_VERSION,
+    blob_patch: dict | None = None,
 ) -> None:
-    """import_raw 行解析状态统一更新（HC/秤/三星直读/offline/agent 各通道共享）。"""
+    """import_raw 行解析状态统一更新（HC/秤/三星直读/offline/agent 各通道共享）。
+
+    blob_patch：合并进 blob（JSONB ||，同键覆盖、他键保留）——agent 通道用来
+    记归一化行 id 与 agent 名，供 /agent-log 精确撤销与归属展示。
+    """
+    values: dict[str, Any] = dict(parse_status=status, parse_error=error, parse_version=version)
+    if blob_patch:
+        values["blob"] = func.coalesce(
+            ImportRaw.blob, cast({}, JSONB)
+        ).op("||")(cast(blob_patch, JSONB))
     db.execute(
         update(ImportRaw)
         .where(
@@ -401,7 +412,7 @@ def _mark_raw(
             ImportRaw.record_type == record_type,
             ImportRaw.external_id == ext_id,
         )
-        .values(parse_status=status, parse_error=error, parse_version=version)
+        .values(**values)
     )
 
 

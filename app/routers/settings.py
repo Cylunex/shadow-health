@@ -81,6 +81,8 @@ _SOURCE_LABELS = {
     "keep_file": "Keep 文件",
     "keep_api": "Keep API",
     "miscale": "体脂秤",
+    "offline": "手机离线补发",
+    "agent": "Agent 通道",
 }
 
 # CSV 导出白名单：table 参数 -> (模型, 排序列)
