@@ -36,6 +36,22 @@
   <p class="mt-2 text-xs text-slate-500">另有 {{ wl.unrated }} 分钟未评级（同步的记录没有 RPE，可点开记录补填）。</p>
   {% endif %}
 
+  {% if wl.acwr %}
+  {# 急慢性负荷比（V6 A1）：7 天均 ÷ 28 天均，0.8~1.3 安全带 #}
+  <div class="mt-2 flex items-center gap-2 text-xs">
+    <span class="text-slate-500">急慢性负荷比</span>
+    <span class="tabular-nums font-semibold {{ 'text-emerald-400' if wl.acwr.band == 'ok'
+                 else ('text-slate-400' if wl.acwr.band == 'low' else 'text-amber-400') }}">
+      {{ wl.acwr.ratio if wl.acwr.ratio is not none else '—' }}
+    </span>
+    <span class="text-slate-500">{{ wl.acwr.band_label }}</span>
+    {% if wl.acwr.monotony_warn %}
+    <span class="text-amber-400/90">· 单调性 {{ wl.acwr.monotony }}（换换花样）</span>
+    {% endif %}
+  </div>
+  <p class="mt-1 text-xs text-slate-600">体能/疲劳/状态曲线在 指标 → 训练负荷 图</p>
+  {% endif %}
+
   {% if wl.delta_pct is not none and wl.delta_pct > 30 %}
   <p class="mt-2 text-xs text-amber-400/90">周负荷环比增幅超过 30%，注意循序渐进，谨防过训。</p>
   {% endif %}

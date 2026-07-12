@@ -29,10 +29,14 @@
   <div class="grid grid-cols-2 gap-3">
     {{ num_input('target_weight_kg', '目标体重 (kg)') }}
     {{ num_input('height_cm', '身高 (cm)') }}
+    {{ num_input('target_body_fat_pct', '目标体脂率 (%)') }}
+    {{ num_input('target_waist_cm', '目标腰围 (cm)') }}
     {{ num_input('target_kcal', '目标热量 (kcal/日)', mode='numeric', ph='留空=未设') }}
     {{ num_input('target_protein_g', '目标蛋白质 (g/日)', mode='numeric') }}
     {{ num_input('target_steps', '目标步数 (步/日)', mode='numeric') }}
     {{ num_input('target_weekly_cardio_min', '周有氧目标 (分钟/周)', mode='numeric') }}
+    {{ num_input('energy_rate_kgpw', '每周体重变化 (kg/周)', ph='如 -0.35') }}
+    {{ num_input('energy_train_day_offset', '训练日热量偏移 (%)', mode='numeric', ph='0=关闭') }}
   </div>
   {% if protein_hint %}<p class="text-xs text-slate-500">{{ protein_hint }}</p>{% endif %}
 

@@ -4,7 +4,7 @@
   <h2 class="card-title">启用中（{{ active_rows|length }}）</h2>
   <ul class="space-y-2">
     {% for r in active_rows %}
-    {% with habit=r.habit, streak_label=r.streak_label, month_rate=r.month_rate %}{% include "fragments/habits_manage_row.html" %}{% endwith %}
+    {% with habit=r.habit, streak_label=r.streak_label, month_rate=r.month_rate, count_bars=r.count_bars %}{% include "fragments/habits_manage_row.html" %}{% endwith %}
     {% else %}
     <li class="flex flex-col items-center gap-2 rounded-xl border border-dashed border-slate-800 bg-slate-900/40 px-4 py-8 text-center">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="w-8 h-8 text-slate-700">
@@ -22,7 +22,7 @@
   <h2 class="card-title">已停用（{{ inactive_rows|length }}）</h2>
   <ul class="space-y-2">
     {% for r in inactive_rows %}
-    {% with habit=r.habit, streak_label=r.streak_label, month_rate=r.month_rate %}{% include "fragments/habits_manage_row.html" %}{% endwith %}
+    {% with habit=r.habit, streak_label=r.streak_label, month_rate=r.month_rate, count_bars=r.count_bars %}{% include "fragments/habits_manage_row.html" %}{% endwith %}
     {% else %}
     <li class="flex flex-col items-center gap-2 rounded-xl border border-dashed border-slate-800 bg-slate-900/40 px-4 py-8 text-center">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="w-8 h-8 text-slate-700">

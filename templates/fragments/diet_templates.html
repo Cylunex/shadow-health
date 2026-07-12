@@ -1,0 +1,27 @@
+{# 组合菜谱 chips（V6 P5）：一键整组记录常规餐；ctx = meal_templates。
+   记录走 hx-include 当前查看日期（同 chips），餐次按当前时间预选 #}
+<div id="diet-templates"
+     hx-get="{{ u('/fragments/diet/templates') }}"
+     hx-trigger="templates-changed from:body"
+     hx-swap="outerHTML">
+  {% if meal_templates %}
+  <div class="mt-2 flex flex-wrap gap-1.5 items-center">
+    <span class="text-xs text-slate-500 shrink-0">组合</span>
+    {% for t in meal_templates %}
+    <span class="inline-flex items-stretch overflow-hidden rounded-full border border-slate-700/70 bg-slate-800/60">
+      <button type="button"
+              hx-post="{{ u('/diet/templates/') }}{{ t.id }}/log" hx-swap="none"
+              hx-include="#diet-date" hx-disabled-elt="this"
+              class="px-3 py-1.5 text-xs text-slate-200 active:bg-slate-700 [&.htmx-request]:animate-pulse">
+        {{ t.name }} <span class="text-slate-500">×{{ t.count }}</span>
+      </button>
+      <button type="button"
+              hx-delete="{{ u('/diet/templates/') }}{{ t.id }}"
+              hx-target="#diet-templates" hx-swap="outerHTML"
+              hx-confirm="删除组合「{{ t.name }}」？（不影响已记录的数据）"
+              class="px-2 text-xs text-slate-500 border-l border-slate-700/70 active:text-red-400">✕</button>
+    </span>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>

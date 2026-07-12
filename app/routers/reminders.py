@@ -140,6 +140,24 @@ def reminders_digest(request: Request, db: Session = Depends(get_db)) -> Respons
         f"⚠️ Agent 写入通道连续失败 {agent_fails} 次，到「Agent 记录」页看错误"
         if agent_fails >= AGENT_FAIL_ALERT_THRESHOLD else None
     )
+
+    # 晨间简报头（V6 E5/E1，离线规则模板）：体征预警最优先，其次准备度一句话
+    from app.services.readiness import readiness_ctx, vitals_alert
+
+    briefing: list[str] = []
+    vitals = vitals_alert(db, today)
+    if vitals is not None:
+        briefing.append(f"⚠️ 夜间体征偏离基线：{vitals['text']}")
+    readiness = readiness_ctx(db, today)
+    if readiness is not None:
+        briefing.append(f"准备度 {readiness['score']}（{readiness['band_label']}）·{readiness['suggestion']}")
+
+    # 新成就庆祝（V6 H1）：首达落档 + 播报一次（幂等——之后不再是"新"）
+    from app.services.achievements import sync_and_list
+
+    _items, newly = sync_and_list(db, today)
+    if newly:
+        briefing.append(f"🏅 新成就：{'、'.join(newly[:3])}")
     payload: dict[str, Any] = {
         "date": today.isoformat(),
         "habits_pending": len(pending),
@@ -149,8 +167,11 @@ def reminders_digest(request: Request, db: Session = Depends(get_db)) -> Respons
         "steps": steps,
         "weekly_cardio_min": cardio_min,
         "all_done": all_done,
+        "readiness_score": readiness["score"] if readiness else None,
+        "vitals_alert": vitals["text"] if vitals else None,
         "message": " · ".join(
-            ([agent_alert] if agent_alert else [])
+            briefing
+            + ([agent_alert] if agent_alert else [])
             + (["今日目标全部达成 🎉"] if all_done else parts)
         ),
     }

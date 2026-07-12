@@ -61,8 +61,9 @@ from app.routers.review import (
 )
 from app.routers.today import WEEKDAY_CN, _rings, _target_steps
 from app.routers.workout import SOURCE_LABELS
+from app.services import energy as energy_service
 from app.services import sleep
-from app.timeutil import today_local
+from app.timeutil import LOCAL_TZ, today_local
 
 router = APIRouter(dependencies=[Depends(require_login)])
 
@@ -197,6 +198,7 @@ def _daily_ctx(db: Session, d: date, today: date) -> dict[str, Any]:
     sessions = sleep.sessions_by_date(db, d, d).get(d, [])
     sleep_min = sum(s.total_sleep_min or 0 for s in sessions)
     sleep_stages = ""
+    sleep_quality = ""  # V6 P1：效率/深睡占比/入睡时刻
     if sessions:
         parts = []
         for attr, label in (("deep_min", "深睡"), ("light_min", "浅睡"), ("rem_min", "REM")):
@@ -204,7 +206,30 @@ def _daily_ctx(db: Session, d: date, today: date) -> dict[str, Any]:
             if v:
                 parts.append(f"{label} {_fmt_sleep_min(v)}")
         sleep_stages = " · ".join(parts)
+        night = next(iter(sleep.night_rows(db, d, d)), None)
+        if night is not None:
+            qparts = []
+            if night["efficiency_pct"] is not None:
+                qparts.append(f"效率 {night['efficiency_pct']}%")
+            if night["deep_min"] is not None and night["total_min"]:
+                qparts.append(f"深睡占比 {round(night['deep_min'] * 100 / night['total_min'])}%")
+            qparts.append(f"入睡 {sleep.fmt_bedtime(night['bedtime_min'])}")
+            sleep_quality = " · ".join(qparts)
     sleep_hours_fallback = bm.sleep_hours if bm is not None and not sessions else None
+
+    # 进食窗口（V6 C7）：当日首末餐记录时刻（仅当天记的——补记的时间戳无意义）
+    eating_window = None
+    ts_rows = [
+        ts for (ts,) in db.execute(
+            select(DietLog.created_at).where(DietLog.log_date == d)
+        ) if ts is not None and ts.astimezone(LOCAL_TZ).date() == d
+    ]
+    if len(ts_rows) >= 2:
+        first = min(ts_rows).astimezone(LOCAL_TZ)
+        last = max(ts_rows).astimezone(LOCAL_TZ)
+        span_h = (last - first).total_seconds() / 3600
+        if span_h >= 0.5:
+            eating_window = f"{first:%H:%M} – {last:%H:%M}（{span_h:.1f} h）"
 
     ctx: dict[str, Any] = {
         "d": d,
@@ -226,7 +251,9 @@ def _daily_ctx(db: Session, d: date, today: date) -> dict[str, Any]:
         "sleep_min": sleep_min,
         "sleep_label": _fmt_sleep_min(sleep_min) if sleep_min else None,
         "sleep_stages": sleep_stages,
+        "sleep_quality": sleep_quality,
         "sleep_hours_fallback": sleep_hours_fallback,
+        "eating_window": eating_window,
     }
     ctx.update(_diet_summary_ctx(db, d))  # 四项 vs 目标 + 连击 + fmt
     return ctx
@@ -434,10 +461,27 @@ def _aggregate_month(db: Session, ms: date) -> dict[str, Any]:
     ).one()
     avg_mood = round(float(mood_sum), 1) if mood_days and mood_sum is not None else None
 
+    # 睡眠（V6 P1）：跨源去重后的月质量汇总（口径与周报一致）
+    sstats = sleep.stage_stats(db, ms, me) or {}
+
+    # 能量账本（V6 C2）：月累计缺口 → 理论体重变化，与实际趋势对账
+    ledger = energy_service.energy_ledger(db, ms, me) or {}
+
     return {
         "month_start": ms.isoformat(),
         "month_end": me.isoformat(),
         "days_in_month": days_in_month,
+        "avg_sleep_h": sstats.get("avg_sleep_h"),
+        "sleep_nights": sstats.get("nights"),
+        "sleep_ok_days": sstats.get("sleep_ok_days"),
+        "avg_bedtime": sstats.get("avg_bedtime"),
+        "bedtime_std_min": sstats.get("bedtime_std_min"),
+        "deep_pct": sstats.get("deep_pct"),
+        "avg_sleep_eff": sstats.get("avg_efficiency_pct"),
+        "gap_sum": ledger.get("gap_sum"),
+        "gap_days": ledger.get("gap_days"),
+        "gap_pred_kg": ledger.get("predicted_kg"),
+        "gap_actual_kg": ledger.get("actual_kg"),
         "weight_start": weight_start,
         "weight_end": weight_end,
         "weight_change": weight_change,
@@ -632,6 +676,29 @@ def _month_cards(snap: dict[str, Any]) -> list[dict[str, Any]]:
             "value": f"{g('avg_mood')}/10",
             "sub": f"{g('mood_days') or 0} 天有记录",
         })
+    # 睡眠卡（V6 P1）：旧快照缺字段同样容错不显示
+    if g("avg_sleep_h") is not None:
+        subs = [f"{g('sleep_ok_days') or 0}/{g('sleep_nights') or 0} 夜 ≥7h"]
+        if g("avg_bedtime"):
+            subs.append(f"均入睡 {g('avg_bedtime')}")
+            if g("bedtime_std_min") is not None:
+                subs.append(f"波动 ±{g('bedtime_std_min')} 分")
+        cards.append({
+            "label": "睡眠",
+            "value": f"{g('avg_sleep_h')} h/夜",
+            "sub": " · ".join(subs),
+        })
+    # 能量账本卡（V6 C2）：中性趋势语言
+    if g("gap_sum") is not None:
+        pred, actual = g("gap_pred_kg"), g("gap_actual_kg")
+        sub = f"理论 {pred:+.2f} kg" if pred is not None else ""
+        if actual is not None:
+            sub += f" · 实际趋势 {actual:+.2f} kg"
+        cards.append({
+            "label": "能量账本",
+            "value": f"{g('gap_sum'):+,} kcal",
+            "sub": (sub or "") + f"（{g('gap_days')} 天可对账）",
+        })
 
     diet_days = g("diet_days") or 0
     macro_parts = [
@@ -670,6 +737,8 @@ def _tabs_ctx(db: Session, t: str) -> dict[str, Any]:
             .scalars().all()
         )
         ctx["rows"] = [_list_row(r) for r in reviews]
+        # 周 Check-in（V6 C4）：近 28 天实测 TDEE + 下周建议热量（数据不足不显示）
+        ctx["checkin"] = energy_service.tdee_ctx(db, today_local())
     else:
         _ensure_months(db)
         reviews = (
@@ -689,6 +758,26 @@ def report_page(request: Request, t: str = "daily", db: Session = Depends(get_db
 @router.get("/fragments/report/tabs")
 def report_tabs_fragment(request: Request, t: str = "daily", db: Session = Depends(get_db)):
     return templates.TemplateResponse(request, "fragments/report_tabs.html", _tabs_ctx(db, t))
+
+
+@router.post("/report/checkin/apply")
+async def report_checkin_apply(request: Request, db: Session = Depends(get_db)):
+    """周 Check-in「应用为新目标」（V6 C4）：把建议热量写入 target_kcal。
+    界值与设置页 _TARGET_DEFS 同口径（500~10000），回传 weekly tab 整块。"""
+    form = await request.form()
+    try:
+        kcal = int(str(form.get("kcal")).strip())
+    except (TypeError, ValueError):
+        kcal = 0
+    if 500 <= kcal <= 10000:
+        stmt = pg_insert(AppSetting).values(key="target_kcal", value=kcal)
+        db.execute(stmt.on_conflict_do_update(
+            index_elements=["key"],
+            set_={"value": stmt.excluded.value, "updated_at": func.now()},
+        ))
+    return templates.TemplateResponse(
+        request, "fragments/report_tabs.html", _tabs_ctx(db, "weekly")
+    )
 
 
 @router.get("/report/daily")
@@ -712,6 +801,8 @@ def report_month_detail(month_start: str, request: Request, db: Session = Depend
     floor = _month_start_of(earliest) if earliest is not None else ms
     prev_ms = _prev_month_start(ms)
     next_ms = _next_month_start(ms)
+    from app.services.insights import build_insights
+
     return templates.TemplateResponse(
         request,
         "report_month_detail.html",
@@ -722,6 +813,8 @@ def report_month_detail(month_start: str, request: Request, db: Session = Depend
             "next_month": next_ms.isoformat()
             if today_local() >= _month_frozen_after(next_ms) else None,
             "cards": _month_cards(row.metrics_snapshot or {}),
+            # 跨域洞察（V6 E3）：滚动近 90 天口径，实时计算不进冻结快照
+            "insights": build_insights(db, today_local()),
             "summary": row.summary or "",
             "saved": False,
         },

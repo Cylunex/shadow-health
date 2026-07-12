@@ -33,6 +33,16 @@
       </span>
       {% if habit.source_doc %}<span class="truncate">{{ habit.source_doc }}</span>{% endif %}
     </div>
+    {% if count_bars %}
+    {# 计数型习惯近 30 天量趋势（V6 G10）：纯 div 条形，绿=达标 灰=有量未达标 #}
+    <div class="mt-2 flex items-end gap-[2px] h-8" title="近 30 天逐日计数（目标 ×{{ habit.target_per_period }}）">
+      {% for b in count_bars %}
+      <div class="flex-1 rounded-sm {{ 'bg-emerald-500/80' if b.ok else 'bg-slate-600/70' }}"
+           style="height: {{ b.pct }}%"
+           title="{{ b.date }}：{{ b.count if b.count is not none else '未记' }}"></div>
+      {% endfor %}
+    </div>
+    {% endif %}
   </div>
   <button type="button"
           hx-post="{{ u('/habits/') }}{{ habit.id }}/active"

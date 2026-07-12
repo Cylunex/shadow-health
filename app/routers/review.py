@@ -25,6 +25,9 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.deps import redirect, require_login, templates
+from app.services import energy as energy_service
+from app.services import readiness as readiness_service
+from app.services import sleep as sleep_service
 from app.models import (
     AppSetting,
     BodyMetrics,
@@ -178,9 +181,26 @@ def _aggregate_week(db: Session, week_start: date) -> dict[str, Any]:
     except (TypeError, ValueError):
         target_cardio = None
 
+    # 睡眠（V6 P1）：跨源去重后的周质量汇总——此前周报完全没有睡眠维度
+    sstats = sleep_service.stage_stats(db, week_start, week_end) or {}
+
+    # ACWR（V6 A1）：周末时点的急慢性负荷比，供回看「那周是不是加量太猛」
+    loads28 = readiness_service.daily_loads(db, week_end - timedelta(days=27), week_end)
+    acwr_snap = readiness_service.acwr_stats(loads28, week_end)
+
+    # 能量账本（V6 C2）：周累计缺口 → 理论体重变化，与实际趋势对账
+    ledger = energy_service.energy_ledger(db, week_start, week_end) or {}
+
     return {
         "week_start": week_start.isoformat(),
         "week_end": week_end.isoformat(),
+        "avg_sleep_h": sstats.get("avg_sleep_h"),
+        "sleep_nights": sstats.get("nights"),
+        "sleep_ok_days": sstats.get("sleep_ok_days"),
+        "avg_bedtime": sstats.get("avg_bedtime"),
+        "bedtime_std_min": sstats.get("bedtime_std_min"),
+        "deep_pct": sstats.get("deep_pct"),
+        "avg_sleep_eff": sstats.get("avg_efficiency_pct"),
         "weight_start": weight_start,
         "weight_end": weight_end,
         "weight_change": weight_change,
@@ -193,6 +213,11 @@ def _aggregate_week(db: Session, week_start: date) -> dict[str, Any]:
         "cardio_min": cardio_min,
         "training_load": training_load,
         "unrated_min": unrated_min,
+        "acwr": acwr_snap["ratio"] if acwr_snap else None,
+        "gap_sum": ledger.get("gap_sum"),
+        "gap_days": ledger.get("gap_days"),
+        "gap_pred_kg": ledger.get("predicted_kg"),
+        "gap_actual_kg": ledger.get("actual_kg"),
         **girth_changes,
         "target_weekly_cardio_min": target_cardio,
         "habit_rate": habit_rate,
@@ -303,10 +328,13 @@ def _snapshot_cards(snap: dict[str, Any]) -> list[dict[str, Any]]:
     })
     if g("training_load"):
         unrated = g("unrated_min") or 0
+        subs = [f"另有 {unrated} 分钟未评级" if unrated else "RPE×分钟"]
+        if g("acwr") is not None:  # 旧快照缺字段容错不显示
+            subs.append(f"ACWR {g('acwr')}")
         cards.append({
             "label": "训练负荷 (sRPE)",
             "value": f"{g('training_load')}",
-            "sub": f"另有 {unrated} 分钟未评级" if unrated else "RPE×分钟",
+            "sub": " · ".join(subs),
         })
     girth_labels = (
         ("waist_change", "腰围"), ("chest_change", "胸围"), ("hip_change", "臀围"),
@@ -341,6 +369,29 @@ def _snapshot_cards(snap: dict[str, Any]) -> list[dict[str, Any]]:
             "label": "心情均分",
             "value": f"{g('avg_mood')}/10",
             "sub": f"{g('mood_days') or 0} 天有记录",
+        })
+    # 能量账本卡（V6 C2）：中性趋势语言，不做「超标」审判
+    if g("gap_sum") is not None:
+        pred, actual = g("gap_pred_kg"), g("gap_actual_kg")
+        sub = f"理论 {pred:+.2f} kg" if pred is not None else ""
+        if actual is not None:
+            sub += f" · 实际趋势 {actual:+.2f} kg"
+        cards.append({
+            "label": "能量账本",
+            "value": f"{g('gap_sum'):+,} kcal",
+            "sub": (sub or "") + f"（{g('gap_days')} 天可对账）",
+        })
+    # 睡眠卡（V6 P1）：旧快照缺字段同样容错不显示
+    if g("avg_sleep_h") is not None:
+        subs = [f"{g('sleep_ok_days') or 0}/{g('sleep_nights') or 0} 夜 ≥7h"]
+        if g("avg_bedtime"):
+            subs.append(f"均入睡 {g('avg_bedtime')}")
+        if g("deep_pct") is not None:
+            subs.append(f"深睡 {g('deep_pct')}%")
+        cards.append({
+            "label": "睡眠",
+            "value": f"{g('avg_sleep_h')} h/夜",
+            "sub": " · ".join(subs),
         })
     cards.append({
         "label": "周均步数",

@@ -126,6 +126,17 @@ def agent_fresh_fragment(request: Request, db: Session = Depends(get_db)):
     )
 
 
+@router.get("/fragments/today/readiness")
+def readiness_fragment(request: Request, db: Session = Depends(get_db)):
+    """每日准备度卡（V6 A2）+ 夜间体征联合预警（E1）。数据不足渲染空片段（不编数）。"""
+    from app.services.readiness import readiness_ctx, vitals_alert
+
+    return templates.TemplateResponse(
+        request, "fragments/today_readiness.html",
+        {"r": readiness_ctx(db), "vitals": vitals_alert(db)},
+    )
+
+
 @router.get("/fragments/today/rings")
 def rings_fragment(request: Request, db: Session = Depends(get_db)):
     """三环片段：打卡/训练写操作后经 habit-changed / workout-changed 被动刷新，

@@ -1,0 +1,44 @@
+{# 每日准备度卡（V6 A2）+ 夜间体征预警（E1）：ctx = r, vitals（都 None = 不显示）。
+   outerHTML 自替换 + 空态 hidden（同 agent-fresh 模式，不占 space-y 间距） #}
+<div {% if not r and not vitals %}hidden {% endif %}hx-get="{{ u('/fragments/today/readiness') }}"
+     hx-trigger="workout-changed from:body, metrics-changed from:body"
+     hx-swap="outerHTML" class="space-y-4">
+  {% if vitals %}
+  <div class="flex items-start gap-2 rounded-xl border border-amber-800/50 bg-amber-950/30 px-3.5 py-3 text-sm text-amber-300">
+    <span>⚠️</span>
+    <div>
+      <p class="font-medium">夜间体征偏离你的基线</p>
+      <p class="mt-0.5 text-xs text-amber-300/80">{{ vitals.text }}——可能在扛压/前驱感冒，注意休息；持续多日建议就医确认</p>
+    </div>
+  </div>
+  {% endif %}
+  {% if r %}
+  <section class="card">
+    <h2 class="card-title">今日准备度</h2>
+    <div class="flex items-center gap-4">
+      {# 分数环 #}
+      <div class="relative w-16 h-16 shrink-0">
+        <svg viewBox="0 0 40 40" class="w-16 h-16 -rotate-90">
+          <circle cx="20" cy="20" r="17" fill="none" stroke="currentColor" stroke-width="4" class="text-slate-800"/>
+          <circle cx="20" cy="20" r="17" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"
+                  stroke-dasharray="{{ (r.score * 1.068) | round(1) }} 106.8"
+                  class="{{ 'text-emerald-400' if r.band == 'high' else ('text-sky-400' if r.band == 'mid' else 'text-amber-400') }}"/>
+        </svg>
+        <span class="absolute inset-0 flex items-center justify-center text-lg font-bold tabular-nums">{{ r.score }}</span>
+      </div>
+      <div class="min-w-0 flex-1">
+        <p class="text-sm font-medium {{ 'text-emerald-400' if r.band == 'high' else ('text-sky-400' if r.band == 'mid' else 'text-amber-400') }}">{{ r.band_label }}</p>
+        <p class="mt-0.5 text-xs text-slate-400 leading-relaxed">{{ r.suggestion }}</p>
+      </div>
+    </div>
+    <div class="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500 tabular-nums">
+      {% for c in r.components %}
+      <span>{{ c.label }} {{ c.score }}</span>
+      {% endfor %}
+      {% if r.rhr and r.rhr.elevated %}
+      <span class="text-amber-400/90">静息心率 {{ r.rhr.cur7 }}（基线 {{ r.rhr.base28 }}，+{{ r.rhr.delta }}）</span>
+      {% endif %}
+    </div>
+  </section>
+  {% endif %}
+</div>

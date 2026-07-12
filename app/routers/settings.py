@@ -42,6 +42,7 @@ from app.db import SessionLocal, get_db
 from app.deps import redirect, require_login, templates
 from app.services import llm
 from app.models import (
+    Achievement,
     AppSetting,
     BodyMetrics,
     DailyActivity,
@@ -49,6 +50,7 @@ from app.models import (
     Food,
     Habit,
     HabitLog,
+    MealTemplate,
     ImportJob,
     MonthlyReview,
     Recipe,
@@ -67,11 +69,17 @@ _JSONB_NULL = text("'null'::jsonb")
 # 目标值字段：(key, 中文名, 类型, 下限, 上限)
 _TARGET_DEFS: list[tuple[str, str, str, float, float]] = [
     ("target_weight_kg", "目标体重", "decimal", 20, 500),
+    ("target_body_fat_pct", "目标体脂率", "decimal", 3, 60),
+    ("target_waist_cm", "目标腰围", "decimal", 40, 200),
     ("target_kcal", "目标热量", "int", 500, 10000),
     ("target_protein_g", "目标蛋白质", "int", 10, 500),
     ("target_steps", "目标步数", "int", 500, 100000),
     ("target_weekly_cardio_min", "周有氧目标", "int", 10, 3000),
     ("height_cm", "身高", "decimal", 50, 250),
+    # V6 P4 能量引擎：每周体重变化目标（负=减重，周 Check-in 据此给热量建议）
+    # 与训练日热量偏移（0=关闭；开启后训练日的目标热量上浮 N%）
+    ("energy_rate_kgpw", "每周体重变化", "decimal", -2, 2),
+    ("energy_train_day_offset", "训练日热量偏移", "int", 0, 30),
 ]
 
 _SOURCE_LABELS = {
@@ -98,6 +106,8 @@ _EXPORT_MODELS: dict[str, tuple[type, tuple[str, ...]]] = {
     "habits": (Habit, ("sort", "id")),
     "foods": (Food, ("id",)),
     "recipes": (Recipe, ("id",)),
+    "meal_templates": (MealTemplate, ("id",)),
+    "achievements": (Achievement, ("earned_on",)),
 }
 _EXPORT_LABELS = [
     ("body_metrics", "身体指标"),
@@ -111,6 +121,8 @@ _EXPORT_LABELS = [
     ("habits", "习惯定义"),
     ("foods", "食物库"),
     ("recipes", "药膳库"),
+    ("meal_templates", "组合菜谱"),
+    ("achievements", "成就"),
 ]
 
 _IMPORT_SOURCES = ("samsung_zip", "keep_file")

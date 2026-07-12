@@ -10,7 +10,7 @@
       <span class="text-xs text-slate-400">热量</span>
       <span class="flex items-baseline gap-1.5">
         <span class="stat-num{% if kcal_over %} bg-none text-amber-400{% endif %}">{{ fmt(total_kcal) }}</span>
-        <span class="text-xs text-slate-500 tabular-nums">/ {% if target_kcal %}{{ fmt(target_kcal) }} kcal{% else %}目标未设置{% endif %}</span>
+        <span class="text-xs text-slate-500 tabular-nums">/ {% if target_kcal %}{{ fmt(target_kcal) }} kcal{% if train_day_bonus %}<span class="text-emerald-400/90">（训练日 +{{ train_day_bonus }}%）</span>{% endif %}{% else %}目标未设置{% endif %}</span>
       </span>
     </div>
     <div class="progress-track mt-2">

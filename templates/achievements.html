@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block page_title %}成就{% endblock %}
+{% block content %}
+<div class="space-y-4">
+
+  <section class="card">
+    <h2 class="card-title">已达成（{{ earned | length }}）</h2>
+    {% if earned %}
+    <div class="grid grid-cols-2 gap-2">
+      {% for a in earned %}
+      <div class="rounded-xl border border-emerald-900/60 bg-emerald-950/30 px-3.5 py-3">
+        <div class="text-sm font-semibold text-emerald-300">🏅 {{ a.name }}</div>
+        <div class="mt-0.5 text-xs text-slate-400">{{ a.desc }}</div>
+        {% if a.earned_on %}
+        <div class="mt-1 text-xs text-slate-500 tabular-nums">{{ a.earned_on }}</div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="text-sm text-slate-500">还没有达成的成就——每一条都在路上。</p>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <h2 class="card-title">进行中（{{ locked | length }}）</h2>
+    <ul class="space-y-2">
+      {% for a in locked %}
+      <li class="flex items-center justify-between gap-3 rounded-xl border border-slate-800/70 bg-slate-900/60 px-3.5 py-2.5">
+        <div class="min-w-0">
+          <div class="text-sm text-slate-300">{{ a.name }}</div>
+          <div class="mt-0.5 text-xs text-slate-500">{{ a.desc }}</div>
+        </div>
+        <span class="shrink-0 text-xs text-slate-500 tabular-nums">{{ a.progress }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+
+  <p class="text-xs text-slate-500 leading-relaxed">
+    成就按数据实时计算，只记录首次达成日期；长期主义向——连续性、累计量、
+    个人纪录，没有「单日冲量」类。
+  </p>
+
+</div>
+{% endblock %}

@@ -44,7 +44,10 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.db import get_db
 from app.deps import require_login, templates
-from app.models import AppSetting, BodyMetrics, DailyActivity, DietLog, DietPhoto, Food, Recipe
+from app.models import (
+    AppSetting, BodyMetrics, DailyActivity, DietLog, DietPhoto, Food, MealTemplate,
+    Recipe, WorkoutLog,
+)
 from app.timeutil import now_local, today_local
 
 router = APIRouter(dependencies=[Depends(require_login)])
@@ -236,6 +239,18 @@ def _summary_ctx(db: Session, d: date) -> dict:
     target_kcal = _setting_number(db, "target_kcal")
     target_protein = _setting_number(db, "target_protein_g")
 
+    # 训练日热量偏移（V6 C3，可选）：设置了偏移且当日有训练记录 → 目标上浮 N%
+    # （周总量意识由周 Check-in 承担，这里只做单日弹性）
+    train_day_bonus = None
+    offset = _setting_number(db, "energy_train_day_offset")
+    if target_kcal and offset:
+        trained = db.execute(
+            select(func.count()).select_from(WorkoutLog).where(WorkoutLog.log_date == d)
+        ).scalar_one() > 0
+        if trained:
+            target_kcal = round(target_kcal * (1 + offset / 100))
+            train_day_bonus = round(offset)
+
     def pct(total: Any, target: float | None) -> int:
         if not target:
             return 0
@@ -275,6 +290,7 @@ def _summary_ctx(db: Session, d: date) -> dict:
         "energy_gap": energy_gap,
         "burn": burn,
         "burn_has_active": active_kcal is not None,
+        "train_day_bonus": train_day_bonus,
         "fmt": _fmt,
     }
 
@@ -536,6 +552,124 @@ async def diet_meal_copy(request: Request, db: Session = Depends(get_db)):
     return Response(
         status_code=200, content="",
         headers=_hx_trigger(f"已复制 {src_day:%m-%d} 的{meal}（{len(rows)} 项）"),
+    )
+
+
+# ---------- 组合菜谱（V6 P5）：常吃的一餐存成组合，一键整组记录 ----------
+
+def _templates_ctx(db: Session) -> dict:
+    rows = db.execute(
+        select(MealTemplate).order_by(MealTemplate.id.desc())
+    ).scalars().all()
+    return {
+        "meal_templates": [
+            {"id": t.id, "name": t.name, "count": len(t.items or [])} for t in rows
+        ],
+    }
+
+
+@router.get("/fragments/diet/templates")
+def diet_templates_fragment(request: Request, db: Session = Depends(get_db)):
+    return templates.TemplateResponse(
+        request, "fragments/diet_templates.html", _templates_ctx(db)
+    )
+
+
+@router.post("/diet/templates/save")
+async def diet_template_save(request: Request, db: Session = Depends(get_db)):
+    """把 d 日的某餐存为组合：food_id 行存 (food_id, amount_g)——记录时按食物库
+    现值重算营养；free_text 行原样快照。"""
+    form = await request.form()
+    day = min(_parse_date(form.get("d")), today_local())
+    meal = str(form.get("meal") or "")
+    name = str(form.get("name") or "").strip()[:30]
+    if meal not in MEALS:
+        raise HTTPException(status_code=400, detail="无效的餐次")
+    if not name:
+        raise HTTPException(status_code=400, detail="给组合起个名字（如「常规早餐」）")
+    rows = db.execute(
+        select(DietLog).where(DietLog.log_date == day, DietLog.meal == meal).order_by(DietLog.id)
+    ).scalars().all()
+    if not rows:
+        raise HTTPException(status_code=404, detail=f"{day:%m-%d} 的{meal}没有记录")
+    items = []
+    for r in rows:
+        if r.food_id is not None:
+            items.append({"food_id": r.food_id, "amount_g": float(r.amount_g) if r.amount_g else None})
+        else:
+            items.append({
+                "free_text": r.free_text,
+                "amount_g": float(r.amount_g) if r.amount_g is not None else None,
+                "kcal": float(r.kcal) if r.kcal is not None else None,
+                "protein_g": float(r.protein_g) if r.protein_g is not None else None,
+                "fat_g": float(r.fat_g) if r.fat_g is not None else None,
+                "carb_g": float(r.carb_g) if r.carb_g is not None else None,
+            })
+    existing = db.execute(
+        select(MealTemplate).where(MealTemplate.name == name)
+    ).scalar_one_or_none()
+    if existing is not None:
+        existing.items = items  # 同名覆盖更新（迭代自己的常规餐）
+    else:
+        db.add(MealTemplate(name=name, items=items))
+    db.flush()
+    return templates.TemplateResponse(
+        request, "fragments/diet_templates.html", _templates_ctx(db),
+        headers=_hx_trigger(f"已存为组合「{name}」（{len(items)} 项）"),
+    )
+
+
+@router.post("/diet/templates/{template_id}/log")
+async def diet_template_log(template_id: int, request: Request, db: Session = Depends(get_db)):
+    """一键记录整个组合到 d 日（餐次按当前时间预选，可传 meal 覆盖）。"""
+    form = await request.form()
+    day = min(_parse_date(form.get("d")), today_local())
+    meal = str(form.get("meal") or "")
+    if meal not in MEALS:
+        meal = _default_meal()
+    t = db.get(MealTemplate, template_id)
+    if t is None:
+        raise HTTPException(status_code=404, detail="组合不存在")
+    n = 0
+    for it in t.items or []:
+        if not isinstance(it, dict):
+            continue
+        fid = it.get("food_id")
+        amount = Decimal(str(it["amount_g"])) if it.get("amount_g") is not None else None
+        if fid is not None:
+            food = db.get(Food, fid)
+            if food is None:
+                continue  # 食物已删：跳过该项（其余照记）
+            if amount is None:
+                amount = _last_amount(db, food.id)
+            kcal, protein, fat, carb = _food_macros(food, amount)
+            db.add(DietLog(
+                log_date=day, meal=meal, food_id=food.id, amount_g=amount,
+                kcal=kcal, protein_g=protein, fat_g=fat, carb_g=carb,
+            ))
+        else:
+            db.add(DietLog(
+                log_date=day, meal=meal, free_text=str(it.get("free_text") or "—")[:500],
+                amount_g=amount,
+                kcal=it.get("kcal"), protein_g=it.get("protein_g"),
+                fat_g=it.get("fat_g"), carb_g=it.get("carb_g"),
+            ))
+        n += 1
+    db.flush()
+    return Response(
+        status_code=200, content="",
+        headers=_hx_trigger(f"已记录组合「{t.name}」到{meal}（{n} 项）"),
+    )
+
+
+@router.delete("/diet/templates/{template_id}")
+def diet_template_delete(template_id: int, request: Request, db: Session = Depends(get_db)):
+    t = db.get(MealTemplate, template_id)
+    if t is not None:
+        db.delete(t)
+        db.flush()
+    return templates.TemplateResponse(
+        request, "fragments/diet_templates.html", _templates_ctx(db)
     )
 
 

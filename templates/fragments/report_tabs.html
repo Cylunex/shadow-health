@@ -13,6 +13,37 @@
     {% endfor %}
   </div>
 
+  {% if t == 'weekly' and checkin %}
+  {# 周 Check-in（V6 C4）：实测 TDEE + 下周建议——「调整目标」语言，不评判偏差 #}
+  <div class="card fade-in border-emerald-900/50">
+    <h2 class="card-title">每周 Check-in</h2>
+    <div class="grid grid-cols-2 gap-3 text-sm">
+      <div>
+        <div class="text-xs text-slate-500">实测代谢（近 {{ checkin.span_days }} 天反推）</div>
+        <div class="mt-0.5 text-xl font-bold tabular-nums text-slate-100">{{ checkin.tdee }} kcal</div>
+        <div class="mt-0.5 text-xs text-slate-500 tabular-nums">日均摄入 {{ checkin.avg_intake }} · 趋势 {{ '%+.2f' | format(checkin.trend_change_kg) }} kg</div>
+      </div>
+      <div>
+        <div class="text-xs text-slate-500">下周建议热量（{{ '%+.2f' | format(checkin.rate_kgpw) }} kg/周）</div>
+        <div class="mt-0.5 text-xl font-bold tabular-nums text-emerald-400">{{ checkin.suggested_target }} kcal</div>
+        <div class="mt-0.5 text-xs text-slate-500 tabular-nums">当前目标 {{ checkin.current_target or '未设' }}</div>
+      </div>
+    </div>
+    {% if checkin.adjust_needed %}
+    <button type="button" class="btn-ghost mt-3 w-full text-sm"
+            hx-post="{{ u('/report/checkin/apply') }}"
+            hx-vals='{"kcal": {{ checkin.suggested_target }}}'
+            hx-target="#report-tabs" hx-swap="outerHTML"
+            hx-confirm="把目标热量更新为 {{ checkin.suggested_target }} kcal/日？">
+      应用为新目标
+    </button>
+    {% else %}
+    <p class="mt-3 text-xs text-slate-500">当前目标与建议相差不大，保持即可。</p>
+    {% endif %}
+    <p class="mt-2 text-xs text-slate-600">速率在 设置→目标值「每周体重变化」调整；由体重趋势线与实际摄入按能量守恒反推。</p>
+  </div>
+  {% endif %}
+
   {% if not rows %}
   <div class="card flex flex-col items-center gap-3 py-10 text-center fade-in">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="w-9 h-9 text-slate-700">

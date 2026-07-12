@@ -71,6 +71,9 @@
       <a href="{{ u('/diet') }}?d={{ d.isoformat() }}" class="inline-flex min-h-[44px] items-center px-2 -mr-2 text-xs font-medium text-emerald-400 active:text-emerald-300">明细 →</a>
     </div>
     {% include "fragments/diet_summary.html" %}
+    {% if eating_window %}
+    <p class="mt-3 text-xs text-slate-500 tabular-nums">进食窗口 {{ eating_window }}（按当天记录时刻估算）</p>
+    {% endif %}
   </section>
 
   {# 训练明细 + 负荷 #}
@@ -177,6 +180,7 @@
       <div class="text-xs text-slate-500">睡眠</div>
       <div class="mt-1 text-lg font-bold tabular-nums text-slate-100">{{ sleep_label }}</div>
       {% if sleep_stages %}<div class="mt-0.5 text-xs text-slate-500 tabular-nums">{{ sleep_stages }}</div>{% endif %}
+      {% if sleep_quality %}<div class="mt-0.5 text-xs text-slate-400 tabular-nums">{{ sleep_quality }}</div>{% endif %}
     </div>
     {% elif sleep_hours_fallback %}
     <div class="{% if body_items %}mt-2 {% endif %}rounded-xl border border-slate-800/70 bg-slate-900/60 px-3.5 py-3">

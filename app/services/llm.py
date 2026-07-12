@@ -196,6 +196,34 @@ def build_context(db: Session, days: int = 30) -> str:
         )
         lines.append("- " + " ".join(f"{d:%m-%d}:{m}" for d, m in moods))
 
+    # 主观作息信号（V6 E4）：晨勃率与睡眠质量此前从未注入——作息核心信号 AI 看不见
+    me_rows = db.execute(
+        select(BodyMetrics.log_date, BodyMetrics.morning_erection)
+        .where(BodyMetrics.log_date >= mood_since, BodyMetrics.morning_erection.is_not(None))
+        .order_by(BodyMetrics.log_date)
+    ).all()
+    if me_rows:
+        rate = sum(1 for _, v in me_rows if v) * 100 / len(me_rows)
+        lines.append(
+            f"\n## 晨勃（近30天 {len(me_rows)} 天有记录，晨勃率 {rate:.0f}%）：作息/恢复的敏感信号"
+        )
+        lines.append("- " + " ".join(f"{d:%m-%d}:{'✓' if v else '✗'}" for d, v in me_rows))
+    sq_days, sq_avg = db.execute(
+        select(func.count(), func.avg(BodyMetrics.sleep_quality)).where(
+            BodyMetrics.log_date >= mood_since, BodyMetrics.sleep_quality.is_not(None)
+        )
+    ).one()
+    if sq_days:
+        lines.append(f"\n## 主观睡眠质量（1-5）：{sq_days} 天有记录，均值 {_fmt(sq_avg)}")
+
+    # 跨域洞察（V6 E3）：固定配对分桶结论（样本充足且差异显著才有行）
+    from app.services.insights import insights_lines
+
+    insight_rows = insights_lines(db, today)
+    if insight_rows:
+        lines.append("\n## 数据洞察（近90天分桶对比，样本充足项）")
+        lines.extend(insight_rows)
+
     # 生命体征（血压/静息心率/血氧/内脏脂肪）：有记录才输出——这是 SYSTEM_PROMPT
     # 「值得就医的信号」提示的数据来源，此前一直没注入
     vitals_lines: list[str] = []

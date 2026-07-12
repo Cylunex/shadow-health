@@ -25,6 +25,9 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.deps import require_login, templates
 from app.models import AppSetting, BodyMetrics, DailyActivity, WorkoutLog
+from app.services import energy as energy_service
+from app.services import readiness as readiness_service
+from app.services import sleep as sleep_service
 from app.services.autofill import get_or_create_day, mark_manual
 from app.services.sleep import sessions_by_date
 from app.timeutil import today_local
@@ -74,11 +77,16 @@ _CHART_DAYS = (7, 30, 90)
 _CHART_METRICS: list[tuple[str, str]] = [
     ("weight", "体重"),
     ("body_fat", "体脂"),
+    ("composition", "体成分"),
     ("bp", "血压"),
+    ("hr", "心率"),
+    ("spo2", "血氧"),
     ("sleep", "睡眠"),
     ("sleep_stages", "睡眠分期"),
+    ("bedtime", "入睡时刻"),
     ("steps", "步数"),
     ("running", "跑步"),
+    ("load", "训练负荷"),
     ("girth", "围度"),
     ("mood", "心情"),
 ]
@@ -95,7 +103,15 @@ _COLORS = {
     "steps": "#34d399",
     "waist": "#38bdf8",
     "mood": "#f472b6",
+    "fat_mass": "#fbbf24",
+    "muscle": "#34d399",
+    "hr_min": "#34d399",
+    "hr_avg": "#38bdf8",
+    "spo2": "#38bdf8",
+    "bedtime": "#a78bfa",
 }
+# 血压分级参考线（无个人目标时的固定医学参考：130/85 为「正常高值」上界）
+_BP_REFERENCE = {"value": 130, "label": "收缩压参考 130 mmHg"}
 # 睡眠分期堆叠色：(字段, 图例, 颜色)
 _STAGE_DEFS = [
     ("deep_min", "深睡", "#6366f1"),
@@ -112,7 +128,18 @@ _GIRTH_DEFS = [
     ("arm_cm", "臂围", "#f472b6"),
 ]
 # 有目标值可画参考线的指标：metric -> (app_settings key, 单位)
-_TARGET_KEYS = {"weight": ("target_weight_kg", "kg"), "steps": ("target_steps", "步")}
+_TARGET_KEYS = {
+    "weight": ("target_weight_kg", "kg"),
+    "steps": ("target_steps", "步"),
+    "body_fat": ("target_body_fat_pct", "%"),
+    "girth": ("target_waist_cm", "cm"),  # 围度多线图的目标线 = 腰围目标
+}
+# 达标预测适用的图：metric -> (BodyMetrics 字段, 单位)——同一套最小二乘趋势外推
+_TREND_HINT_FIELDS = {
+    "weight": ("weight_kg", "kg"),
+    "body_fat": ("body_fat_pct", "%"),
+    "girth": ("waist_cm", "cm"),
+}
 
 
 # ---------- 通用小工具 ----------
@@ -295,13 +322,15 @@ def _target_line(db: Session, metric: str) -> dict[str, Any] | None:
     return {"value": float(value), "label": f"目标 {_fmt(value)} {unit}"}
 
 
-def _weight_trend_hint(db: Session, target: float) -> str | None:
-    """按近 30 天体重最小二乘斜率估算达标时间（≥5 个点、跨度 ≥7 天才有意义）。"""
+def _metric_trend_hint(db: Session, field: str, target: float, label: str = "") -> str | None:
+    """按近 30 天最小二乘斜率估算达标时间（≥5 个点、跨度 ≥7 天才有意义）。
+    体重/体脂/腰围共用（V6 E8 泛化自原 _weight_trend_hint）。"""
     today = today_local()
+    col = getattr(BodyMetrics, field)
     pts = db.execute(
-        select(BodyMetrics.log_date, BodyMetrics.weight_kg).where(
+        select(BodyMetrics.log_date, col).where(
             BodyMetrics.log_date >= today - timedelta(days=29),
-            BodyMetrics.weight_kg.is_not(None),
+            col.is_not(None),
         ).order_by(BodyMetrics.log_date)
     ).all()
     if len(pts) < 5 or (pts[-1][0] - pts[0][0]).days < 7:
@@ -313,13 +342,15 @@ def _weight_trend_hint(db: Session, target: float) -> str | None:
     denom = sum((x - mean_x) ** 2 for x in xs)
     if denom == 0:
         return None
-    slope = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys)) / denom  # kg/天
+    slope = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys)) / denom  # 单位/天
     current = ys[-1]
     gap = target - current  # 负=还需减，正=还需增
+    name = label or "指标"
+    # 「接近目标」阈值按量纲取：体重 0.3kg、体脂 0.3%、腰围 0.5cm 同一档够用
     if abs(gap) < 0.3:
         return "已在目标附近，保持住"
-    if abs(slope) < 0.005:  # <35g/周，趋势基本走平
-        return "近 30 天体重走平，按此趋势难以达标"
+    if abs(slope) < 0.005:  # 趋势基本走平
+        return f"近 30 天{name}走平，按此趋势难以达标"
     if (gap < 0) != (slope < 0):
         return "近 30 天趋势与目标方向相反，注意调整"
     weeks = abs(gap / (slope * 7))
@@ -368,6 +399,54 @@ def _chart_context(db: Session, metric: str, days: int) -> dict[str, Any]:
                 if field in v
             }
             datasets.append(_line_dataset(f"{label} (h)", by_day, day_list, color))
+    elif metric == "composition":
+        # 减脂期关键问题「掉的是脂肪还是肌肉」：脂肪量 = 体重×体脂%，与肌肉量双线
+        w_map = _bm_field_map(db, "weight_kg", start, today)
+        bf_map = _bm_field_map(db, "body_fat_pct", start, today)
+        fat_by_day = {
+            d: (round(w_map[d][0] * bf / 100, 1), manual)
+            for d, (bf, manual) in bf_map.items()
+            if d in w_map
+        }
+        datasets.append(_line_dataset("脂肪量 (kg)", fat_by_day, day_list, _COLORS["fat_mass"]))
+        muscle_by_day = _bm_field_map(db, "muscle_mass_kg", start, today)
+        if muscle_by_day:
+            datasets.append(_line_dataset("肌肉量 (kg)", muscle_by_day, day_list, _COLORS["muscle"]))
+    elif metric == "hr":
+        # 日最低心率 ≈ 静息心率代理（手表整日监测的最低值）；配日均对照
+        rows = db.execute(
+            select(DailyActivity.log_date, DailyActivity.hr_min, DailyActivity.hr_avg).where(
+                DailyActivity.log_date.between(start, today), DailyActivity.hr_min.is_not(None)
+            )
+        ).all()
+        hr_min_by_day = {r[0]: (float(r[1]), False) for r in rows}
+        hr_avg_by_day = {r[0]: (float(r[2]), False) for r in rows if r[2] is not None}
+        datasets.append(_line_dataset("日最低（静息代理）", hr_min_by_day, day_list, _COLORS["hr_min"]))
+        if hr_avg_by_day:
+            datasets.append(_line_dataset("日均", hr_avg_by_day, day_list, _COLORS["hr_avg"]))
+    elif metric == "spo2":
+        datasets.append(_line_dataset(
+            "血氧 (%)", _bm_field_map(db, "spo2_pct", start, today), day_list, _COLORS["spo2"]
+        ))
+    elif metric == "bedtime":
+        # 入睡时刻：24=午夜、23.5=23:30、25=次日 1:00——跨午夜连续可比（services/sleep）
+        by_day = {
+            r["date"]: (round(12 + r["bedtime_min"] / 60, 2), False)
+            for r in sleep_service.night_rows(db, start, today)
+        }
+        datasets.append(_line_dataset("入睡时刻（24=午夜）", by_day, day_list, _COLORS["bedtime"]))
+    elif metric == "load":
+        # 体能-疲劳-状态曲线（V6 A1）：sRPE 日负荷的 42/7 天 EWMA（services/readiness）；
+        # 取数窗口带足 3×42 天预热（EWMA 需 ~3τ 收敛）
+        loads = readiness_service.daily_loads(db, start - timedelta(days=126), today)
+        curves = readiness_service.ewma_curves(loads, today, days=days)
+        for key, label, color in (
+            ("ctl", "体能 CTL", "#34d399"),
+            ("atl", "疲劳 ATL", "#fbbf24"),
+            ("tsb", "状态 TSB", "#38bdf8"),
+        ):
+            by_day = {c["date"]: (c[key], False) for c in curves}
+            datasets.append(_line_dataset(label, by_day, day_list, color))
     elif metric == "steps":
         rows = db.execute(
             select(DailyActivity.log_date, DailyActivity.steps).where(
@@ -418,8 +497,18 @@ def _chart_context(db: Session, metric: str, days: int) -> dict[str, Any]:
             "mood": ("mood_score", "心情分 (1-10)"),
         }[metric]
         datasets.append(_line_dataset(label, _bm_field_map(db, field, start, today), day_list, _COLORS[metric]))
+        if metric == "weight":
+            # 趋势线（V6 C1）：时间感知 EMA 滤噪，带 30 天预热（services/energy）
+            trend = energy_service.weight_trend(
+                energy_service.weight_points(db, start - timedelta(days=30), today)
+            )
+            trend_by_day = {d: (v, False) for d, v in trend if d >= start}
+            if len(trend_by_day) >= 2:
+                datasets.append(_line_dataset("趋势 (EMA)", trend_by_day, day_list, "#38bdf8"))
 
     target = _target_line(db, metric)
+    if metric == "bp" and target is None:
+        target = dict(_BP_REFERENCE)  # 无个人目标时画固定医学参考线
     payload = {
         "type": chart_type,
         "labels": [d.isoformat() for d in day_list],
@@ -430,9 +519,11 @@ def _chart_context(db: Session, metric: str, days: int) -> dict[str, Any]:
         "target": target,
     }
     has_data = any(v is not None for ds in datasets for v in ds["data"])
-    trend_hint = (
-        _weight_trend_hint(db, target["value"]) if metric == "weight" and target else None
-    )
+    trend_hint = None
+    if metric in _TREND_HINT_FIELDS and target and metric != "bp":
+        field, _unit = _TREND_HINT_FIELDS[metric]
+        label = dict(_CHART_METRICS).get(metric, "")
+        trend_hint = _metric_trend_hint(db, field, target["value"], label)
     return {
         "chart": {
             "metric": metric,

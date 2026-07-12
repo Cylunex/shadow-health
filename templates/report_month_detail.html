@@ -35,6 +35,26 @@
     <p class="mt-3 text-xs text-slate-600">快照在月报生成时聚合，只读。</p>
   </section>
 
+  {% if insights %}
+  {# 跨域洞察（V6 E3）：近 90 天固定配对分桶——样本充足且差异显著才出现 #}
+  <section class="card">
+    <h2 class="card-title">数据洞察</h2>
+    <ul class="space-y-2.5">
+      {% for i in insights %}
+      <li class="text-sm">
+        <div class="text-slate-200">{{ i.title }}</div>
+        <div class="mt-0.5 text-xs text-slate-400 tabular-nums">
+          {{ i.a_label }} <span class="text-emerald-400 font-semibold">{{ i.a_value }}</span>
+          vs {{ i.b_label }} <span class="text-sky-400 font-semibold">{{ i.b_value }}</span>
+          <span class="text-slate-600">（{{ i.n }} 天样本）</span>
+        </div>
+      </li>
+      {% endfor %}
+    </ul>
+    <p class="mt-3 text-xs text-slate-600">滚动近 90 天口径；分桶均值对比，仅呈现样本充足项，供参考不定因果。</p>
+  </section>
+  {% endif %}
+
   <section class="card">
     <h2 class="card-title">手写复盘</h2>
     {% include "fragments/report_month_summary_form.html" %}

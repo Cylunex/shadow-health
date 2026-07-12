@@ -37,6 +37,7 @@ from app.db import get_db
 from app.deps import require_login, templates
 from app.models import Exercise, PlanEnrollment, WorkoutLog, WorkoutPlan
 from app.services import pr
+from app.services import readiness as readiness_service
 from app.timeutil import today_local
 
 router = APIRouter(dependencies=[Depends(require_login)])
@@ -527,12 +528,16 @@ def _load_ctx(db: Session) -> dict[str, Any]:
         round((cur["load"] - prev["load"]) * 100 / prev["load"]) if prev["load"] else None
     )
     rated_total = cur["low"] + cur["mid"] + cur["high"]
+    # ACWR + 单调性（V6 A1，services/readiness）：环比之外的科学口径负荷监察
+    loads28 = readiness_service.daily_loads(db, today - timedelta(days=27), today)
+    acwr = readiness_service.acwr_stats(loads28, today)
     return {
         "wl": {
             **cur,
             "rated_total": rated_total,
             "prev_load": prev["load"],
             "delta_pct": delta_pct,
+            "acwr": acwr,
         }
     }
 

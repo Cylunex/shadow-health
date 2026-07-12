@@ -41,7 +41,9 @@
           </td>
           <td class="text-right px-3">
             {% if r.bp_systolic is not none or r.bp_diastolic is not none %}
-              {{ r.bp_systolic or '?' }}/{{ r.bp_diastolic or '?' }}{{ badge(r, 'bp_systolic') }}
+              {# 超「正常高值」上界（130/85）标黄提示（V6 E7），不做红色告警 #}
+              <span class="{{ 'text-amber-400' if (r.bp_systolic or 0) >= 130 or (r.bp_diastolic or 0) >= 85 else '' }}">
+                {{ r.bp_systolic or '?' }}/{{ r.bp_diastolic or '?' }}</span>{{ badge(r, 'bp_systolic') }}
             {% else %}<span class="text-slate-700">—</span>{% endif %}
           </td>
           <td class="text-right px-3">
@@ -62,7 +64,10 @@
             {% if r.mood_score is not none %}{{ r.mood_score }}{{ badge(r, 'mood_score') }}{% else %}<span class="text-slate-700">—</span>{% endif %}
           </td>
           <td class="text-right px-3 pr-4">
-            {% if r.spo2_pct is not none %}{{ fmt(r.spo2_pct) }}{{ badge(r, 'spo2_pct') }}{% else %}<span class="text-slate-700">—</span>{% endif %}
+            {% if r.spo2_pct is not none %}
+              {# 血氧 <94% 标黄（V6 E7） #}
+              <span class="{{ 'text-amber-400' if r.spo2_pct | float < 94 else '' }}">{{ fmt(r.spo2_pct) }}</span>{{ badge(r, 'spo2_pct') }}
+            {% else %}<span class="text-slate-700">—</span>{% endif %}
           </td>
         </tr>
         {% else %}

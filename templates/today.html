@@ -19,6 +19,11 @@
   <div hidden hx-get="{{ u('/fragments/today/agent-fresh') }}"
        hx-trigger="load, every 60s" hx-swap="outerHTML"></div>
 
+  <!-- 1.6 今日准备度（V6 A2：睡眠/负荷/静息心率/主观合成；数据不足不显示） -->
+  <div hidden hx-get="{{ u('/fragments/today/readiness') }}"
+       hx-trigger="load, workout-changed from:body, metrics-changed from:body"
+       hx-swap="outerHTML"></div>
+
   <!-- 2. 今日三环（步数 / 训练分钟 / 打卡完成；打卡/训练写操作后被动刷新） -->
   <section class="card">
     <h2 class="card-title">今日三环</h2>

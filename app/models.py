@@ -191,6 +191,30 @@ class DietPhoto(Base):
 
 
 # ---------- 3.4 运动训练 ----------
+class MealTemplate(Base):
+    """组合菜谱（V6 P5）：某餐的可复用快照，一键整组记录。
+    items: [{food_id?, free_text?, amount_g?, kcal?, protein_g?, fat_g?, carb_g?}]"""
+    __tablename__ = "meal_templates"
+    __table_args__ = ({"schema": SCHEMA},)
+
+    id: Mapped[int] = mapped_column(Integer, Identity(always=True), primary_key=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    items: Mapped[list] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=_tz_now
+    )
+
+
+class Achievement(Base):
+    """成就首达记录（V6 P8）：成就本体实时计算，这里只记第一次达成的日期。"""
+    __tablename__ = "achievements"
+    __table_args__ = ({"schema": SCHEMA},)
+
+    key: Mapped[str] = mapped_column(Text, primary_key=True)
+    label: Mapped[str] = mapped_column(Text, nullable=False)
+    earned_on: Mapped[date] = mapped_column(Date, nullable=False)
+
+
 class Exercise(Base):
     __tablename__ = "exercises"
     __table_args__ = ({"schema": SCHEMA},)

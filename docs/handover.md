@@ -1,6 +1,6 @@
 # 会话交接（自包含，新会话从这里继续）
 
-> 最后更新：2026-07-12（V5 批次落地）。配套阅读：README（功能全貌）·
+> 最后更新：2026-07-12（V5 + V6 批次落地）。配套阅读：README（功能全貌）·
 > docs/deploy.md（NAS 部署照单）· docs/mobile-sync.md（三星直读背景）·
 > gateway/README.md（体脂秤双端）· docs/audit-2026-07-10.md（全面审查清单，
 > 已全清、归档备忘）· docs/offline-plan.md（手机离线记录方案，阶段一~三已落地，
@@ -9,6 +9,64 @@
 > **当前无进行中批次**：剩余事项 = 真机回归（V3/V4 壳与 APK 改动）+
 > offline-plan 阶段四（视真机手感决定）+ NAS 上线切换（§1.8 与 P3 runbook，用户做）+
 > NAS 侧 MCP 接入（supervisor/Hermes/OpenClaw 注册照 mcp_server/README，用户做）。
+
+## ✅ 已完成：V6 批次「面向未来」（2026-07-12，照 docs/future-roadmap.md 推荐组合 P1-P8，230 测全绿）
+
+1. **P1 睡眠洞察**：services/sleep.py 加 night_rows/stage_stats/fmt_bedtime（效率=
+   总睡眠÷在床钳 100%、深睡/REM 占比、入睡时刻按「距中午分钟数」跨午夜连续可比、
+   就寝规律性=标准差）；指标页「入睡时刻」图（24=午夜口径）；日报睡眠卡加
+   效率/深睡占比/入睡时刻；_aggregate_week/_aggregate_month 加 avg_sleep_h/
+   sleep_ok_days(≥7h)/avg_bedtime/bedtime_std_min/deep_pct + 周/月快照「睡眠」卡
+   （**旧快照缺字段容错不显示**，照 avg_mood 模式）
+2. **P2 图表欠账**：指标页新图——体成分（脂肪量=体重×体脂% 与肌肉量双线）、
+   心率（hr_min 静息代理 + hr_avg）、血氧、训练负荷（见 P3）；bp 图无个人目标时
+   画 130 固定参考线；历史表 bp≥130/85、SpO2<94 标黄（琥珀非红）；
+   _weight_trend_hint 泛化为 _metric_trend_hint（体重/体脂/腰围三图共用达标预测，
+   _TARGET_KEYS 加 body_fat/girth）；设置页目标值加 目标体脂率/目标腰围；
+   计数型习惯（target>1 daily）管理行加近 30 天 done_count 纯 div 条形图（绿=达标）
+3. **P3 负荷与恢复（services/readiness.py）**：ACWR（7/28 天均比，<0.8 低/
+   0.8-1.3 适中/1.3-1.5 偏高/>1.5 预警）+ Foster 单调性（>2 提示，恒定负荷封顶
+   9.9）——训练页负荷卡显示，周报快照存 acwr（容错显示）；CTL/ATL/TSB 42/7 天
+   EWMA 曲线（指标页「训练负荷」图，**取数带 3×42 天预热**，不足会系统性偏低）；
+   RHR 基线（hr_min 7 日均 vs 28 日均 +5bpm 告警）；**每日准备度 0-100**（昨夜
+   睡眠/前日负荷/RHR/主观 各对 28 天基线 z 分→50+20z 钳 0-100→加权 .35/.25/.25/.15
+   缺项摊权，全缺不出分）今日页卡片（分数环+建议，恢复优先措辞中性）
+4. **P4 自适应能量引擎（services/energy.py，MacroFactor 思路）**：体重趋势线
+   （时间感知 EMA，日 α=0.10，断档按 (1-α)^n 补偿）叠加在体重图；TDEE 反推
+   （28 天窗，门槛：饮食≥14 天+体重≥8 点跨度≥14 天，TDEE=均摄入−趋势Δkg×7700÷天）；
+   周报 tab 顶「每周 Check-in」卡（实测代谢+下周建议热量=TDEE+速率×7700÷7 钳
+   TDEE±1000 且 ≥1200，差 <75 kcal 不折腾；「应用为新目标」写 target_kcal）；
+   周/月报「能量账本」卡（累计缺口→理论 kg vs 实际趋势 kg 对账，只累计「有饮食
+   记录且 BMR 可知」的天）；设置加 energy_rate_kgpw（缺省 -0.35）/
+   energy_train_day_offset（>0 且当日有训练 → 饮食页目标上浮 N% 带「训练日」标）
+5. **P5 组合菜谱**：迁移 13 meal_templates（name 唯一 + items JSONB）+
+   achievements 两表；饮食页每餐「☆ 存组合」（prompt 组合名走表单值防 HX-Prompt
+   头非 Latin-1 报错，同名覆盖）→ 组合 chips 一键整组记录（food_id 行按食物库
+   现值重算、食物已删跳过）；「复制上次」与餐次频次 chips 本就有（批次四）
+6. **P6 洞察引擎（services/insights.py）**：只做 6 组预设配对分桶（防伪相关），
+   双桶各 ≥8 样本 + 差异过阈值才输出：睡眠→次日精力/摄入/步数、高负荷→次日心情、
+   23 点后入睡→次日晨勃率、训练日→当日心情；月报详情「数据洞察」卡（滚动 90 天
+   实时算，不进冻结快照）；llm.build_context 注入晨勃序列+晨勃率、主观睡眠质量
+   均值、洞察结论行（E4：此前 AI 完全看不见这两个作息信号）
+7. **P7 主动预警**：vitals_alert（睡眠时长/hr_min/SpO2 各 28 天滚动中位数±3×MAD
+   个人典型区间，只看坏方向，**≥2 项同时越界才报**）→ 今日页琥珀横幅 +
+   digest；digest 升级晨间简报：体征预警 > 准备度一句话（分数+band+建议）>
+   新成就 > agent 告警 > 缺口清单（全离线规则模板，无 AI 依赖）
+8. **P8 成就 + 进食窗口**：services/achievements.py 13 枚长期主义徽章（饮食连击
+   7/30/100、跑量 100/500/1000km、训练 1k/5k/10k 分钟、习惯达标 100/500 天次、
+   连续 7 夜睡够、力量档案 5 动作）——本体实时计算，achievements 表只记首达日期，
+   digest 播报新达成一次；/achievements 徽章墙（更多页入口）；日报饮食卡
+   「进食窗口 HH:MM–HH:MM（Nh）」（仅当天记录的时间戳，补记不算）；
+   备份导出白名单补 meal_templates/achievements
+9. **H5 去羞辱化（横切）**：审查确认现有超标呈现已是琥珀非红；新卡片全部
+   趋势语言（能量账本「理论 vs 实际」、Check-in「调整目标」、建议「恢复优先」）
+10. 测试：tests/test_v6_engines.py 12 个纯函数锁（ACWR 分档/EWMA 收敛与 TSB
+    方向/组件分方向与缺项摊权/EMA 滤噪断档/TDEE 能量守恒与门槛/建议钳制/
+    入睡时刻跨午夜/最长连击/分桶门槛）；全量 230 绿；Tailwind 重建 + SW v16
+11. 注意：EWMA 预热必须 ≥3×42 天（服务与图表取数都已带）；周/月快照新字段只
+    出现在 V6 之后生成的快照（旧快照容错隐藏）；insights/checkin/readiness
+    数据门槛不达一律不显示（宁缺毋滥）；准备度卡与 agent-fresh 同用
+    「outerHTML 自替换 + 空态 hidden」模式
 
 ## ✅ 已完成：V5 批次「Agent 深度使用」（2026-07-12，五段全落地，218 测全绿）
 

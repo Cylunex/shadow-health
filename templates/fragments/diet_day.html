@@ -11,7 +11,15 @@
   <section class="card">
     <div class="mb-3 flex items-center justify-between">
       <h3 class="card-title mb-0">{{ g.meal }}</h3>
-      {% if g.rows %}<span class="text-xs text-slate-500 tabular-nums">{{ fmt(g.kcal) }} kcal</span>{% endif %}
+      {% if g.rows %}
+      <span class="flex items-center gap-2">
+        <span class="text-xs text-slate-500 tabular-nums">{{ fmt(g.kcal) }} kcal</span>
+        {# 存为组合（V6 P5）：prompt 组合名后整餐存为模板（中文名走表单值，UTF-8 安全） #}
+        <button type="button"
+                onclick="var n = prompt('给这组{{ g.meal }}起个名字（同名覆盖更新）'); if (n && n.trim()) htmx.ajax('POST', '{{ u('/diet/templates/save') }}', { target: '#diet-templates', swap: 'outerHTML', values: { d: '{{ d.isoformat() }}', meal: '{{ g.meal }}', name: n.trim() } })"
+                class="text-xs text-slate-500 active:text-emerald-400" title="存为组合">☆ 存组合</button>
+      </span>
+      {% endif %}
     </div>
     {% if g.rows %}
     <ul class="space-y-2">

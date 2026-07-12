@@ -259,12 +259,37 @@ def _render_item(request: Request, db: Session, habit: Habit, day: date | None =
     )
 
 
+def _count_bars(habit: Habit, logs: dict[date, int], today: date) -> list[dict] | None:
+    """计数型习惯（target>1）近 30 天量趋势条（V6 G10）：纯 div 条形，零 JS。
+
+    数据一直在记（AI 上下文都看得到逐日计数），用户自己却只有达标热力图——
+    这里补上「每天到底喝了几杯」。0 = 否决/没喝，缺日 = 没记。
+    """
+    target = habit.target_per_period or 1
+    if target <= 1 or habit.period != "daily":
+        return None
+    bars = []
+    peak = max(target, max((logs.get(today - timedelta(days=i), 0) for i in range(30)), default=0))
+    for i in range(29, -1, -1):
+        d = today - timedelta(days=i)
+        c = logs.get(d)
+        pct = round((c or 0) * 100 / peak) if peak else 0
+        bars.append({
+            "date": d.strftime("%m-%d"),
+            "count": c,
+            "pct": max(pct, 6) if c else 0,  # 有量至少 6% 高度可见
+            "ok": c is not None and c >= target,
+        })
+    return bars if any(b["count"] for b in bars) else None
+
+
 def _manage_row_ctx(habit: Habit, logs: dict[date, int], today: date) -> dict:
     _, streak_label = _streak(habit, logs, today)
     return {
         "habit": habit,
         "streak_label": streak_label,
         "month_rate": _month_rate(habit, logs, today),
+        "count_bars": _count_bars(habit, logs, today),
     }
 
 
