@@ -30,6 +30,19 @@
    重名不覆盖/五组门槛/整句名/UI 与 offline 通道链路——日期用 2020-04，
    食物按名精确清理）；SW v19
 
+## ✅ 已完成：V8.2 批次（2026-07-16，训练日历两项，275 测全绿）
+
+1. **训练日历加 1 个月选项**：HEATMAP_MONTHS_OPTIONS (3,6,12)→(1,3,6,12)，
+   模板/端点零改动（chips 由 options 渲染、months 校验白名单自动继承）
+2. **日历日详情行可展开**：workout_day_detail.html 行加与 workout_log_row
+   同款详情面板（开始时间/时长/距离/配速/消耗/平均最大心率/原始标题/
+   原始类型/备注，Alpine 折叠 + chevron），有隐藏字段才可点；SW v20
+3. **静息心率结论（用户问）**：翻 AAR 确认 Samsung Health Data SDK 1.1.0
+   只有 HeartRateType（HEART_RATE/MIN_HEART_RATE/MAX_HEART_RATE/SERIES_DATA），
+   **没有独立静息心率类型**——应用现状（DailyActivity.hr_min 日最低当静息
+   代理，心率图/RHR 基线/准备度共用）就是能拿到的最优解，不改。顺带发现
+   SDK 有 EnergyScoreType（三星自家准备度分），记为后续候选
+
 ## ✅ 已完成：V8 批次（2026-07-16，NAS 上线后使用反馈四项，263 测全绿）
 
 1. **壳多服务器地址**（android/ ServerConfig.java 新增）：连接设置对话框改多行

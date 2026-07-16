@@ -66,7 +66,7 @@ HEATMAP_LEVEL_CLASSES = [
     "bg-emerald-500",
     "bg-emerald-300 shadow-[0_0_5px_rgba(110,231,183,0.45)]",
 ]
-HEATMAP_MONTHS_OPTIONS = (3, 6, 12)
+HEATMAP_MONTHS_OPTIONS = (1, 3, 6, 12)
 
 
 # ---------- 表单解析 ----------
