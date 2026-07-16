@@ -151,6 +151,63 @@ def _food_macros(
     return scale(food.kcal_per_100g), scale(food.protein_g), scale(food.fat_g), scale(food.carb_g)
 
 
+def _auto_catalog_food(
+    db: Session,
+    name: Any,
+    amount_g: Any,
+    kcal: Any,
+    protein_g: Any = None,
+    fat_g: Any = None,
+    carb_g: Any = None,
+) -> bool:
+    """自由文本记录自动进食物库（UI 手记 / AI 餐照识别 / offline·agent 通道共用）。
+
+    门槛：名字 ≤20 字（更长多半是整句描述，会污染搜索）+ 带克数 + 带热量——
+    否则折算不出每 100g，没营养值的档案没有复用价值；折算结果超出生理上限
+    （热量 >900 kcal/100g 或单一宏量 >100g/100g）视为可疑数据不建档。
+    重名跳过不覆盖（用户手工维护的值优先）。返回是否真的新建了。
+    建档后该食物即出现在搜索联想/常吃 chips，营养按用量由服务端重算。"""
+    food_name = str(name or "").strip()
+    if not food_name or len(food_name) > 20:
+        return False
+
+    def dec(v: Any) -> Decimal | None:
+        if v is None:
+            return None
+        try:
+            return v if isinstance(v, Decimal) else Decimal(str(v))
+        except InvalidOperation:
+            return None
+
+    amount = dec(amount_g)
+    kcal_d = dec(kcal)
+    if amount is None or amount <= 0 or kcal_d is None:
+        return False
+
+    def per100(v: Any) -> Decimal | None:
+        d = dec(v)
+        if d is None:
+            return None
+        return (d * 100 / amount).quantize(Decimal("0.1"))
+
+    kcal100 = per100(kcal_d)
+    macros100 = [per100(protein_g), per100(fat_g), per100(carb_g)]
+    if kcal100 is None or kcal100 > 900 or any(m is not None and m > 100 for m in macros100):
+        return False
+    if db.execute(select(Food.id).where(Food.name == food_name)).first() is not None:
+        return False
+    db.add(Food(
+        name=food_name,
+        kcal_per_100g=kcal100,
+        protein_g=macros100[0],
+        fat_g=macros100[1],
+        carb_g=macros100[2],
+        notes="自动建档（来自饮食记录）",
+    ))
+    db.flush()
+    return True
+
+
 def _last_amount(db: Session, food_id: int) -> Decimal:
     """该食物最近一次记录的用量；无记录默认 100g。"""
     amount = db.execute(
@@ -201,6 +258,9 @@ def _day_ctx(db: Session, d: date) -> dict:
             "rows": items,
             "photos": photos_by_meal[meal],
             "kcal": sum((r["log"].kcal or Decimal(0)) for r in items),
+            "protein": sum((r["log"].protein_g or Decimal(0)) for r in items),
+            "carb": sum((r["log"].carb_g or Decimal(0)) for r in items),
+            "fat": sum((r["log"].fat_g or Decimal(0)) for r in items),
         }
         for meal, items in by_meal.items()
     ]
@@ -395,6 +455,7 @@ async def diet_log_create(request: Request, db: Session = Depends(get_db)):
     except ValueError as exc:
         return _form_msg(request, error=str(exc))
 
+    cataloged = False
     food_id_raw = str(form.get("food_id") or "").strip()
     if food_id_raw:
         try:
@@ -420,9 +481,12 @@ async def diet_log_create(request: Request, db: Session = Depends(get_db)):
             amount_g=amount, kcal=kcal, protein_g=protein, fat_g=fat, carb_g=carb,
         )
         name = free_text
+        # 带克数+热量的新食物自动进食物库（下次可搜索/chip 直选）
+        cataloged = _auto_catalog_food(db, free_text, amount, kcal, protein, fat, carb)
     db.add(log)
     db.flush()
-    return _form_msg(request, ok=f"已记录 {meal}·{name}")
+    return _form_msg(request, ok=f"已记录 {meal}·{name}"
+                     + ("，新食物已入库" if cataloged else ""))
 
 
 @router.get("/diet/logs/{log_id}/edit")
@@ -470,6 +534,8 @@ async def diet_log_update(log_id: int, request: Request, db: Session = Depends(g
         log.protein_g = protein
         log.fat_g = fat
         log.carb_g = carb
+        # 事后补全克数/热量的自由文本行同样自动建档（重名跳过）
+        _auto_catalog_food(db, log.free_text, amount, kcal, protein, fat, carb)
     db.flush()
     return templates.TemplateResponse(
         request, "fragments/diet_log_row.html", _row_ctx(db, log), headers=dict(HX_TRIGGER)
@@ -983,6 +1049,7 @@ def diet_photo_analyze(photo_id: int, request: Request, db: Session = Depends(ge
     if not items:
         return _msg(error=f"没识别出食物。{result['note']}")
     total_kcal = 0.0
+    new_foods = 0
     for it in items:
         db.add(DietLog(
             log_date=photo.log_date,
@@ -995,10 +1062,15 @@ def diet_photo_analyze(photo_id: int, request: Request, db: Session = Depends(ge
             carb_g=it.get("carb_g"),
         ))
         total_kcal += it["kcal"] or 0
+        # 识别出的新菜自动进食物库（估算值按每 100g 折算，重名跳过）
+        if _auto_catalog_food(db, it["name"], it["amount_g"], it["kcal"],
+                              it["protein_g"], it.get("fat_g"), it.get("carb_g")):
+            new_foods += 1
     db.flush()
     names = "、".join(it["name"] for it in items[:5]) + ("…" if len(items) > 5 else "")
     return _msg(
-        ok=f"已识别 {len(items)} 项计入{photo.meal}：{names}（约 {round(total_kcal)} kcal）",
+        ok=f"已识别 {len(items)} 项计入{photo.meal}：{names}（约 {round(total_kcal)} kcal）"
+           + (f"，{new_foods} 个新食物已入库" if new_foods else ""),
         note=result["note"],
     )
 

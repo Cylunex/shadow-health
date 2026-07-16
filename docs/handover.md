@@ -11,6 +11,25 @@
 >（视真机手感决定）+ NAS 侧 MCP 接入（supervisor/Hermes/OpenClaw 注册照
 > mcp_server/README，用户做）。血压计 BLE 用户已明确**不做**。
 
+## ✅ 已完成：V8.1 批次（2026-07-16，饮食两项，275 测全绿）
+
+1. **饮食页补全三大营养素展示**：记录行 meta 从「克数·kcal·蛋白」补到
+   「克数·kcal·蛋白·碳水·脂肪」（diet_log_row，非空才显示）；餐次卡头部 kcal
+   下加三大营养素小计行（_day_ctx 餐组新增 protein/carb/fat 合计，任一非零
+   才渲染）。日汇总卡四项 vs 目标本来就有，未动
+2. **free_text 新食物自动进食物库**（diet._auto_catalog_food，三通道共用）：
+   自由文本记录带**克数 + 热量**时按每 100g 折算自动建档（Food.notes 标
+   「自动建档（来自饮食记录）」），下次搜索联想/常吃 chips 直接可选、营养
+   按用量服务端重算。门槛：名字 ≤20 字（更长视为整句描述防污染搜索）、
+   折算超生理上限（>900 kcal/100g 或单宏量 >100g/100g）不建、**重名跳过
+   不覆盖**（手工维护值优先）。接线三处：UI POST /diet/logs 与 PUT 编辑
+   free_text 路径（toast 附「新食物已入库」）、AI 餐照识别循环（提示附
+   「N 个新食物已入库」）、offline._normalize_diet free_text 路径（离线
+   本地页 + agent/MCP 通道同享）。整餐复制/组合模板不触发（复制的行当初
+   已建过档）。测试 tests/test_diet_autocatalog.py 12 个（折算/浮点输入/
+   重名不覆盖/五组门槛/整句名/UI 与 offline 通道链路——日期用 2020-04，
+   食物按名精确清理）；SW v19
+
 ## ✅ 已完成：V8 批次（2026-07-16，NAS 上线后使用反馈四项，263 测全绿）
 
 1. **壳多服务器地址**（android/ ServerConfig.java 新增）：连接设置对话框改多行

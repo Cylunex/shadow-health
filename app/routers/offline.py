@@ -50,7 +50,9 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.models import DietLog, Food, Habit, HabitLog, ImportRaw, WorkoutLog
-from app.routers.diet import MEALS, _food_macros, _last_amount, _parse_decimal
+from app.routers.diet import (
+    MEALS, _auto_catalog_food, _food_macros, _last_amount, _parse_decimal,
+)
 from app.routers.ingest import (
     MAX_BODY_BYTES, RAW_BATCH, _bearer_reject, _mark_raw, _touch_sync_state,
 )
@@ -256,6 +258,13 @@ def _normalize_diet(db: Session, payload: dict, d: date) -> int:
             amount = _last_amount(db, food.id)  # UI 同款兜底：上次用量/100g
         kcal, protein, fat, carb = _food_macros(food, amount)
         cols.update(amount_g=amount, kcal=kcal, protein_g=protein, fat_g=fat, carb_g=carb)
+    else:
+        # 自由文本路径（offline 本地页 / agent 通道）：带克数+热量的新食物
+        # 自动进食物库（与 UI POST /diet/logs 同语义，重名跳过）
+        _auto_catalog_food(
+            db, cols["free_text"], cols["amount_g"], cols["kcal"],
+            cols["protein_g"], cols["fat_g"], cols["carb_g"],
+        )
     log = DietLog(log_date=d, **cols)
     db.add(log)
     db.flush()

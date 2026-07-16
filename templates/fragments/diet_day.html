@@ -22,6 +22,12 @@
       {% endif %}
     </div>
     {% if g.rows %}
+    {# 餐次三大营养素小计（有任一非零才显示，纯「未填营养」餐不占行） #}
+    {% if g.protein or g.carb or g.fat %}
+    <div class="-mt-2 mb-2 text-[11px] text-slate-500 tabular-nums">
+      蛋白 {{ fmt(g.protein) }}g · 碳水 {{ fmt(g.carb) }}g · 脂肪 {{ fmt(g.fat) }}g
+    </div>
+    {% endif %}
     <ul class="space-y-2">
       {% for r in g.rows %}
       {% with log = r.log, name = r.name %}{% include "fragments/diet_log_row.html" %}{% endwith %}
