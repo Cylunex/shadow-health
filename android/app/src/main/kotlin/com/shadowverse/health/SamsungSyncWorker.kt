@@ -33,7 +33,8 @@ class SamsungSyncWorker(ctx: Context, params: WorkerParameters) : CoroutineWorke
 
     override suspend fun doWork(): Result {
         val prefs = applicationContext.getSharedPreferences("shell", Context.MODE_PRIVATE)
-        val server = (prefs.getString("server_url", "") ?: "").trimEnd('/')
+        // 多服务器：探测可达地址（Worker 线程）；全不通退回活动地址走 Result.retry
+        val server = ServerConfig.resolveOrActive(applicationContext).trimEnd('/')
         val token = prefs.getString("ingest_token", "") ?: ""
         if (server.isEmpty() || token.isEmpty()) {
             Log.w(TAG, "未配置服务器/Token，跳过同步")

@@ -154,11 +154,15 @@ public class ScaleScanService extends Service {
         if (timed) {
             handler.postDelayed(timedStop, TIMED_SCAN_MS);  // 到点自停，通知随服务消失
         }
-        // 上次失败积压的测量：服务启动即尝试补发
-        final String server = prefs.getString("server_url", "");
+        // 上次失败积压的测量：服务启动即尝试补发（探测可达服务器在 IO 线程做）
         final String token = prefs.getString("ingest_token", "");
-        if (!server.isEmpty() && !token.isEmpty()) {
-            io.execute(() -> drainQueue(server, token));
+        if (!ServerConfig.active(this).isEmpty() && !token.isEmpty()) {
+            io.execute(() -> {
+                String server = ServerConfig.resolveOrActive(ScaleScanService.this);
+                if (!server.isEmpty()) {
+                    drainQueue(server, token);
+                }
+            });
         }
         // 称重模式不复活：系统回收后自动拉起一个没人等的监听没有意义
         return timed ? START_NOT_STICKY : START_STICKY;
@@ -346,9 +350,8 @@ public class ScaleScanService extends Service {
         }
         sent.put(key, System.currentTimeMillis());
         SharedPreferences prefs = getSharedPreferences("shell", MODE_PRIVATE);
-        String server = prefs.getString("server_url", "");
-        String token = prefs.getString("ingest_token", "");
-        if (server.isEmpty() || token.isEmpty()) {
+        final String token = prefs.getString("ingest_token", "");
+        if (ServerConfig.active(this).isEmpty() || token.isEmpty()) {
             updateNotification("未配置服务器/Token");
             return;
         }
@@ -356,6 +359,8 @@ public class ScaleScanService extends Service {
                 "{\"ts\":\"%s\",\"weight_kg\":%.2f,\"impedance\":%s}",
                 m.tsIso, m.weightKg, m.impedance == null ? "null" : m.impedance.toString());
         io.execute(() -> {
+            // 多服务器：探测可达地址（IO 线程）；全不通退回活动地址走原有三连重试
+            String server = ServerConfig.resolveOrActive(ScaleScanService.this);
             boolean ok = false;
             for (int attempt = 1; attempt <= 3 && !ok; attempt++) {
                 ok = postJson(server + "/api/ingest/miscale", token,

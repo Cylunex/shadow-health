@@ -3,8 +3,32 @@
 {% block page_title %}身体指标{% endblock %}
 {% block content %}
 <div class="space-y-5">
-  <section class="card">
-    <h2 class="card-title">记录指标</h2>
+  <section class="card" x-data="{ cfg: false }">
+    <div class="mb-3 flex items-center justify-between">
+      <h2 class="card-title mb-0">记录指标</h2>
+      <button type="button" @click="cfg = !cfg"
+              class="chip text-xs" :class="cfg && 'chip-active'">⚙️ 自定义显示</button>
+    </div>
+    {# 自定义显示：勾选的字段出现在表单/历史/图表；隐藏只影响展示，
+       已有数据与秤/手表/Agent 自动写入不受影响 #}
+    <form x-show="cfg" style="display: none"
+          hx-post="{{ u('/metrics/display') }}"
+          hx-target="#metrics-form" hx-swap="outerHTML"
+          hx-disabled-elt="find button[type='submit']"
+          class="mb-4 space-y-3 rounded-xl border border-slate-800/70 bg-slate-950/50 p-3.5">
+      <p class="text-xs text-slate-500">勾选要显示的指标。隐藏只影响录入表单与展示，已有数据和自动同步照常。</p>
+      <div class="grid grid-cols-2 gap-1.5">
+        {% for field, label in toggle_fields %}
+        <label class="chip min-h-[44px] justify-start gap-2 cursor-pointer">
+          <input type="checkbox" name="visible" value="{{ field }}"
+                 {% if field not in hidden %}checked{% endif %}
+                 class="accent-emerald-500 w-4 h-4">
+          <span class="text-xs">{{ label }}</span>
+        </label>
+        {% endfor %}
+      </div>
+      <button type="submit" class="btn-primary w-full min-h-[44px]">保存显示设置</button>
+    </form>
     {% include "fragments/metrics_form.html" %}
   </section>
 

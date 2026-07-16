@@ -160,8 +160,8 @@ final class SnapshotCache {
         return p;
     }
 
-    /** scheme/host 忽略大小写 + 默认端口补齐后的同源比较。 */
-    private static boolean sameOrigin(Uri requestUri, String serverUrl) {
+    /** scheme/host 忽略大小写 + 默认端口补齐后的同源比较（ServerConfig.matching 同用）。 */
+    static boolean sameOrigin(Uri requestUri, String serverUrl) {
         Uri server = Uri.parse(serverUrl);
         String reqScheme = requestUri.getScheme();
         String srvScheme = server.getScheme();

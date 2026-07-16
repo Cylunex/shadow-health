@@ -215,7 +215,8 @@ final class OfflineStore {
      * -2 = 有积压但服务器/Token 未配置（重试无意义，得提示用户去配置）。
      */
     static int drain(Context ctx) {
-        String server = prefs(ctx).getString("server_url", "");
+        // 多服务器：探测可达地址（Worker 线程，允许阻塞）；全不通退回活动地址走失败重试
+        String server = ServerConfig.resolveOrActive(ctx);
         String token = prefs(ctx).getString("ingest_token", "");
         JSONArray snapshot;
         synchronized (LOCK) {
@@ -321,7 +322,7 @@ final class OfflineStore {
 
     /** 拉取并缓存 /api/offline/bootstrap（IO 线程调用）；成功返回 true。 */
     static boolean fetchBootstrap(Context ctx) {
-        String server = prefs(ctx).getString("server_url", "");
+        String server = ServerConfig.resolveOrActive(ctx);  // IO 线程调用，允许探测
         String token = prefs(ctx).getString("ingest_token", "");
         if (server.isEmpty() || token.isEmpty()) {
             return false;

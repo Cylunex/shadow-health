@@ -73,6 +73,20 @@ _NUM_FIELDS = [f[0] for f in _FIELD_DEFS]
 # 无当日记录时预填「最近一次值」的慢变化字段
 _PREFILL_FIELDS = ("weight_kg", "body_fat_pct", "waist_cm")
 
+# 自定义显示（app_settings['metrics_hidden_fields'] = 字段名列表）：永不录入的字段
+# 可从录入表单/历史表/图表选项里隐藏。只影响展示——隐藏字段的既有数据不动，
+# 外部通道（秤/手表/Agent）照常可写。
+_HIDDEN_SETTING_KEY = "metrics_hidden_fields"
+_TOGGLE_FIELDS: list[tuple[str, str]] = [(f[0], f[1]) for f in _FIELD_DEFS] + [
+    ("morning_erection", "晨勃"),
+]
+_TOGGLE_KEYS = {f for f, _ in _TOGGLE_FIELDS}
+# 表单「更多指标」折叠区的字段（全被隐藏时整个折叠区不渲染）
+_MORE_FIELDS = (
+    "resting_hr", "spo2_pct", "muscle_mass_kg", "skeletal_muscle_kg", "bmr_kcal",
+    "body_water_kg", "visceral_fat_level", "chest_cm", "arm_cm", "thigh_cm", "hip_cm",
+)
+
 _CHART_DAYS = (7, 30, 90)
 _CHART_METRICS: list[tuple[str, str]] = [
     ("weight", "体重"),
@@ -140,6 +154,17 @@ _TREND_HINT_FIELDS = {
     "body_fat": ("body_fat_pct", "%"),
     "girth": ("waist_cm", "cm"),
 }
+# 只依赖 BodyMetrics 手录字段的图表 → 依赖字段集合；全部被隐藏时图表选项也隐藏。
+# 手表/日活数据驱动的图（心率/步数/睡眠/负荷/跑步/入睡时刻）不受影响。
+_CHART_FIELD_DEPS: dict[str, set[str]] = {
+    "weight": {"weight_kg"},
+    "body_fat": {"body_fat_pct"},
+    "composition": {"body_fat_pct", "muscle_mass_kg"},
+    "bp": {"bp_systolic", "bp_diastolic"},
+    "spo2": {"spo2_pct"},
+    "mood": {"mood_score"},
+    "girth": {"waist_cm", "chest_cm", "hip_cm", "thigh_cm", "arm_cm"},
+}
 
 
 # ---------- 通用小工具 ----------
@@ -201,6 +226,24 @@ def _same(current: Any, new: Any) -> bool:
     return current == new
 
 
+def _hidden_fields(db: Session) -> set[str]:
+    """已配置隐藏的字段集合；未配置/格式异常按全显示处理。"""
+    value = db.execute(
+        select(AppSetting.value).where(AppSetting.key == _HIDDEN_SETTING_KEY)
+    ).scalar_one_or_none()
+    if not isinstance(value, list):
+        return set()
+    return {str(v) for v in value} & _TOGGLE_KEYS
+
+
+def _visible_chart_options(hidden: set[str]) -> list[tuple[str, str]]:
+    return [
+        (key, label)
+        for key, label in _CHART_METRICS
+        if not (key in _CHART_FIELD_DEPS and _CHART_FIELD_DEPS[key] <= hidden)
+    ]
+
+
 # ---------- 片段上下文 ----------
 def _form_context(
     db: Session,
@@ -227,6 +270,7 @@ def _form_context(
             ).scalar_one_or_none()
             if last is not None:
                 v[name] = _fmt(last)
+    hidden = _hidden_fields(db)
     return {
         "log_date": log_date.isoformat(),
         "v": v,
@@ -240,6 +284,9 @@ def _form_context(
         "saved": saved,
         "errors": errors or [],
         "fmt": _fmt,
+        "hidden": hidden,
+        "toggle_fields": _TOGGLE_FIELDS,
+        "show_more": any(f not in hidden for f in _MORE_FIELDS),
     }
 
 
@@ -256,6 +303,7 @@ def _quick_context(db: Session, saved: bool = False, errors: list[str] | None = 
         "quick_mood": row.mood_score if row else None,
         "quick_saved": saved,
         "quick_errors": errors or [],
+        "quick_hidden": _hidden_fields(db),
     }
 
 
@@ -270,7 +318,29 @@ def _history_context(db: Session) -> dict[str, Any]:
         .scalars()
         .all()
     )
-    return {"history_rows": rows, "source_labels": SOURCE_LABELS, "fmt": _fmt}
+    hidden = _hidden_fields(db)
+    # 表格列 → 依赖字段（血压两列合一格）；隐藏字段的列整列不渲染
+    history_cols = [
+        c for c, deps in (
+            ("weight_kg", {"weight_kg"}),
+            ("body_fat_pct", {"body_fat_pct"}),
+            ("waist_cm", {"waist_cm"}),
+            ("bp", {"bp_systolic", "bp_diastolic"}),
+            ("sleep_hours", {"sleep_hours"}),
+            ("sleep_quality", {"sleep_quality"}),
+            ("morning_erection", {"morning_erection"}),
+            ("energy_level", {"energy_level"}),
+            ("mood_score", {"mood_score"}),
+            ("spo2_pct", {"spo2_pct"}),
+        ) if not deps <= hidden
+    ]
+    return {
+        "history_rows": rows,
+        "source_labels": SOURCE_LABELS,
+        "fmt": _fmt,
+        "history_cols": history_cols,
+        "history_colspan": len(history_cols) + 1,
+    }
 
 
 # ---------- 图表数据 ----------
@@ -544,10 +614,19 @@ def _chart_context(db: Session, metric: str, days: int) -> dict[str, Any]:
             "has_data": has_data,
             "target_label": target["label"] if target else None,
             "trend_hint": trend_hint,
-            "metric_options": _CHART_METRICS,
+            "metric_options": _visible_chart_options(_hidden_fields(db)),
             "days_options": _CHART_DAYS,
         }
     }
+
+
+def _default_metric(db: Session) -> str:
+    """默认图表指标：体重被隐藏时退到第一个可见选项。"""
+    options = _visible_chart_options(_hidden_fields(db))
+    keys = {k for k, _ in options}
+    if "weight" in keys:
+        return "weight"
+    return options[0][0] if options else "weight"
 
 
 # ---------- 路由 ----------
@@ -555,9 +634,29 @@ def _chart_context(db: Session, metric: str, days: int) -> dict[str, Any]:
 def metrics_page(request: Request, db: Session = Depends(get_db)):
     ctx: dict[str, Any] = {}
     ctx.update(_form_context(db, today_local()))
-    ctx.update(_chart_context(db, "weight", 30))
+    ctx.update(_chart_context(db, _default_metric(db), 30))
     ctx.update(_history_context(db))
     return templates.TemplateResponse(request, "metrics.html", ctx)
+
+
+@router.post("/metrics/display")
+async def metrics_display_save(request: Request, db: Session = Depends(get_db)):
+    """保存自定义显示：勾选的字段可见，其余进隐藏清单；表单/历史/图表随之刷新。"""
+    form = await request.form()
+    visible = {str(v) for v in form.getlist("visible")}
+    hidden = sorted(_TOGGLE_KEYS - visible)
+    row = db.get(AppSetting, _HIDDEN_SETTING_KEY)
+    if row is None:
+        db.add(AppSetting(key=_HIDDEN_SETTING_KEY, value=hidden))
+    else:
+        row.value = hidden
+    db.flush()
+    resp = templates.TemplateResponse(
+        request, "fragments/metrics_form.html", _form_context(db, today_local())
+    )
+    # metrics-changed 让历史表与图表（均监听 from:body）跟着换新的列/选项
+    resp.headers["HX-Trigger"] = "metrics-changed"
+    return resp
 
 
 @router.post("/metrics")
@@ -608,8 +707,10 @@ def metrics_form_fragment(request: Request, log_date: str = "", db: Session = De
 def metrics_chart_fragment(
     request: Request, metric: str = "weight", days: int = 30, db: Session = Depends(get_db)
 ):
-    if metric not in _METRIC_KEYS:
-        metric = "weight"
+    # 未知指标或刚被自定义显示隐藏（metrics-changed 被动刷新还带着旧参数）：退默认
+    visible_keys = {k for k, _ in _visible_chart_options(_hidden_fields(db))}
+    if metric not in visible_keys:
+        metric = _default_metric(db)
     if days not in _CHART_DAYS:
         days = 30
     return templates.TemplateResponse(

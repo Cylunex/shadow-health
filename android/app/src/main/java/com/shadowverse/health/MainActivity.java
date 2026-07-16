@@ -40,8 +40,6 @@ import android.widget.Toast;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-import java.net.HttpURLConnection;
-import java.net.URL;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
@@ -53,21 +51,23 @@ import java.util.concurrent.Executors;
 /**
  * WebView shell for the shadow-health LAN web app.
  *
- * - Server address lives in SharedPreferences (default http://192.168.1.100:8080).
- *   Change it on first launch, via a 3-finger long-press anywhere, or the MENU key.
+ * - Server addresses live in SharedPreferences（可配多个，每行一个，内网在前
+ *   frp 外网在后；探测按序自动切换，见 ServerConfig）。
+ *   Change on first launch, via a 3-finger long-press anywhere, or the MENU key.
  * - Back key walks WebView history before exiting.
  * - 启动先秒开内置本地页（assets/offline.html），后台探测 /healthz：在线自动切
  *   服务器页面，离线停留本地页直接记录（队列见 OfflineStore，30s 自动重试）；
  *   加载失败也回落到同一本地页（docs/offline-plan.md 阶段二）。
  * - Cookies persist (flushed on pause) so the login session survives restarts.
+ *   注意 cookie 按 origin 隔离：每个服务器地址首次使用需各自登录一次。
  */
 public class MainActivity extends Activity {
 
     private static final String PREFS_NAME = "shell";
-    private static final String KEY_SERVER_URL = "server_url";
+    private static final String KEY_SERVER_URL = ServerConfig.KEY_ACTIVE;
     private static final String KEY_INGEST_TOKEN = "ingest_token";
     private static final String KEY_SCALE_SCAN = "scale_scan_enabled";
-    private static final String DEFAULT_SERVER_URL = "http://192.168.1.100:8080";
+    private static final String DEFAULT_SERVER_URL = ServerConfig.DEFAULT_SERVER_URL;
     private static final String LOCAL_PAGE_URL = "file:///android_asset/offline.html";
     private static final int DARK_BG = Color.parseColor("#0f172a");
     private static final long LONG_PRESS_MS = 700;
@@ -135,8 +135,10 @@ public class MainActivity extends Activity {
             @Override
             public android.webkit.WebResourceResponse shouldInterceptRequest(
                     WebView view, WebResourceRequest request) {
-                // 阶段三快照缓存：在线代理落盘、离线回放（详见 SnapshotCache）
-                return SnapshotCache.intercept(getApplicationContext(), request, getServerUrl());
+                // 阶段三快照缓存：在线代理落盘、离线回放（详见 SnapshotCache）。
+                // 多服务器：按请求源匹配清单里的服务器（各 origin 独立缓存条目）
+                return SnapshotCache.intercept(getApplicationContext(), request,
+                        ServerConfig.matching(getApplicationContext(), request.getUrl()));
             }
 
             @Override
@@ -263,7 +265,8 @@ public class MainActivity extends Activity {
     }
 
     private String getServerUrl() {
-        return prefs.getString(KEY_SERVER_URL, DEFAULT_SERVER_URL);
+        String url = ServerConfig.active(this);
+        return url.isEmpty() ? DEFAULT_SERVER_URL : url;
     }
 
     private void loadServer() {
@@ -283,27 +286,36 @@ public class MainActivity extends Activity {
         handler.postDelayed(probeRunnable, PROBE_INTERVAL_MS);  // 30s 自动重试
     }
 
-    /** 后台探测 /healthz：通了就回到断点页面并补发队列；不通留在本地页/快照页等下轮。 */
+    /** 后台探测（多地址按序，见 ServerConfig.resolve）：通了就回到断点页面并补发
+     *  队列；服务器切换时把断点深链换到新地址同路径；全不通留在本地页/快照页等下轮。 */
     private void probeAndConnect() {
         if (isFinishing() || isDestroyed()) {
             return;  // 销毁后 io 已 shutdown，execute 会 RejectedExecutionException
         }
         handler.removeCallbacks(probeRunnable);
-        final String server = getServerUrl();
         io.execute(() -> {
-            final boolean ok = probeHealthz(server);
+            final String server = ServerConfig.resolve(MainActivity.this);  // "" = 全不通
             handler.post(() -> {
                 if (isFinishing() || isDestroyed()) {
                     return;
                 }
-                if (ok) {
+                if (!server.isEmpty()) {
                     if (showingLocalPage) {
-                        // 回到中断前的页面（中途断网的深链），没有就回首页
+                        // 回到中断前的页面（中途断网的深链）；服务器切换则换源同路径，
+                        // 深链不属于任何已知服务器（历史残留）就回首页
                         clearHistoryOnNextLoad = true;
                         erroredUrl = null;
-                        webView.loadUrl(lastAttemptedUrl != null ? lastAttemptedUrl : getServerUrl());
+                        String target = ServerConfig.rebase(
+                                MainActivity.this, lastAttemptedUrl, server);
+                        webView.loadUrl(target != null ? target : server);
                     } else if (onSnapshotPage) {
-                        webView.reload();  // 快照页原地换成在线真页面（横幅随之消失）
+                        String rebased = ServerConfig.rebase(
+                                MainActivity.this, webView.getUrl(), server);
+                        if (rebased != null && !rebased.equals(webView.getUrl())) {
+                            webView.loadUrl(rebased);  // 服务器切换：换源加载同页面
+                        } else {
+                            webView.reload();  // 快照页原地换成在线真页面（横幅随之消失）
+                        }
                     }
                     if (OfflineStore.queueSize(MainActivity.this) > 0) {
                         OfflineStore.scheduleFlush(MainActivity.this);  // 补发统一走 Worker
@@ -317,22 +329,6 @@ public class MainActivity extends Activity {
                 }
             });
         });
-    }
-
-    private static boolean probeHealthz(String server) {
-        HttpURLConnection conn = null;
-        try {
-            conn = (HttpURLConnection) new URL(server + "/healthz").openConnection();
-            conn.setConnectTimeout(4000);
-            conn.setReadTimeout(4000);
-            return conn.getResponseCode() == 200;
-        } catch (Exception e) {
-            return false;
-        } finally {
-            if (conn != null) {
-                conn.disconnect();
-            }
-        }
     }
 
     /** 成功加载服务器页面后刷新 bootstrap 缓存（≥1 小时才重拉，页页刷不划算）。 */
@@ -351,9 +347,14 @@ public class MainActivity extends Activity {
 
     private void showAddressDialog(final boolean firstRun) {
         final EditText input = new EditText(this);
-        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
-        input.setHint("服务器地址");
-        input.setText(getServerUrl());
+        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI
+                | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        input.setMinLines(2);
+        input.setMaxLines(4);
+        input.setHint("服务器地址（每行一个，靠前优先：内网在上、frp 外网在下）");
+        List<String> configured = ServerConfig.urls(this);
+        input.setText(configured.isEmpty()
+                ? DEFAULT_SERVER_URL : String.join("\n", configured));
         input.setSelection(input.getText().length());
 
         final EditText tokenInput = new EditText(this);
@@ -374,7 +375,8 @@ public class MainActivity extends Activity {
         reminderBox.setChecked(prefs.getBoolean(Reminders.PREF_ENABLED, false));
 
         TextView hint = new TextView(this);
-        hint.setText("秤监听需要蓝牙权限；三星同步需先在三星健康开发者模式里开 Data Read"
+        hint.setText("可填多个地址（每行一个）：断线按顺序自动切换，各地址首次使用需各自登录。"
+                + "秤监听需要蓝牙权限；三星同步需先在三星健康开发者模式里开 Data Read"
                 + "（版本号连点 10 次解锁）。国产 ROM 记得允许自启动，否则后台会被清理。");
         hint.setTextSize(12);
 
@@ -394,13 +396,22 @@ public class MainActivity extends Activity {
                 .setMessage("局域网内 shadow-health 服务地址")
                 .setView(col)
                 .setPositiveButton("保存并连接", (d, w) -> {
-                    String url = normalizeUrl(input.getText().toString());
+                    List<String> urls = new ArrayList<>();
+                    for (String line : input.getText().toString().split("\n")) {
+                        String url = ServerConfig.normalizeUrl(line);
+                        if (!url.isEmpty() && !urls.contains(url)) {
+                            urls.add(url);
+                        }
+                    }
+                    if (urls.isEmpty()) {
+                        urls.add(DEFAULT_SERVER_URL);
+                    }
                     boolean scanOn = scanBox.isChecked();
                     boolean samsungOn = samsungBox.isChecked();
                     boolean samsungWas = prefs.getBoolean(SamsungSync.PREF_ENABLED, false);
                     boolean reminderOn = reminderBox.isChecked();
+                    ServerConfig.save(this, urls);
                     prefs.edit()
-                            .putString(KEY_SERVER_URL, url)
                             .putString(KEY_INGEST_TOKEN, tokenInput.getText().toString().trim())
                             .putBoolean(KEY_SCALE_SCAN, scanOn)
                             .putBoolean(SamsungSync.PREF_ENABLED, samsungOn)
@@ -423,7 +434,7 @@ public class MainActivity extends Activity {
                     }
                 })
                 .setNeutralButton("恢复默认", (d, w) -> {
-                    prefs.edit().putString(KEY_SERVER_URL, DEFAULT_SERVER_URL).apply();
+                    ServerConfig.save(this, java.util.Collections.singletonList(DEFAULT_SERVER_URL));
                     loadServer();
                 });
         if (firstRun) {
@@ -537,20 +548,6 @@ public class MainActivity extends Activity {
             }
             Toast.makeText(this, "未授予蓝牙权限，秤监听未开启", Toast.LENGTH_LONG).show();
         }
-    }
-
-    private static String normalizeUrl(String raw) {
-        String url = raw == null ? "" : raw.trim();
-        if (url.isEmpty()) {
-            return DEFAULT_SERVER_URL;
-        }
-        if (!url.startsWith("http://") && !url.startsWith("https://")) {
-            url = "http://" + url;
-        }
-        while (url.endsWith("/")) {
-            url = url.substring(0, url.length() - 1);
-        }
-        return url;
     }
 
     // ---- JS bridge（本地启动页 + 离线队列） --------------------------------

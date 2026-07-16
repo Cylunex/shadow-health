@@ -65,7 +65,8 @@ class ReminderWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(c
 
     override suspend fun doWork(): Result {
         val prefs = applicationContext.getSharedPreferences("shell", Context.MODE_PRIVATE)
-        val server = (prefs.getString("server_url", "") ?: "").trimEnd('/')
+        // 多服务器：探测可达地址（Worker 线程）；全不通退回活动地址走 Result.retry
+        val server = ServerConfig.resolveOrActive(applicationContext).trimEnd('/')
         val token = prefs.getString("ingest_token", "") ?: ""
         if (server.isEmpty() || token.isEmpty()) {
             return Result.failure()

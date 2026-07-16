@@ -1,11 +1,14 @@
-{# 身体指标录入表单片段：POST /metrics 后整体替换（含成功提示）；外层 .card 由 metrics.html 提供 #}
+{# 身体指标录入表单片段：POST /metrics 后整体替换（含成功提示）；外层 .card 由 metrics.html 提供。
+   hidden（自定义显示）里的字段不渲染——只影响录入展示，自动同步与已有数据不受影响 #}
 {% macro num_input(name, label, mode='decimal', ph='') %}
+{% if name not in hidden %}
 <label class="block">
   <span class="field-label">{{ label }}</span>
   <input type="text" inputmode="{{ mode }}" name="{{ name }}" value="{{ v[name] }}"
          placeholder="{{ ph }}" autocomplete="off"
          class="field tabular-nums">
 </label>
+{% endif %}
 {% endmacro %}
 <form id="metrics-form"
       hx-post="{{ u('/metrics') }}"
@@ -48,6 +51,7 @@
   </div>
 
   {# 睡眠质量 1-5 chips #}
+  {% if 'sleep_quality' not in hidden %}
   <div x-data="{ v: {{ chips.sleep_quality if chips.sleep_quality is not none else 'null' }} }">
     <span class="field-label">睡眠质量</span>
     <input type="hidden" name="sleep_quality" :value="v === null ? '' : v">
@@ -59,8 +63,10 @@
       {% endfor %}
     </div>
   </div>
+  {% endif %}
 
   {# 精力 1-5 chips #}
+  {% if 'energy_level' not in hidden %}
   <div x-data="{ v: {{ chips.energy_level if chips.energy_level is not none else 'null' }} }">
     <span class="field-label">精力</span>
     <input type="hidden" name="energy_level" :value="v === null ? '' : v">
@@ -72,8 +78,10 @@
       {% endfor %}
     </div>
   </div>
+  {% endif %}
 
   {# 心情分 1-10 chips（两行各 5 个） #}
+  {% if 'mood_score' not in hidden %}
   <div x-data="{ v: {{ chips.mood_score if chips.mood_score is not none else 'null' }} }">
     <span class="field-label">心情分</span>
     <input type="hidden" name="mood_score" :value="v === null ? '' : v">
@@ -85,8 +93,10 @@
       {% endfor %}
     </div>
   </div>
+  {% endif %}
 
   {# 晨勃 是/否 chips #}
+  {% if 'morning_erection' not in hidden %}
   <div x-data="{ v: {{ 'true' if chips.morning_erection == true else ('false' if chips.morning_erection == false else 'null') }} }">
     <span class="field-label">晨勃</span>
     <input type="hidden" name="morning_erection" :value="v === null ? '' : (v ? '1' : '0')">
@@ -99,7 +109,9 @@
               class="chip min-h-[44px]">否</button>
     </div>
   </div>
+  {% endif %}
 
+  {% if show_more %}
   <details class="group rounded-xl border border-slate-800/70 bg-slate-900/40 open:bg-slate-900/60 transition-colors">
     <summary class="min-h-[44px] flex items-center gap-2 px-3.5 text-sm text-slate-400 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">
       <svg class="w-3.5 h-3.5 shrink-0 text-slate-500 transition-transform group-open:rotate-90" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
@@ -119,6 +131,7 @@
       {{ num_input('hip_cm', '臀围 (cm)') }}
     </div>
   </details>
+  {% endif %}
 
   <label class="block">
     <span class="field-label">备注</span>

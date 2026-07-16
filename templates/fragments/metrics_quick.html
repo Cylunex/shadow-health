@@ -18,18 +18,22 @@
   </div>
 
   <div class="grid grid-cols-2 gap-2">
+    {% if 'weight_kg' not in quick_hidden %}
     <label class="block">
       <span class="field-label">体重 (kg)</span>
       <input type="text" inputmode="decimal" name="weight_kg" value="{{ quick_weight }}"
              autocomplete="off"
              class="field tabular-nums">
     </label>
+    {% endif %}
+    {% if 'sleep_hours' not in quick_hidden %}
     <label class="block">
       <span class="field-label">睡眠 (h)</span>
       <input type="text" inputmode="decimal" name="sleep_hours" value="{{ quick_sleep }}"
              autocomplete="off"
              class="field tabular-nums">
     </label>
+    {% endif %}
   </div>
 
   {# 壳内专属：按需开秤监听 3 分钟（常驻监听关着也能称），浏览器里不显示。
@@ -44,6 +48,7 @@
   </script>
 
   {# 心情分 1-10（两行各 5 个） #}
+  {% if 'mood_score' not in quick_hidden %}
   <div x-data="{ v: {{ quick_mood if quick_mood is not none else 'null' }} }">
     <span class="field-label">心情</span>
     <input type="hidden" name="mood_score" :value="v === null ? '' : v">
@@ -55,7 +60,9 @@
       {% endfor %}
     </div>
   </div>
+  {% endif %}
 
+  {% if 'morning_erection' not in quick_hidden %}
   <div x-data="{ v: {{ 'true' if quick_me == true else ('false' if quick_me == false else 'null') }} }"
        class="flex items-center gap-2">
     <span class="field-label mb-0 shrink-0">晨勃</span>
@@ -69,6 +76,7 @@
               class="chip min-h-[44px]">否</button>
     </div>
   </div>
+  {% endif %}
 
   <button type="submit" class="btn-primary w-full">
     记一笔

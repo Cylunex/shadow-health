@@ -1,9 +1,14 @@
-{# 记录单行（li）：ctx = log, plan_names, source_labels。manual 可编辑/删除，外部导入只读 #}
-<li id="wlog-{{ log.id }}" class="list-row">
-  <div class="min-w-0">
+{# 记录单行（li）：ctx = log, plan_names, source_labels。manual 可编辑/删除，外部导入只读；
+   有隐藏字段（开始时间/卡路里/心率——手表同步数据都在这）时可点开详情 #}
+{% set raw_type = (log.session_type or '') | trim %}
+{% set has_detail = log.started_at or log.calories or log.avg_hr or log.max_hr
+   or (log.detail is mapping and log.detail.get('title')) %}
+<li id="wlog-{{ log.id }}" class="list-row"{% if has_detail %} x-data="{ open: false }"{% endif %}>
+  <div class="min-w-0 flex-1{% if has_detail %} cursor-pointer{% endif %}"
+       {% if has_detail %}@click="open = !open"{% endif %}>
     <div class="text-sm text-slate-200 flex items-center gap-1.5 flex-wrap">
       <span class="text-slate-400 tabular-nums">{{ log.log_date.strftime('%m-%d') }}</span>
-      <span class="font-medium truncate max-w-[11rem]">{{ log.session_type or '训练' }}</span>
+      <span class="font-medium truncate max-w-[11rem]">{{ session_label(log.session_type) }}</span>
       {% if log.source != 'manual' %}
       <span class="badge">{{ source_labels.get(log.source, log.source) }}</span>
       {% elif log.external_id and log.external_id.startswith('agent-') %}
@@ -11,6 +16,13 @@
       <span class="badge">Agent</span>
       {% elif log.detail is mapping and log.detail.get('from_template') %}
       <span class="badge-accent">模板</span>
+      {% endif %}
+      {% if has_detail %}
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round"
+           class="w-3 h-3 text-slate-500 transition-transform" :class="open && 'rotate-90'">
+        <path d="m9 18 6-6-6-6"/>
+      </svg>
       {% endif %}
     </div>
     <div class="text-xs text-slate-500 mt-0.5 flex gap-x-2 gap-y-0.5 flex-wrap tabular-nums">
@@ -26,6 +38,29 @@
     {% if slines %}
     <div class="mt-0.5 text-xs text-slate-400 tabular-nums">{{ slines | join(' · ') }}</div>
     {% endif %}
+    {% if has_detail %}
+    <div x-show="open" style="display: none"
+         class="mt-2 rounded-lg border border-slate-800/70 bg-slate-950/50 px-3 py-2
+                grid grid-cols-2 gap-x-4 gap-y-1 text-xs tabular-nums fade-in">
+      {% set hm = local_hm(log.started_at) %}
+      {% if hm %}<span class="text-slate-500">开始时间</span><span class="text-slate-300">{{ hm }}</span>{% endif %}
+      {% if log.duration_min %}<span class="text-slate-500">时长</span><span class="text-slate-300">{{ log.duration_min }} 分钟</span>{% endif %}
+      {% if log.distance_km %}<span class="text-slate-500">距离</span><span class="text-slate-300">{{ '%g' | format(log.distance_km | float) }} km</span>{% endif %}
+      {% if pace %}<span class="text-slate-500">配速</span><span class="text-slate-300">{{ pace }}/km</span>{% endif %}
+      {% if log.calories %}<span class="text-slate-500">消耗</span><span class="text-slate-300">{{ log.calories }} kcal</span>{% endif %}
+      {% if log.avg_hr %}<span class="text-slate-500">平均心率</span><span class="text-slate-300">{{ log.avg_hr }} bpm</span>{% endif %}
+      {% if log.max_hr %}<span class="text-slate-500">最大心率</span><span class="text-slate-300">{{ log.max_hr }} bpm</span>{% endif %}
+      {% if log.detail is mapping and log.detail.get('title') %}
+      <span class="text-slate-500">原始标题</span><span class="text-slate-300 truncate">{{ log.detail['title'] }}</span>
+      {% endif %}
+      {% if raw_type and session_label(log.session_type) != raw_type %}
+      <span class="text-slate-500">原始类型</span><span class="text-slate-300 truncate">{{ raw_type }}</span>
+      {% endif %}
+      {% if log.notes %}
+      <span class="text-slate-500">备注</span><span class="text-slate-300 col-span-1 break-words">{{ log.notes }}</span>
+      {% endif %}
+    </div>
+    {% endif %}
   </div>
   {% if log.source == 'manual' %}
   <div class="flex gap-1.5 shrink-0">
@@ -40,6 +75,10 @@
             hx-disabled-elt="this"
             class="btn-danger min-w-[44px] px-2.5 text-xs">删除</button>
   </div>
+  {% elif has_detail %}
+  <button type="button" @click="open = !open"
+          class="btn-ghost min-w-[44px] px-2.5 text-xs shrink-0"
+          x-text="open ? '收起' : '详情'">详情</button>
   {% else %}
   <span class="shrink-0 inline-flex items-center gap-1 text-[10px] text-slate-600">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"

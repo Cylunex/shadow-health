@@ -25,7 +25,7 @@
       <div class="text-xs text-slate-500">跑量</div>
       <div class="mt-1 text-2xl font-bold tabular-nums text-emerald-400">{{ run_km }} km</div>
       <div class="mt-0.5 text-xs text-slate-500">
-        {% for t, n in top_types %}{{ t }}×{{ n }}{% if not loop.last %} · {% endif %}{% endfor %}
+        {% for t, n in top_types %}{{ session_label(t) }}×{{ n }}{% if not loop.last %} · {% endif %}{% endfor %}
       </div>
     </div>
     <div class="card !p-4">

@@ -1,4 +1,5 @@
-{# 最近 30 天历史表格：自动值旁小徽标标来源（autofilled jsonb）；保存后被动刷新；外层 .card 由 metrics.html 提供 #}
+{# 最近 30 天历史表格：自动值旁小徽标标来源（autofilled jsonb）；保存后被动刷新；
+   history_cols（自定义显示）不含的列整列不渲染；外层 .card 由 metrics.html 提供 #}
 {% macro badge(r, field) -%}
 {%- if field in (r.autofilled or {}) -%}
 <span class="badge ml-1 px-1.5 align-middle">{{ source_labels.get(r.autofilled[field], r.autofilled[field]) }}</span>
@@ -14,31 +15,38 @@
       <thead>
         <tr class="text-xs text-slate-400">
           <th class="sticky top-0 left-0 z-20 bg-slate-900 text-left py-2.5 pl-4 pr-3 font-normal border-b border-slate-800">日期</th>
-          <th class="sticky top-0 z-10 bg-slate-900 text-right px-3 py-2.5 font-normal border-b border-slate-800">体重kg</th>
-          <th class="sticky top-0 z-10 bg-slate-900 text-right px-3 py-2.5 font-normal border-b border-slate-800">体脂%</th>
-          <th class="sticky top-0 z-10 bg-slate-900 text-right px-3 py-2.5 font-normal border-b border-slate-800">腰围cm</th>
-          <th class="sticky top-0 z-10 bg-slate-900 text-right px-3 py-2.5 font-normal border-b border-slate-800">血压</th>
-          <th class="sticky top-0 z-10 bg-slate-900 text-right px-3 py-2.5 font-normal border-b border-slate-800">睡眠h</th>
-          <th class="sticky top-0 z-10 bg-slate-900 text-center px-3 py-2.5 font-normal border-b border-slate-800">质量</th>
-          <th class="sticky top-0 z-10 bg-slate-900 text-center px-3 py-2.5 font-normal border-b border-slate-800">晨勃</th>
-          <th class="sticky top-0 z-10 bg-slate-900 text-center px-3 py-2.5 font-normal border-b border-slate-800">精力</th>
-          <th class="sticky top-0 z-10 bg-slate-900 text-center px-3 py-2.5 font-normal border-b border-slate-800">心情</th>
-          <th class="sticky top-0 z-10 bg-slate-900 text-right px-3 pr-4 py-2.5 font-normal border-b border-slate-800">血氧%</th>
+          {% if 'weight_kg' in history_cols %}<th class="sticky top-0 z-10 bg-slate-900 text-right px-3 py-2.5 font-normal border-b border-slate-800">体重kg</th>{% endif %}
+          {% if 'body_fat_pct' in history_cols %}<th class="sticky top-0 z-10 bg-slate-900 text-right px-3 py-2.5 font-normal border-b border-slate-800">体脂%</th>{% endif %}
+          {% if 'waist_cm' in history_cols %}<th class="sticky top-0 z-10 bg-slate-900 text-right px-3 py-2.5 font-normal border-b border-slate-800">腰围cm</th>{% endif %}
+          {% if 'bp' in history_cols %}<th class="sticky top-0 z-10 bg-slate-900 text-right px-3 py-2.5 font-normal border-b border-slate-800">血压</th>{% endif %}
+          {% if 'sleep_hours' in history_cols %}<th class="sticky top-0 z-10 bg-slate-900 text-right px-3 py-2.5 font-normal border-b border-slate-800">睡眠h</th>{% endif %}
+          {% if 'sleep_quality' in history_cols %}<th class="sticky top-0 z-10 bg-slate-900 text-center px-3 py-2.5 font-normal border-b border-slate-800">质量</th>{% endif %}
+          {% if 'morning_erection' in history_cols %}<th class="sticky top-0 z-10 bg-slate-900 text-center px-3 py-2.5 font-normal border-b border-slate-800">晨勃</th>{% endif %}
+          {% if 'energy_level' in history_cols %}<th class="sticky top-0 z-10 bg-slate-900 text-center px-3 py-2.5 font-normal border-b border-slate-800">精力</th>{% endif %}
+          {% if 'mood_score' in history_cols %}<th class="sticky top-0 z-10 bg-slate-900 text-center px-3 py-2.5 font-normal border-b border-slate-800">心情</th>{% endif %}
+          {% if 'spo2_pct' in history_cols %}<th class="sticky top-0 z-10 bg-slate-900 text-right px-3 pr-4 py-2.5 font-normal border-b border-slate-800">血氧%</th>{% endif %}
         </tr>
       </thead>
       <tbody>
         {% for r in history_rows %}
         <tr class="odd:bg-slate-900/40 border-b border-slate-800/60 last:border-0 hover:bg-slate-800/40 transition-colors">
           <td class="py-2.5 pl-4 pr-3 text-slate-300 sticky left-0 z-10 bg-slate-900">{{ r.log_date.strftime('%m-%d') }}</td>
+          {% if 'weight_kg' in history_cols %}
           <td class="text-right px-3">
             {% if r.weight_kg is not none %}{{ fmt(r.weight_kg) }}{{ badge(r, 'weight_kg') }}{% else %}<span class="text-slate-700">—</span>{% endif %}
           </td>
+          {% endif %}
+          {% if 'body_fat_pct' in history_cols %}
           <td class="text-right px-3">
             {% if r.body_fat_pct is not none %}{{ fmt(r.body_fat_pct) }}{{ badge(r, 'body_fat_pct') }}{% else %}<span class="text-slate-700">—</span>{% endif %}
           </td>
+          {% endif %}
+          {% if 'waist_cm' in history_cols %}
           <td class="text-right px-3">
             {% if r.waist_cm is not none %}{{ fmt(r.waist_cm) }}{{ badge(r, 'waist_cm') }}{% else %}<span class="text-slate-700">—</span>{% endif %}
           </td>
+          {% endif %}
+          {% if 'bp' in history_cols %}
           <td class="text-right px-3">
             {% if r.bp_systolic is not none or r.bp_diastolic is not none %}
               {# 超「正常高值」上界（130/85）标黄提示（V6 E7），不做红色告警 #}
@@ -46,33 +54,46 @@
                 {{ r.bp_systolic or '?' }}/{{ r.bp_diastolic or '?' }}</span>{{ badge(r, 'bp_systolic') }}
             {% else %}<span class="text-slate-700">—</span>{% endif %}
           </td>
+          {% endif %}
+          {% if 'sleep_hours' in history_cols %}
           <td class="text-right px-3">
             {% if r.sleep_hours is not none %}{{ fmt(r.sleep_hours) }}{{ badge(r, 'sleep_hours') }}{% else %}<span class="text-slate-700">—</span>{% endif %}
           </td>
+          {% endif %}
+          {% if 'sleep_quality' in history_cols %}
           <td class="text-center px-3">
             {% if r.sleep_quality is not none %}{{ r.sleep_quality }}{{ badge(r, 'sleep_quality') }}{% else %}<span class="text-slate-700">—</span>{% endif %}
           </td>
+          {% endif %}
+          {% if 'morning_erection' in history_cols %}
           <td class="text-center px-3">
             {% if r.morning_erection == true %}<span class="text-emerald-400">✓</span>
             {% elif r.morning_erection == false %}<span class="text-slate-500">✗</span>
             {% else %}<span class="text-slate-700">—</span>{% endif %}
           </td>
+          {% endif %}
+          {% if 'energy_level' in history_cols %}
           <td class="text-center px-3">
             {% if r.energy_level is not none %}{{ r.energy_level }}{{ badge(r, 'energy_level') }}{% else %}<span class="text-slate-700">—</span>{% endif %}
           </td>
+          {% endif %}
+          {% if 'mood_score' in history_cols %}
           <td class="text-center px-3">
             {% if r.mood_score is not none %}{{ r.mood_score }}{{ badge(r, 'mood_score') }}{% else %}<span class="text-slate-700">—</span>{% endif %}
           </td>
+          {% endif %}
+          {% if 'spo2_pct' in history_cols %}
           <td class="text-right px-3 pr-4">
             {% if r.spo2_pct is not none %}
               {# 血氧 <94% 标黄（V6 E7） #}
               <span class="{{ 'text-amber-400' if r.spo2_pct | float < 94 else '' }}">{{ fmt(r.spo2_pct) }}</span>{{ badge(r, 'spo2_pct') }}
             {% else %}<span class="text-slate-700">—</span>{% endif %}
           </td>
+          {% endif %}
         </tr>
         {% else %}
         <tr>
-          <td colspan="11" class="py-10 text-center">
+          <td colspan="{{ history_colspan }}" class="py-10 text-center">
             <svg class="mx-auto w-10 h-10 text-slate-700" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <rect x="5" y="4" width="14" height="17" rx="2"/>
               <path d="M9 4.5V3h6v1.5"/>

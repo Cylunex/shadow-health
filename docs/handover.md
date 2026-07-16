@@ -1,14 +1,58 @@
 # 会话交接（自包含，新会话从这里继续）
 
-> 最后更新：2026-07-12（V5 + V6 + V7 批次落地）。配套阅读：README（功能全貌）·
-> docs/deploy.md（NAS 部署照单）· docs/mobile-sync.md（三星直读背景）·
-> gateway/README.md（体脂秤双端）· docs/audit-2026-07-10.md（全面审查清单，
-> 已全清、归档备忘）· docs/offline-plan.md（手机离线记录方案，阶段一~三已落地，
-> 待真机回归）· docs/subpath-agent-plan.md（V3 批次计划，三段已完成）·
-> mcp_server/README.md（MCP 16 工具 + 话术规则 + NAS 部署）。
-> **当前无进行中批次**：剩余事项 = 真机回归（V3/V4 壳与 APK 改动）+
-> offline-plan 阶段四（视真机手感决定）+ NAS 上线切换（§1.8 与 P3 runbook，用户做）+
-> NAS 侧 MCP 接入（supervisor/Hermes/OpenClaw 注册照 mcp_server/README，用户做）。
+> 最后更新：2026-07-16（V8 批次落地：NAS 上线后首批使用反馈）。配套阅读：
+> README（功能全貌）· docs/deploy.md（NAS 部署照单）· docs/mobile-sync.md
+>（三星直读背景）· gateway/README.md（体脂秤双端）· docs/audit-2026-07-10.md
+>（全面审查清单，已全清、归档备忘）· docs/offline-plan.md（手机离线记录方案，
+> 阶段一~三已落地，待真机回归）· docs/subpath-agent-plan.md（V3 批次计划，
+> 三段已完成）· mcp_server/README.md（MCP 16 工具 + 话术规则 + NAS 部署）。
+> **NAS 已上线、用户日常使用中**。当前无进行中批次：剩余事项 = 真机回归
+>（V3/V4/V8 壳与 APK 改动，V8 重点是多服务器切换）+ offline-plan 阶段四
+>（视真机手感决定）+ NAS 侧 MCP 接入（supervisor/Hermes/OpenClaw 注册照
+> mcp_server/README，用户做）。血压计 BLE 用户已明确**不做**。
+
+## ✅ 已完成：V8 批次（2026-07-16，NAS 上线后使用反馈四项，263 测全绿）
+
+1. **壳多服务器地址**（android/ ServerConfig.java 新增）：连接设置对话框改多行
+   （每行一个地址，靠前优先——内网在上、frp 外网在下，去重规范化）；prefs 存
+   `server_urls`（换行分隔清单）+ `server_url`（活动地址，探测通了谁写谁，
+   老安装单地址兼容）；resolve() 按序 GET /healthz（4s 超时，活动地址优先、
+   零切换成本）；MainActivity 探测循环换 resolve + 断点深链 rebase（服务器切换
+   时换源保路径，含子路径前缀）；SnapshotCache.intercept 改按请求 origin 匹配
+   清单（sameOrigin 开放 package 级，各 origin 独立缓存条目）；后台四通道
+   （OfflineStore.drain/fetchBootstrap、ScaleScanService 上报与补发、
+   SamsungSyncWorker、ReminderWorker）全部改 resolveOrActive()（可达优先，
+   全不通退回活动地址走各自原有失败重试；探测均已挪到 IO/Worker 线程）。
+   **注意 cookie 按 origin 隔离，每个地址首次使用需各自登录一次**（对话框
+   hint 已写明）。APK 已构建拷 static/shadow-health.apk，**待真机回归**
+2. **运动类型中文化**（deps.session_label + 模板全局）：三星直读/zip/HC 写入的
+   英文 session_type（walking/running/circuit_training/cycling…60+ 词表）展示层
+   翻中文；手动录入的中文原样透传；未知英文只把下划线换空格；空值回退「训练」。
+   **仅展示层，库里保持原值**——跑步图关键词（metrics._RUN_KEYWORDS）、跑步 PR
+   （pr._is_run）、Keep 去重都依赖原文。覆盖点：workout 行/日历日详情/日报训练卡/
+   年度回顾 top3/agent-log 摘要。tests/test_v8_features.py 有「导入词表全覆盖」锁，
+   新增枚举映射缺失会先红
+3. **运动记录详情展开**（workout_log_row.html 重构）：行上有隐藏字段
+   （started_at/calories/avg_hr/max_hr/detail.title——手表同步数据全在这）时
+   可点开详情面板（开始时间/时长/距离/配速/消耗/平均与最大心率/原始标题/
+   原始类型/备注，Alpine 折叠）；外部来源行右侧「只读」锁换成「详情/收起」钮
+   （没有隐藏字段的仍显示锁）；manual 行编辑/删除不变，点正文也可展开。
+   新增 deps.local_hm（tz-aware → 本地 HH:MM）
+4. **指标自定义显示**（app_settings['metrics_hidden_fields']）：指标页「记录指标」
+   卡头 ⚙ 自定义显示面板（21 个字段勾选，POST /metrics/display 存隐藏清单，
+   HX-Trigger metrics-changed 让表单/历史/图表一起刷新）；录入表单隐藏未勾字段
+   （「更多指标」折叠区全隐藏时整块不渲染）；历史表整列隐藏（血压两字段都藏才
+   去列）；**只依赖 BodyMetrics 手录字段的图表选项**（体重/体脂/体成分/血压/
+   血氧/心情/围度）在依赖字段全隐藏时从 chips 去掉，手表驱动图（心率/步数/
+   睡眠/负荷/跑步/入睡时刻）不受影响；当前图表被隐藏时退默认（_default_metric）；
+   今日页 quick 面板同步遵守。**只影响展示**——隐藏字段既有数据不动、秤/手表/
+   Agent 自动写入照常
+5. 测试：tests/test_v8_features.py 25 个（session_label 词表与透传/local_hm/
+   图表选项过滤/隐藏配置 roundtrip 与词表外键过滤/表单与历史列联动/默认图表
+   回退/display 端点/页面渲染——不占测试错峰日期，display 配置 fixture 收尾还原）；
+   全量 263 绿；Tailwind 重建 + SW v18
+6. 本机预览已走查：workout 行详情展开/中文化/指标 ⚙ 面板保存后表单+历史列+
+   图表 chips 三处联动（血压隐藏后血压图 chip 消失）
 
 ## ✅ 已完成：V7 批次（2026-07-12，roadmap 顺延清单，238 测全绿）
 
@@ -362,6 +406,11 @@ base.html 全局错误 toast + 「更多」导航高亮扩展；SW v9（cache:re
 ## 其余待办（优先级序）
 
 1. **真机回归**（Android 壳与网关改动后必做；本次离线三阶段全是壳改动，装机必验）：
+   - **V8 多服务器**（2026-07-16 新增）：①连接设置填内网 + frp 两行地址 → 内网
+     环境连内网、关 Wi-Fi 走流量自动切 frp（30s 探测周期内）②切到 frp 后首次
+     需登录一次（cookie 按 origin 隔离）③外网环境下上秤/离线补发/三星同步/
+     每日提醒能走 frp 地址上报 ④快照缓存在两个地址下都能离线回放 ⑤老安装
+     升级（只有单地址）行为不变
    - **离线四项**（offline-plan §5 第 4 条）：①冷启动秒出本地页、在线自动进网页
      ②飞行模式本地页记打卡+饮食+体重 → 恢复网络 → 通知「已补同步 N 条」→
      服务端落库、重复补发不双写 ③飞行模式打开最近看过的页面 → 快照 + 离线横幅

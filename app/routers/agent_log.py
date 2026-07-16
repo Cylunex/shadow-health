@@ -27,7 +27,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.deps import require_login, templates
+from app.deps import require_login, session_label, templates
 from app.models import DietLog, Habit, ImportRaw, SyncState, WorkoutLog
 from app.routers.agent import SOURCE, delete_record
 from app.routers.offline import _METRIC_BOUNDS, parse_diet_payload
@@ -70,7 +70,8 @@ def _summary(rtype: str, payload: dict, habit_names: dict[int, str]) -> str:
             parts.append(f"{kcal} kcal")
         return " · ".join(p for p in parts if p)
     if rtype == "workout":
-        parts = [str(payload.get("session_type") or "").strip() or "—"]
+        stype = str(payload.get("session_type") or "").strip()
+        parts = [session_label(stype) if stype else "—"]
         dur = str(payload.get("duration_min") or "").strip()
         if dur:
             parts.append(f"{dur} 分钟")
