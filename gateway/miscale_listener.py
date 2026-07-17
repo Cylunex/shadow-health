@@ -41,6 +41,16 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+# 与服务端 timeutil.LOCAL_TZ 一致：上报的 naive ISO 服务端都按此解释。
+# 接收时刻显式取该时区（不依赖容器 TZ 设置）——TZ 漏配时 datetime.now() 是
+# UTC 墙钟，会让钟偏量化校正把本来正确的秤 RTC 反向掰歪 8 小时。
+LOCAL_TZ = ZoneInfo("Asia/Shanghai")
+
+
+def _now_local() -> datetime:
+    return datetime.now(LOCAL_TZ).replace(tzinfo=None)
 
 log = logging.getLogger("miscale")
 
@@ -106,7 +116,7 @@ def parse_adv(data: bytes, now: datetime | None = None) -> Measurement | None:
     # 各自计算也得到同一校正量 → 去重键仍一致；RTC 字节非法才用接收时刻取整兜底。
     # 校正必须在接收端做：服务端看不出"补发的旧测量"与"钟偏"的区别。
     if now is None:
-        now = datetime.now()
+        now = _now_local()
     try:
         rtc = datetime(
             int.from_bytes(data[2:4], "little"),
@@ -295,7 +305,7 @@ def selftest() -> None:
         return bytes([unit, flags]) + y.to_bytes(2, "little") + bytes([mo, d, h, mi, s]) \
             + z.to_bytes(2, "little") + raw_w.to_bytes(2, "little")
 
-    now = datetime.now().replace(microsecond=0)
+    now = _now_local().replace(microsecond=0)
     y, mo, d = now.year, now.month, now.day
     hh, mi, ss = now.hour, now.minute, now.second
     # 稳定 + 阻抗：71.85kg, z=512（RTC=now，钟准原样用）
