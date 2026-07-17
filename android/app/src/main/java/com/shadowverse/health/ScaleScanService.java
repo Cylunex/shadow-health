@@ -294,16 +294,29 @@ public class ScaleScanService extends Service {
             }
         }
 
+        // 秤 RTC 与接收时刻的偏差 = 秤钟偏移（广播是实时的）：≤10 分钟视为钟准
+        // 原样用；更大偏差按 15 分钟粒度量化后校正——用户的秤 RTC 被对成了 UTC
+        // （偏移 +8h），量化保证手机/网关双端各自计算也得到同一校正量 → 去重键
+        // 仍一致（gateway/miscale_listener.parse_adv 同款逻辑，两边必须同步改）；
+        // RTC 字节非法才用接收时刻取整到分钟兜底
+        long nowMs = System.currentTimeMillis();
         Calendar cal = Calendar.getInstance();
-        // 兜底默认值取整到分钟：RTC 失效时同一测量的连播帧（乃至手机/网关双端）才能生成同一去重键
+        cal.setTimeInMillis(nowMs);
         cal.set(Calendar.SECOND, 0);
         cal.set(Calendar.MILLISECOND, 0);
         int year = ((d[3] & 0xFF) << 8) | (d[2] & 0xFF);
         try {
             Calendar rtc = Calendar.getInstance();
             rtc.set(year, (d[4] & 0xFF) - 1, d[5] & 0xFF, d[6] & 0xFF, d[7] & 0xFF, d[8] & 0xFF);
-            // RTC 掉电/没对过时的兜底：偏差超过 3 天用系统时间（上面已取整）
-            if (Math.abs(rtc.getTimeInMillis() - System.currentTimeMillis()) < 3L * 86400_000) {
+            rtc.set(Calendar.MILLISECOND, 0);
+            long deltaMs = nowMs - rtc.getTimeInMillis();
+            if (Math.abs(deltaMs) <= 10 * 60_000L) {
+                cal = rtc;  // 钟准（含小漂移）：原样用，双端天然一致
+            } else {
+                long quarterMs = 15 * 60_000L;
+                // Math.round 半进位——与网关 _round_half_up 一致，负偏移不分叉
+                long offsetQ = Math.round((double) deltaMs / quarterMs) * quarterMs;
+                rtc.setTimeInMillis(rtc.getTimeInMillis() + offsetQ);
                 cal = rtc;
             }
         } catch (Exception ignored) {

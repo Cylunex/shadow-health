@@ -73,8 +73,9 @@ class Measurement:
         return f"{self.ts:%Y%m%dT%H%M%S}-{_round_half_up(self.weight_kg * 200)}"
 
 
-def parse_adv(data: bytes) -> Measurement | None:
-    """解析 0x181B Service Data；非稳定帧/离秤帧/解析失败返回 None。"""
+def parse_adv(data: bytes, now: datetime | None = None) -> Measurement | None:
+    """解析 0x181B Service Data；非稳定帧/离秤帧/解析失败返回 None。
+    now 仅测试注入用（缺省取当前时间）。"""
     if len(data) != 13:
         return None
     unit, flags = data[0], data[1]
@@ -99,17 +100,30 @@ def parse_adv(data: bytes) -> Measurement | None:
         if 0 < z < 3000:
             impedance = z
 
-    # RTC 兜底取整到分钟：失效期同一测量的连播帧（乃至手机/网关双端）才能生成同一去重键
-    fallback = datetime.now().replace(second=0, microsecond=0)
+    # 秤 RTC 与接收时刻的偏差 = 秤钟偏移（广播是实时的，不存在"旧测量"）：
+    # ≤10 分钟视为钟准原样用（含小漂移，双端天然一致）；更大偏差按 15 分钟粒度
+    # 量化后校正——用户的秤 RTC 被对成了 UTC（偏移 +8h），量化保证手机/网关双端
+    # 各自计算也得到同一校正量 → 去重键仍一致；RTC 字节非法才用接收时刻取整兜底。
+    # 校正必须在接收端做：服务端看不出"补发的旧测量"与"钟偏"的区别。
+    if now is None:
+        now = datetime.now()
     try:
-        ts = datetime(
+        rtc = datetime(
             int.from_bytes(data[2:4], "little"),
             data[4], data[5], data[6], data[7], data[8],
         )
     except ValueError:
-        ts = fallback
-    if abs(ts - datetime.now()) > timedelta(days=3):
-        ts = fallback
+        rtc = None
+    if rtc is None:
+        ts = now.replace(second=0, microsecond=0)
+    else:
+        delta = now - rtc
+        if abs(delta) <= timedelta(minutes=10):
+            ts = rtc
+        else:
+            quarter = timedelta(minutes=15)
+            # 半进位与 Android Math.round 一致（负偏移时银行家舍入会分叉）
+            ts = rtc + quarter * _round_half_up(delta / quarter)
 
     # 半进位保留两位：与 Android 端 Math.round(weight*100)/100.0 一致
     return Measurement(ts=ts, weight_kg=_round_half_up(weight * 100) / 100.0, impedance=impedance)
@@ -281,31 +295,43 @@ def selftest() -> None:
         return bytes([unit, flags]) + y.to_bytes(2, "little") + bytes([mo, d, h, mi, s]) \
             + z.to_bytes(2, "little") + raw_w.to_bytes(2, "little")
 
-    now = datetime.now()
+    now = datetime.now().replace(microsecond=0)
     y, mo, d = now.year, now.month, now.day
-    # 稳定 + 阻抗：71.85kg, z=512
-    m = parse_adv(frame(0x02, 0b00100010, y, mo, d, 7, 31, 22, 512, 14370))
-    assert m is not None and m.weight_kg == 71.85 and m.impedance == 512, m
+    hh, mi, ss = now.hour, now.minute, now.second
+    # 稳定 + 阻抗：71.85kg, z=512（RTC=now，钟准原样用）
+    m = parse_adv(frame(0x02, 0b00100010, y, mo, d, hh, mi, ss, 512, 14370), now=now)
+    assert m is not None and m.weight_kg == 71.85 and m.impedance == 512 and m.ts == now, m
     # 稳定无阻抗帧
-    m2 = parse_adv(frame(0x02, 0b00100000, y, mo, d, 7, 31, 22, 0, 14370))
+    m2 = parse_adv(frame(0x02, 0b00100000, y, mo, d, hh, mi, ss, 0, 14370), now=now)
     assert m2 is not None and m2.impedance is None, m2
     # 未稳定帧应被丢弃
-    assert parse_adv(frame(0x02, 0b00000010, y, mo, d, 7, 31, 22, 512, 14370)) is None
+    assert parse_adv(frame(0x02, 0b00000010, y, mo, d, hh, mi, ss, 512, 14370), now=now) is None
     # 离秤帧应被丢弃
-    assert parse_adv(frame(0x02, 0b10100010, y, mo, d, 7, 31, 22, 512, 14370)) is None
+    assert parse_adv(frame(0x02, 0b10100010, y, mo, d, hh, mi, ss, 512, 14370), now=now) is None
     # 阻抗 3000+ 视为无效
-    m3 = parse_adv(frame(0x02, 0b00100010, y, mo, d, 7, 31, 22, 65534, 14370))
+    m3 = parse_adv(frame(0x02, 0b00100010, y, mo, d, hh, mi, ss, 65534, 14370), now=now)
     assert m3 is not None and m3.impedance is None, m3
-    # RTC 明显不对 → 回退系统时间
-    m4 = parse_adv(frame(0x02, 0b00100010, 2000, 1, 1, 0, 0, 0, 512, 14370))
-    assert m4 is not None and abs(m4.ts - datetime.now()) < timedelta(minutes=1), m4
+    # RTC 明显不对（掉电回 2000 年）→ 量化校正后 ≈ 接收时刻
+    m4 = parse_adv(frame(0x02, 0b00100010, 2000, 1, 1, 0, 0, 0, 512, 14370), now=now)
+    assert m4 is not None and abs(m4.ts - now) <= timedelta(minutes=8), m4
+    # UTC 钟（用户实测：RTC 慢 8h）→ 校正回本地时间
+    utc8 = now - timedelta(hours=8)
+    m6 = parse_adv(frame(0x02, 0b00100010, utc8.year, utc8.month, utc8.day,
+                         utc8.hour, utc8.minute, utc8.second, 512, 14370), now=now)
+    assert m6 is not None and abs(m6.ts - now) <= timedelta(minutes=8), m6
+    # 双端一致性：同一广播、接收时刻差 3 秒（手机 vs 网关）→ 同一去重键
+    m6b = parse_adv(frame(0x02, 0b00100010, utc8.year, utc8.month, utc8.day,
+                          utc8.hour, utc8.minute, utc8.second, 512, 14370),
+                    now=now + timedelta(seconds=3))
+    assert m6b is not None and m6.key == m6b.key, (m6.key, m6b.key)
     # 去重键一致性（同一测量不同帧）
-    assert m.key == parse_adv(frame(0x02, 0b00100010, y, mo, d, 7, 31, 22, 512, 14370)).key
+    assert m.key == parse_adv(
+        frame(0x02, 0b00100010, y, mo, d, hh, mi, ss, 512, 14370), now=now).key
     # 半值舍入与 Android 端一致：raw=14425 → 72.125 kg → 半进位 72.13（银行家舍入会得 72.12）
-    m5 = parse_adv(frame(0x02, 0b00100010, y, mo, d, 7, 31, 22, 512, 14425))
+    m5 = parse_adv(frame(0x02, 0b00100010, y, mo, d, hh, mi, ss, 512, 14425), now=now)
     assert m5.weight_kg == 72.13 and m5.key.endswith("-14426"), m5
     # 非 kg 单位帧应跳过
-    assert parse_adv(frame(0x03, 0b00100010, y, mo, d, 7, 31, 22, 512, 14370)) is None
+    assert parse_adv(frame(0x03, 0b00100010, y, mo, d, hh, mi, ss, 512, 14370), now=now) is None
     print("selftest OK:", m)
 
 

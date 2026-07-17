@@ -30,6 +30,33 @@
    重名不覆盖/五组门槛/整句名/UI 与 offline 通道链路——日期用 2020-04，
    食物按名精确清理）；SW v19
 
+## ✅ 已完成：V8.4 批次（2026-07-17，秤 RTC UTC 钟修正，287 测全绿）
+
+用户实测：小米体脂秤 2 的 RTC 被对成了 **UTC**（慢 8h），此前壳/网关把 RTC
+当本地时间 → 秤记录时间慢 8 小时，**早上 8 点前上秤归到前一天日期**。
+
+1. **双端钟偏量化校正**（壳 ScaleScanService + gateway/miscale_listener
+   **同款逻辑，两边必须同步改**）：广播是实时的 → RTC 与接收时刻的偏差 =
+   秤钟偏移。|偏差| ≤10min 视为钟准原样用；更大偏差按 **15 分钟粒度量化**
+   后校正（UTC 钟 = +8h；RTC 掉电回 2000 年也被涵盖 → ≈接收时刻）——量化
+   保证手机/网关双端各自计算得到同一校正量 → **去重键仍一致**；RTC 字节
+   非法才用接收时刻取整到分钟兜底（原 3 天窗兜底删除，被新逻辑涵盖）。
+   舍入统一半进位（Java Math.round / _round_half_up），负偏移不分叉。
+   **服务端不做校正**（有意）：服务端分不清「补发的旧测量」和「钟偏」，
+   在接收端修才对。_miscale_ts / year<2015 兜底保持原样
+2. **存量修复脚本 scripts/fix_miscale_ts.py**（NAS 跑，先备份）：miscale raw
+   的 ts +8h（--offset-hours / --since 可调，raw 落 ts_fixed 标记 → 重跑幂等，
+   external_id 历史去重键不动）+ 按修正后日期全量重算 body_metrics 归属
+   （旧日期清 miscale 登记字段、新日期按同日最后一次重算体成分 autofill，
+   手动值不覆盖）。**先升壳 APK 与网关镜像再跑**，不然新数据继续错
+3. parse_adv 加 now 注入参数（仅测试用）；tests/test_gateway_parse.py 重写
+   11 个（UTC 钟校正/双端键一致/小漂移原样/掉电钟/非法字节兜底/钟快方向）+
+   tests/test_fix_miscale_ts.py 3 个（移动+重算/幂等/since 圈定，2020-05 日期）；
+   网关 --selftest 同步更新；全量 287 绿；APK 已重构建拷 static/
+4. 真机回归补充：装新 APK + NAS 重建网关镜像后上秤 → /scale 页记录时间应为
+   当前本地时间（不再慢 8h）；早晨上秤日期归属当天；手机+NAS 双端同时监听
+   仍只记一条。**存量修复**：照 §2 脚本 dry-run 后执行
+
 ## ✅ 已完成：V8.3 批次（2026-07-17，frp Basic 验证支持，279 测全绿）
 
 用户 frp 入口加了 HTTP Basic 验证（http_user/http_password）。方案 =
