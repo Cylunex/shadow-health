@@ -329,10 +329,11 @@ final class OfflineStore {
         }
         HttpURLConnection conn = null;
         try {
-            conn = (HttpURLConnection) new URL(server + "/api/offline/bootstrap").openConnection();
+            String target = server + "/api/offline/bootstrap";
+            conn = (HttpURLConnection) new URL(ServerConfig.bare(target)).openConnection();
             conn.setConnectTimeout(8000);
             conn.setReadTimeout(8000);
-            conn.setRequestProperty("Authorization", "Bearer " + token);
+            HttpPost.applyAuth(conn, target, token);  // frp Basic 时 token 走 X-Ingest-Token
             if (conn.getResponseCode() != 200) {
                 return false;
             }

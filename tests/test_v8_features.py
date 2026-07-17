@@ -216,3 +216,47 @@ def test_metrics_page_renders_with_hidden(db, page, restore_display_setting):
     resp = page.get("/metrics")
     assert resp.status_code == 200
     assert "自定义显示" in resp.text
+
+
+# ---------- Bearer 备用头 X-Ingest-Token（V8.3：frp Basic 验证占用 Authorization） ----------
+
+@pytest.fixture()
+def api(db):
+    from fastapi.testclient import TestClient
+
+    from app.config import get_settings
+    from app.main import app
+
+    if not get_settings().ingest_token:
+        pytest.skip("INGEST_TOKEN 未配置")
+    with TestClient(app) as c:
+        yield c, get_settings().ingest_token
+
+
+def test_bearer_header_still_works(api):
+    c, token = api
+    assert c.get("/api/agent/summary", headers={"Authorization": f"Bearer {token}"}).status_code == 200
+
+
+def test_x_ingest_token_header_accepted(api):
+    # frp Basic 验证场景：Authorization 被 Basic 占用，token 走备用头
+    c, token = api
+    resp = c.get("/api/agent/summary", headers={
+        "Authorization": "Basic dXNlcjpwYXNz",  # frp 消费的 Basic 凭据，app 不认它
+        "X-Ingest-Token": token,
+    })
+    assert resp.status_code == 200
+
+
+def test_x_ingest_token_wrong_rejected(api):
+    c, _ = api
+    assert c.get("/api/agent/summary", headers={"X-Ingest-Token": "wrong"}).status_code == 401
+
+
+def test_bearer_takes_priority_over_alt_header(api):
+    # Authorization Bearer 合法时优先；备用头乱填不影响
+    c, token = api
+    resp = c.get("/api/agent/summary", headers={
+        "Authorization": f"Bearer {token}", "X-Ingest-Token": "garbage",
+    })
+    assert resp.status_code == 200

@@ -30,6 +30,32 @@
    重名不覆盖/五组门槛/整句名/UI 与 offline 通道链路——日期用 2020-04，
    食物按名精确清理）；SW v19
 
+## ✅ 已完成：V8.3 批次（2026-07-17，frp Basic 验证支持，279 测全绿）
+
+用户 frp 入口加了 HTTP Basic 验证（http_user/http_password）。方案 =
+**地址内嵌凭据**：连接设置里外网地址写成 `http://用户:密码@frp域名`。
+
+1. **服务端**：ingest._bearer_reject 加备用头 **X-Ingest-Token**（Authorization
+   Bearer 合法时优先；被 frp Basic 占用时壳把 app token 挪到备用头）。全部
+   Bearer 端点（ingest/agent/offline/reminders）共用该 helper 自动继承
+2. **壳 ServerConfig**：bare()（去 user:pass@，WebView 加载/展示/rebase/同源
+   比较全用裸地址）+ basicAuthHeader()/basicAuthHeaderForUrl()/
+   credentialsForHost()；probe() 探活带 Basic 头；rebase 改按 bare 比较
+3. **壳各请求通道**：HttpPost.postJson 自动判 URL 凭据（有 → Authorization
+   Basic + X-Ingest-Token，无 → Bearer 原语义），新增 applyAuth 给 GET 共用
+   （OfflineStore.fetchBootstrap / Reminders.fetchDigest 改造）；WebView
+   onReceivedHttpAuthRequest 按 host 自动应答 Basic 挑战（POST/登录/sw.js 等
+   非代理请求靠它）；SnapshotCache.fetchAndStore 代理注入 Basic 头（不透传
+   WebView 的 Authorization）；DownloadListener 下载请求补 Basic 头
+   （DownloadManager 不走 WebView 认证缓存）
+4. 测试 +4（Bearer 原语义/X-Ingest-Token 通过/错 token 401/Bearer 优先）；
+   全量 279 绿；APK 已重构建拷 static/。**需服务端与 APK 同时升级**：旧服务端
+   收到 X-Ingest-Token 会 401（只在 frp 带凭据地址时才用备用头，内网 Bearer
+   不受影响）
+5. 真机回归补充：frp 地址带凭据 → ①外网打开页面不弹认证框直接进 ②登录/
+   htmx 片段/照片上传正常 ③上秤/离线补发/三星同步/每日提醒过 frp 成功
+   ④CSV 导出下载成功 ⑤快照缓存离线回放正常
+
 ## ✅ 已完成：V8.2 批次（2026-07-16，训练日历两项，275 测全绿）
 
 1. **训练日历加 1 个月选项**：HEATMAP_MONTHS_OPTIONS (3,6,12)→(1,3,6,12)，

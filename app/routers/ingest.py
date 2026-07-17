@@ -439,13 +439,19 @@ def _touch_sync_state(
 # ---------- 端点 ----------
 
 def _bearer_reject(request: Request) -> Response | None:
-    """Bearer 鉴权：token 未配置 503；比对失败 401（无 body 细节）；通过返回 None。"""
+    """Bearer 鉴权：token 未配置 503；比对失败 401（无 body 细节）；通过返回 None。
+
+    备用头 X-Ingest-Token：frp 等入口开了 HTTP Basic 验证时 Authorization 头
+    被 Basic 凭据占用，壳自动把 token 挪到这个头（Authorization Bearer 优先）。"""
     settings = get_settings()
     if not settings.ingest_token:
         return Response(status_code=503)
     scheme, _, token = request.headers.get("Authorization", "").partition(" ")
-    if scheme.lower() != "bearer" or not secrets.compare_digest(
-        token.strip().encode("utf-8"), settings.ingest_token.encode("utf-8")
+    candidate = token.strip() if scheme.lower() == "bearer" else ""
+    if not candidate:
+        candidate = request.headers.get("X-Ingest-Token", "").strip()
+    if not candidate or not secrets.compare_digest(
+        candidate.encode("utf-8"), settings.ingest_token.encode("utf-8")
     ):
         return Response(status_code=401)
     return None

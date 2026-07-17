@@ -17,6 +17,9 @@ import java.util.List;
  *   三星直读/提醒）和快照拦截仍读活动地址，老安装只有 server_url 时行为不变。
  * - resolve() 做网络探测（GET /healthz，4s 超时），只能在后台线程调；
  *   活动地址仍通时零切换成本（只多一次探测），不通才按清单顺序找下一个。
+ * - frp 等入口开 HTTP Basic 验证时地址写成 http://用户:密码@域名 ——
+ *   bare() 去凭据后给 WebView/同源比较用，basicAuthHeader() 生成验证头；
+ *   API 上报的 app token 此时挪到 X-Ingest-Token 头（服务端两个头都认）。
  * - 注意：登录 cookie 按 origin 隔离，每个地址首次使用需各自登录一次。
  */
 final class ServerConfig {
@@ -109,11 +112,15 @@ final class ServerConfig {
         return ok.isEmpty() ? active(ctx) : ok;
     }
 
-    /** GET /healthz 探活（连接/读取各 4s）。 */
+    /** GET /healthz 探活（连接/读取各 4s；地址带凭据时附 Basic 头）。 */
     static boolean probe(String server) {
         HttpURLConnection conn = null;
         try {
-            conn = (HttpURLConnection) new URL(server + "/healthz").openConnection();
+            conn = (HttpURLConnection) new URL(bare(server) + "/healthz").openConnection();
+            String auth = basicAuthHeader(server);
+            if (auth != null) {
+                conn.setRequestProperty("Authorization", auth);
+            }
             conn.setConnectTimeout(4000);
             conn.setReadTimeout(4000);
             return conn.getResponseCode() == 200;
@@ -124,6 +131,73 @@ final class ServerConfig {
                 conn.disconnect();
             }
         }
+    }
+
+    // ---- URL 内嵌凭据（frp Basic 验证：http://用户:密码@域名） ----
+
+    /** 去掉 user:pass@ 部分——WebView 加载/展示/同源与前缀比较都用裸地址。 */
+    static String bare(String url) {
+        if (url == null || url.isEmpty()) {
+            return url;
+        }
+        int scheme = url.indexOf("://");
+        if (scheme < 0) {
+            return url;
+        }
+        int pathStart = url.indexOf('/', scheme + 3);
+        int authorityEnd = pathStart < 0 ? url.length() : pathStart;
+        int at = url.lastIndexOf('@', authorityEnd - 1);
+        if (at <= scheme) {
+            return url;
+        }
+        return url.substring(0, scheme + 3) + url.substring(at + 1);
+    }
+
+    /** URL 里的 Basic 验证头；无凭据返回 null。 */
+    static String basicAuthHeader(String url) {
+        if (url == null || url.isEmpty()) {
+            return null;
+        }
+        String info;
+        try {
+            info = Uri.parse(url).getUserInfo();
+        } catch (Exception e) {
+            return null;
+        }
+        if (info == null || info.isEmpty()) {
+            return null;
+        }
+        byte[] decoded = Uri.decode(info).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        return "Basic " + android.util.Base64.encodeToString(decoded, android.util.Base64.NO_WRAP);
+    }
+
+    /** 任意 URL 命中清单里带凭据的服务器时给出 Basic 头（DownloadManager 下载用）。 */
+    static String basicAuthHeaderForUrl(Context ctx, String url) {
+        if (url == null || url.isEmpty()) {
+            return null;
+        }
+        String server = matching(ctx, Uri.parse(url));
+        return server == null ? null : basicAuthHeader(server);
+    }
+
+    /** WebView HTTP Basic 认证挑战：按 host 找带凭据的配置项 → [用户名, 密码]。 */
+    static String[] credentialsForHost(Context ctx, String host) {
+        if (host == null || host.isEmpty()) {
+            return null;
+        }
+        for (String server : urls(ctx)) {
+            Uri u = Uri.parse(server);
+            String info = u.getUserInfo();
+            if (info == null || info.isEmpty() || !host.equalsIgnoreCase(u.getHost())) {
+                continue;
+            }
+            String decoded = Uri.decode(info);
+            int i = decoded.indexOf(':');
+            return i >= 0
+                    ? new String[]{decoded.substring(0, i), decoded.substring(i + 1)}
+                    : new String[]{decoded, ""};
+        }
+        return null;
     }
 
     /** 请求命中清单里哪个服务器（快照拦截用）；都不匹配返回 null。 */
@@ -139,20 +213,24 @@ final class ServerConfig {
     /**
      * 把 url 从清单里的旧服务器换到 target 服务器（保留应用内路径，含子路径前缀）；
      * url 已在 target 上原样返回；不属于任何已知服务器返回 null。
+     * url 来自 WebView（永远是裸地址），配置项可能带凭据——一律按 bare 比较，
+     * 返回值也是裸地址（loadUrl 不吃 userinfo）。
      */
     static String rebase(Context ctx, String url, String target) {
         if (url == null || url.isEmpty()) {
             return null;
         }
-        if (url.equals(target) || url.startsWith(target + "/")) {
+        String bareTarget = bare(target);
+        if (url.equals(bareTarget) || url.startsWith(bareTarget + "/")) {
             return url;
         }
         for (String server : urls(ctx)) {
-            if (url.equals(server)) {
-                return target;
+            String s = bare(server);
+            if (url.equals(s)) {
+                return bareTarget;
             }
-            if (url.startsWith(server + "/")) {
-                return target + url.substring(server.length());
+            if (url.startsWith(s + "/")) {
+                return bareTarget + url.substring(s.length());
             }
         }
         return null;

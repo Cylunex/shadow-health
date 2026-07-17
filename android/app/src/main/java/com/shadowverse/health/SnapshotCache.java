@@ -131,7 +131,8 @@ final class SnapshotCache {
                 // 负缓存窗内：直接回放（无缓存则交回原生），不逐请求干等连接超时
                 return replay(ctx, url, request.isForMainFrame());
             }
-            return fetchAndStore(ctx, request, url);
+            // serverUrl 带 user:pass@（frp Basic 验证）时代理请求自带验证头
+            return fetchAndStore(ctx, request, url, ServerConfig.basicAuthHeader(serverUrl));
         } catch (ConnectFailure e) {
             offlineUntil = System.currentTimeMillis() + OFFLINE_NEGATIVE_MS;
             WebResourceResponse cached = replay(ctx, url, request.isForMainFrame());
@@ -186,7 +187,8 @@ final class SnapshotCache {
     // ---- 在线：代理取回 + 落缓存（304 复验直接回放磁盘） ----
 
     private static WebResourceResponse fetchAndStore(
-            Context ctx, WebResourceRequest request, String url) throws IOException {
+            Context ctx, WebResourceRequest request, String url, String basicAuth)
+            throws IOException {
         JSONObject meta = readMeta(ctx, url);  // 已有快照 → 带条件头复验
         HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
         try {
@@ -197,14 +199,19 @@ final class SnapshotCache {
             if (reqHeaders != null) {
                 for (Map.Entry<String, String> h : reqHeaders.entrySet()) {
                     String k = h.getKey();
-                    // 压缩与 WebView 自己的条件头都跳过：落盘要的是完整明文体
+                    // 压缩与 WebView 自己的条件头都跳过：落盘要的是完整明文体；
+                    // 配了 Basic 凭据时 Authorization 由下面统一注入，不透传
                     if ("Accept-Encoding".equalsIgnoreCase(k)
                             || "If-None-Match".equalsIgnoreCase(k)
-                            || "If-Modified-Since".equalsIgnoreCase(k)) {
+                            || "If-Modified-Since".equalsIgnoreCase(k)
+                            || (basicAuth != null && "Authorization".equalsIgnoreCase(k))) {
                         continue;
                     }
                     conn.setRequestProperty(k, h.getValue());
                 }
+            }
+            if (basicAuth != null) {
+                conn.setRequestProperty("Authorization", basicAuth);
             }
             String cookie = CookieManager.getInstance().getCookie(url);
             if (cookie != null) {

@@ -87,10 +87,11 @@ class ReminderWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(c
     private fun fetchDigest(server: String, token: String): JSONObject? {
         var conn: HttpURLConnection? = null
         return try {
-            conn = URL("$server/api/reminders/digest").openConnection() as HttpURLConnection
+            val target = "$server/api/reminders/digest"
+            conn = URL(ServerConfig.bare(target)).openConnection() as HttpURLConnection
             conn.connectTimeout = 8000
             conn.readTimeout = 8000
-            conn.setRequestProperty("Authorization", "Bearer $token")
+            HttpPost.applyAuth(conn, target, token)  // frp Basic 时 token 走 X-Ingest-Token
             if (conn.responseCode != 200) {
                 null
             } else {

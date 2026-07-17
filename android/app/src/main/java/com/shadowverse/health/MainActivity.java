@@ -171,6 +171,19 @@ public class MainActivity extends Activity {
             }
 
             @Override
+            public void onReceivedHttpAuthRequest(WebView view,
+                                                  android.webkit.HttpAuthHandler handler,
+                                                  String host, String realm) {
+                // frp 等入口的 HTTP Basic 验证：地址里配了 user:pass@ 就自动应答
+                String[] cred = ServerConfig.credentialsForHost(MainActivity.this, host);
+                if (cred != null) {
+                    handler.proceed(cred[0], cred[1]);
+                } else {
+                    handler.cancel();
+                }
+            }
+
+            @Override
             public void onReceivedError(WebView view, WebResourceRequest request,
                                         WebResourceError error) {
                 if (request.isForMainFrame()) {
@@ -215,6 +228,11 @@ public class MainActivity extends Activity {
                 String cookie = CookieManager.getInstance().getCookie(url);
                 if (cookie != null) {
                     req.addRequestHeader("Cookie", cookie);
+                }
+                // frp Basic 验证：DownloadManager 不走 WebView 的认证缓存，得自带头
+                String basicAuth = ServerConfig.basicAuthHeaderForUrl(MainActivity.this, url);
+                if (basicAuth != null) {
+                    req.addRequestHeader("Authorization", basicAuth);
                 }
                 String name = URLUtil.guessFileName(url, contentDisposition, mimeType);
                 req.setNotificationVisibility(
@@ -272,7 +290,7 @@ public class MainActivity extends Activity {
     private void loadServer() {
         clearHistoryOnNextLoad = showingLocalPage;
         erroredUrl = null;  // 新一轮加载：stale 守卫不能吞掉这次的 onPageFinished
-        lastAttemptedUrl = getServerUrl();
+        lastAttemptedUrl = ServerConfig.bare(getServerUrl());  // loadUrl 不吃 userinfo
         webView.loadUrl(lastAttemptedUrl);
     }
 
@@ -307,7 +325,7 @@ public class MainActivity extends Activity {
                         erroredUrl = null;
                         String target = ServerConfig.rebase(
                                 MainActivity.this, lastAttemptedUrl, server);
-                        webView.loadUrl(target != null ? target : server);
+                        webView.loadUrl(target != null ? target : ServerConfig.bare(server));
                     } else if (onSnapshotPage) {
                         String rebased = ServerConfig.rebase(
                                 MainActivity.this, webView.getUrl(), server);
@@ -376,6 +394,7 @@ public class MainActivity extends Activity {
 
         TextView hint = new TextView(this);
         hint.setText("可填多个地址（每行一个）：断线按顺序自动切换，各地址首次使用需各自登录。"
+                + "frp 等入口开了 Basic 验证时写成 http://用户:密码@域名。"
                 + "秤监听需要蓝牙权限；三星同步需先在三星健康开发者模式里开 Data Read"
                 + "（版本号连点 10 次解锁）。国产 ROM 记得允许自启动，否则后台会被清理。");
         hint.setTextSize(12);
@@ -589,7 +608,7 @@ public class MainActivity extends Activity {
             try {
                 o.put("queued", OfflineStore.queueSize(MainActivity.this));
                 o.put("error", lastError == null ? "" : lastError);
-                o.put("server", getServerUrl());
+                o.put("server", ServerConfig.bare(getServerUrl()));  // 本地页展示，不露凭据
             } catch (JSONException ignored) {
             }
             return o.toString();
