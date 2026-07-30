@@ -162,6 +162,31 @@ def test_form_context_respects_hidden(db, restore_display_setting):
     assert set(_MORE_FIELDS) <= ctx["hidden"]
 
 
+def test_previous_weight_is_hint_not_form_value(db):
+    """旧体重只能做 placeholder，补其他指标时不能被带成当天手动体重。"""
+    from datetime import date
+    from decimal import Decimal
+
+    from app.models import BodyMetrics
+    from app.routers.metrics import _form_context
+
+    old_day, new_day = date(2020, 6, 6), date(2020, 6, 7)
+    db.query(BodyMetrics).filter(BodyMetrics.log_date.in_([old_day, new_day])).delete(
+        synchronize_session=False
+    )
+    db.add(BodyMetrics(
+        log_date=old_day,
+        weight_kg=Decimal("84.50"),
+        autofilled={"weight_kg": "miscale"},
+    ))
+    db.flush()
+
+    ctx = _form_context(db, new_day)
+    assert ctx["v"]["weight_kg"] == ""
+    assert ctx["weight_entry"]["previous"] == "84.5"
+    assert ctx["weight_entry"]["current"] == ""
+
+
 def test_history_cols_respect_hidden(db, restore_display_setting):
     from app.routers.metrics import _history_context
 
@@ -216,6 +241,14 @@ def test_metrics_page_renders_with_hidden(db, page, restore_display_setting):
     resp = page.get("/metrics")
     assert resp.status_code == 200
     assert "自定义显示" in resp.text
+
+
+def test_today_overview_fragment(db, page):
+    resp = page.get("/fragments/today/overview")
+    assert resp.status_code == 200
+    assert "今日概览" in resp.text
+    assert "数据通道" in resp.text
+    assert "需要时补录" not in resp.text
 
 
 # ---------- Bearer 备用头 X-Ingest-Token（V8.3：frp Basic 验证占用 Authorization） ----------

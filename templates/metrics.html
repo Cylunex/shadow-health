@@ -3,7 +3,20 @@
 {% block page_title %}身体指标{% endblock %}
 {% block content %}
 <div class="space-y-5">
-  <section class="card" x-data="{ cfg: false }">
+  <details class="group">
+    <summary class="card flex min-h-[64px] cursor-pointer list-none items-center gap-3 [&::-webkit-details-marker]:hidden">
+      <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-700/60 bg-slate-800/70 text-emerald-400">＋</span>
+      <span class="min-w-0 flex-1">
+        <span class="block text-sm font-semibold text-slate-200">需要时补录或修正</span>
+        <span class="mt-0.5 block text-xs text-slate-500">自动体重和手表数据不会重复提交</span>
+      </span>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round"
+           class="h-5 w-5 shrink-0 text-slate-500 transition-transform group-open:rotate-90">
+        <path d="m9 6 6 6-6 6"/>
+      </svg>
+    </summary>
+  <section class="card mt-4" x-data="{ cfg: false }">
     <div class="mb-3 flex items-center justify-between">
       <h2 class="card-title mb-0">记录指标</h2>
       <button type="button" @click="cfg = !cfg"
@@ -31,6 +44,7 @@
     </form>
     {% include "fragments/metrics_form.html" %}
   </section>
+  </details>
 
   <section class="card">
     <h2 class="card-title">趋势</h2>

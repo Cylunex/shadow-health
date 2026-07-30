@@ -226,6 +226,19 @@ def _same(current: Any, new: Any) -> bool:
     return current == new
 
 
+def _apply_changed_values(row: BodyMetrics, values: dict[str, Any]) -> list[str]:
+    """只应用真正变化的字段，返回改动字段；相同值不重复写也不改来源。"""
+    changed: list[str] = []
+    for field, value in values.items():
+        if _same(getattr(row, field), value):
+            continue
+        setattr(row, field, value)
+        changed.append(field)
+    if changed:
+        mark_manual(row, changed)
+    return changed
+
+
 def _hidden_fields(db: Session) -> set[str]:
     """已配置隐藏的字段集合；未配置/格式异常按全显示处理。"""
     value = db.execute(
@@ -250,6 +263,7 @@ def _form_context(
     log_date: date,
     saved: bool = False,
     errors: list[str] | None = None,
+    unchanged: bool = False,
 ) -> dict[str, Any]:
     row = db.execute(
         select(BodyMetrics).where(BodyMetrics.log_date == log_date)
@@ -257,8 +271,10 @@ def _form_context(
     v: dict[str, str] = {}
     for name in _NUM_FIELDS:
         v[name] = _fmt(getattr(row, name)) if row is not None else ""
-    # 当日无记录（或该字段为空）时，慢变化字段预填「该日期之前」最近一次值——
-    # 不设上界会把今天的值预填进补录的历史日期，顺手保存即污染历史曲线
+    # 慢变化字段只把「该日期之前」最近一次值作为 placeholder 提示，绝不能塞进
+    # value：否则用户只补睡眠/心情时，旧体重会随表单一起提交成当天手动值，
+    # 并挡住稍后到达的体脂秤自动回填。
+    previous: dict[str, str] = {}
     for name in _PREFILL_FIELDS:
         if not v[name]:
             col = getattr(BodyMetrics, name)
@@ -269,11 +285,20 @@ def _form_context(
                 .limit(1)
             ).scalar_one_or_none()
             if last is not None:
-                v[name] = _fmt(last)
+                previous[name] = _fmt(last)
+    weight_source = (row.autofilled or {}).get("weight_kg") if row else None
+    weight_entry = {
+        "current": v["weight_kg"],
+        "previous": previous.get("weight_kg", ""),
+        "source": SOURCE_LABELS.get(weight_source, "自动") if weight_source else "手动",
+        "automatic": bool(weight_source),
+    }
     hidden = _hidden_fields(db)
     return {
         "log_date": log_date.isoformat(),
         "v": v,
+        "previous": previous,
+        "weight_entry": weight_entry,
         "notes": (row.notes or "") if row else "",
         "chips": {
             "sleep_quality": row.sleep_quality if row else None,
@@ -282,6 +307,7 @@ def _form_context(
             "morning_erection": row.morning_erection if row else None,
         },
         "saved": saved,
+        "unchanged": unchanged,
         "errors": errors or [],
         "fmt": _fmt,
         "hidden": hidden,
@@ -290,18 +316,41 @@ def _form_context(
     }
 
 
-def _quick_context(db: Session, saved: bool = False, errors: list[str] | None = None) -> dict[str, Any]:
+def _quick_context(
+    db: Session,
+    saved: bool = False,
+    errors: list[str] | None = None,
+    unchanged: bool = False,
+) -> dict[str, Any]:
     today = today_local()
     row = db.execute(
         select(BodyMetrics).where(BodyMetrics.log_date == today)
     ).scalar_one_or_none()
+    previous_weight = ""
+    if row is None or row.weight_kg is None:
+        previous_weight = _fmt(db.execute(
+            select(BodyMetrics.weight_kg)
+            .where(
+                BodyMetrics.weight_kg.is_not(None),
+                BodyMetrics.log_date < today,
+            )
+            .order_by(BodyMetrics.log_date.desc())
+            .limit(1)
+        ).scalar_one_or_none())
+    weight_source = (row.autofilled or {}).get("weight_kg") if row else None
     return {
         "quick_log_date": today.isoformat(),
-        "quick_weight": _fmt(row.weight_kg) if row else "",
+        "quick_weight": {
+            "current": _fmt(row.weight_kg) if row else "",
+            "previous": previous_weight,
+            "source": SOURCE_LABELS.get(weight_source, "自动") if weight_source else "手动",
+            "automatic": bool(weight_source),
+        },
         "quick_sleep": _fmt(row.sleep_hours) if row else "",
         "quick_me": row.morning_erection if row else None,
         "quick_mood": row.mood_score if row else None,
         "quick_saved": saved,
+        "quick_unchanged": unchanged,
         "quick_errors": errors or [],
         "quick_hidden": _hidden_fields(db),
     }
@@ -631,10 +680,20 @@ def _default_metric(db: Session) -> str:
 
 # ---------- 路由 ----------
 @router.get("/metrics")
-def metrics_page(request: Request, db: Session = Depends(get_db)):
+def metrics_page(
+    request: Request,
+    metric: str = "weight",
+    days: int = 30,
+    db: Session = Depends(get_db),
+):
+    visible_keys = {k for k, _ in _visible_chart_options(_hidden_fields(db))}
+    if metric not in visible_keys:
+        metric = _default_metric(db)
+    if days not in _CHART_DAYS:
+        days = 30
     ctx: dict[str, Any] = {}
     ctx.update(_form_context(db, today_local()))
-    ctx.update(_chart_context(db, _default_metric(db), 30))
+    ctx.update(_chart_context(db, metric, days))
     ctx.update(_history_context(db))
     return templates.TemplateResponse(request, "metrics.html", ctx)
 
@@ -667,29 +726,29 @@ async def metrics_save(request: Request, db: Session = Depends(get_db)):
     values, errors = _parse_form(form)
 
     saved = False
+    unchanged = False
     if values and not errors:
         row = get_or_create_day(db, log_date)
-        manual_fields: list[str] = []
-        for field, value in values.items():
-            # 自动回填字段原样提交（未改动）时不视为手动保存，保留来源徽标
-            if field in (row.autofilled or {}) and _same(getattr(row, field), value):
-                continue
-            setattr(row, field, value)
-            manual_fields.append(field)
+        # 所有原样值都不重复写；自动字段尤其要保留来源徽标，避免一次无意提交
+        # 就把体脂秤/手表值锁成“手动值”。
+        manual_fields = _apply_changed_values(row, values)
         if manual_fields:
-            mark_manual(row, manual_fields)
-        db.flush()
-        saved = True
+            db.flush()
+            saved = True
+        else:
+            unchanged = True
     elif not values and not errors:
         errors = ["没有可保存的内容"]
 
     if fragment == "quick":
         resp = templates.TemplateResponse(
-            request, "fragments/metrics_quick.html", _quick_context(db, saved=saved, errors=errors)
+            request, "fragments/metrics_quick.html",
+            _quick_context(db, saved=saved, errors=errors, unchanged=unchanged),
         )
     else:
         resp = templates.TemplateResponse(
-            request, "fragments/metrics_form.html", _form_context(db, log_date, saved=saved, errors=errors)
+            request, "fragments/metrics_form.html",
+            _form_context(db, log_date, saved=saved, errors=errors, unchanged=unchanged),
         )
     if saved:
         resp.headers["HX-Trigger"] = "metrics-changed"

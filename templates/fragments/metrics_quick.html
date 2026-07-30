@@ -12,6 +12,8 @@
     <span class="text-sm font-medium text-slate-200">今日指标</span>
     {% if quick_saved %}
     <span class="badge-accent fade-in">已保存 ✓</span>
+    {% elif quick_unchanged %}
+    <span class="text-xs text-slate-500 fade-in">没有变化</span>
     {% elif quick_errors %}
     <span class="text-xs text-red-400 fade-in">{{ quick_errors | join('、') }}</span>
     {% endif %}
@@ -19,12 +21,28 @@
 
   <div class="grid grid-cols-2 gap-2">
     {% if 'weight_kg' not in quick_hidden %}
-    <label class="block">
+    <div class="block" x-data="{ edit: false }">
       <span class="field-label">体重 (kg)</span>
-      <input type="text" inputmode="decimal" name="weight_kg" value="{{ quick_weight }}"
-             autocomplete="off"
+      {% if quick_weight.current %}
+      <div x-show="!edit"
+           class="field flex min-h-[44px] items-center justify-between gap-2 bg-slate-900/60">
+        <span class="tabular-nums">{{ quick_weight.current }}</span>
+        <button type="button" @click="edit = true"
+                class="text-xs text-emerald-400">修正</button>
+      </div>
+      <input x-show="edit" style="display:none" type="text" inputmode="decimal"
+             name="weight_kg" value="{{ quick_weight.current }}"
+             disabled :disabled="!edit" autocomplete="off"
              class="field tabular-nums">
-    </label>
+      <p x-show="!edit" class="mt-1 text-[10px] text-slate-500">
+        {{ quick_weight.source }}记录 · 不会重复提交
+      </p>
+      {% else %}
+      <input type="text" inputmode="decimal" name="weight_kg" value=""
+             placeholder="{% if quick_weight.previous %}上次 {{ quick_weight.previous }}{% endif %}"
+             autocomplete="off" class="field tabular-nums">
+      {% endif %}
+    </div>
     {% endif %}
     {% if 'sleep_hours' not in quick_hidden %}
     <label class="block">

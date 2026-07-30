@@ -12,8 +12,19 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.deps import require_login, templates
-from app.models import AppSetting, DailyActivity, Habit, HabitLog, ImportRaw, WorkoutLog
+from app.deps import require_login, session_label, templates
+from app.models import (
+    AppSetting,
+    BodyMetrics,
+    DailyActivity,
+    DietLog,
+    Habit,
+    HabitLog,
+    ImportRaw,
+    SyncState,
+    WorkoutLog,
+)
+from app.services.sleep import total_sleep_min
 from app.timeutil import now_local, today_local
 
 router = APIRouter(dependencies=[Depends(require_login)])
@@ -22,6 +33,121 @@ WEEKDAY_CN = ["周一", "周二", "周三", "周四", "周五", "周六", "周�
 DEFAULT_TARGET_STEPS = 8000  # 设计文档 §5.6：target_steps 默认 8000（源 06）
 DAILY_WORKOUT_TARGET_MIN = 30  # 三环之「训练环」日目标（Apple Fitness 同款默认值）
 AGENT_FRESH_SECONDS = 600  # 「Agent 最近写入」提示窗口（60s 轮询，窗口放宽到 10 分钟）
+
+_SOURCE_LABELS = {
+    "miscale": "体脂秤",
+    "samsung_direct": "三星健康",
+    "samsung_zip": "三星历史",
+    "agent": "Agent",
+    "offline": "离线补录",
+}
+
+
+def _ago_label(dt) -> str:
+    if dt is None:
+        return "暂无"
+    seconds = max(0, int((now_local() - dt).total_seconds()))
+    if seconds < 90:
+        return "刚刚"
+    if seconds < 3600:
+        return f"{seconds // 60} 分钟前"
+    if seconds < 86400:
+        return f"{seconds // 3600} 小时前"
+    return f"{seconds // 86400} 天前"
+
+
+def _overview_ctx(db: Session, day: date | None = None) -> dict:
+    """首页查看型概览：只汇总已经自动/Agent 入库的数据，不制造录入动作。"""
+    day = day or today_local()
+    body = db.execute(
+        select(BodyMetrics)
+        .where(BodyMetrics.log_date <= day, BodyMetrics.weight_kg.is_not(None))
+        .order_by(BodyMetrics.log_date.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    previous = None
+    if body is not None:
+        previous = db.execute(
+            select(BodyMetrics)
+            .where(
+                BodyMetrics.log_date < body.log_date,
+                BodyMetrics.weight_kg.is_not(None),
+            )
+            .order_by(BodyMetrics.log_date.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+
+    weight = None
+    if body is not None:
+        source = (body.autofilled or {}).get("weight_kg")
+        delta = (
+            round(float(body.weight_kg) - float(previous.weight_kg), 2)
+            if previous is not None else None
+        )
+        weight = {
+            "value": float(body.weight_kg),
+            "fat": float(body.body_fat_pct) if body.body_fat_pct is not None else None,
+            "date": body.log_date,
+            "is_today": body.log_date == day,
+            "source": _SOURCE_LABELS.get(source, "手动"),
+            "delta": delta,
+        }
+
+    activity = db.get(DailyActivity, day)
+    workout_count, workout_min = db.execute(
+        select(
+            func.count(),
+            func.coalesce(func.sum(WorkoutLog.duration_min), 0),
+        ).where(WorkoutLog.log_date == day)
+    ).one()
+    latest_workout = db.execute(
+        select(WorkoutLog)
+        .where(WorkoutLog.log_date == day)
+        .order_by(WorkoutLog.started_at.desc().nullslast(), WorkoutLog.id.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    diet_count, diet_kcal, diet_protein = db.execute(
+        select(
+            func.count(),
+            func.coalesce(func.sum(DietLog.kcal), 0),
+            func.coalesce(func.sum(DietLog.protein_g), 0),
+        ).where(DietLog.log_date == day)
+    ).one()
+    sleep_min = total_sleep_min(db, day)
+    if not sleep_min:
+        today_body = db.execute(
+            select(BodyMetrics).where(BodyMetrics.log_date == day)
+        ).scalar_one_or_none()
+        if today_body is not None and today_body.sleep_hours is not None:
+            sleep_min = round(float(today_body.sleep_hours) * 60)
+
+    sync = []
+    for source, label in (
+        ("miscale", "体脂秤"),
+        ("samsung_direct", "三星健康"),
+        ("agent", "Agent"),
+    ):
+        state = db.get(SyncState, source)
+        sync.append({
+            "label": label,
+            "ago": _ago_label(state.last_success_at if state else None),
+            "ok": bool(state and state.consecutive_failures == 0),
+            "error": (state.last_error or "")[:100] if state else "",
+        })
+
+    return {
+        "weight": weight,
+        "steps": activity.steps if activity is not None else None,
+        "steps_label": f"{activity.steps:,}" if activity is not None and activity.steps is not None else "—",
+        "workout_count": int(workout_count),
+        "workout_min": int(workout_min),
+        "workout_label": session_label(latest_workout.session_type) if latest_workout else "",
+        "sleep_h": round(sleep_min / 60, 1) if sleep_min else None,
+        "diet_count": int(diet_count),
+        "diet_kcal": round(float(diet_kcal)),
+        "diet_protein": round(float(diet_protein), 1),
+        "sync": sync,
+    }
 
 
 def _greeting(hour: int) -> str:
@@ -148,4 +274,14 @@ def rings_fragment(request: Request, db: Session = Depends(get_db)):
         request,
         "fragments/today_rings.html",
         {"rings": _rings(db, today, steps, _target_steps(db))},
+    )
+
+
+@router.get("/fragments/today/overview")
+def overview_fragment(request: Request, db: Session = Depends(get_db)):
+    """自动采集/Agent 写入后的查看型首页概览，相关写入事件后原位刷新。"""
+    return templates.TemplateResponse(
+        request,
+        "fragments/today_overview.html",
+        _overview_ctx(db),
     )

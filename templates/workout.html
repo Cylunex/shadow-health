@@ -16,8 +16,21 @@
          hx-swap="innerHTML">{% include "fragments/workout_plan_cards.html" %}</div>
   </section>
 
-  {# ---- 手动记录 ---- #}
-  <section class="card">
+  {# ---- 手动记录：自动同步为主，默认折叠 ---- #}
+  <details class="group">
+    <summary class="card flex min-h-[64px] cursor-pointer list-none items-center gap-3 [&::-webkit-details-marker]:hidden">
+      <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-700/60 bg-slate-800/70 text-emerald-400">＋</span>
+      <span class="min-w-0 flex-1">
+        <span class="block text-sm font-semibold text-slate-200">需要时手工记录</span>
+        <span class="mt-0.5 block text-xs text-slate-500">自动同步之外再补训练</span>
+      </span>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round"
+           class="h-5 w-5 shrink-0 text-slate-500 transition-transform group-open:rotate-90">
+        <path d="m9 6 6 6-6 6"/>
+      </svg>
+    </summary>
+  <section class="card mt-4">
     <div class="mb-3 flex items-center justify-between">
       <h2 class="card-title mb-0">手动记一笔</h2>
       <span class="flex items-center">
@@ -30,6 +43,7 @@
     </div>
     {% include "fragments/workout_manual_form.html" %}
   </section>
+  </details>
 
   {# ---- 最近 14 条（行内编辑三件套；记录变化后被动刷新） ---- #}
   <section class="card">

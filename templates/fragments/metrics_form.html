@@ -22,6 +22,10 @@
     <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
     <span>已保存 {{ log_date }} 的记录 ✓</span>
   </div>
+  {% elif unchanged %}
+  <div class="fade-in flex items-center gap-2 rounded-xl border border-slate-700/70 bg-slate-900/70 text-slate-400 text-sm px-3.5 py-2.5">
+    <span>内容没有变化，无需重复保存</span>
+  </div>
   {% endif %}
   {% if errors %}
   <div class="fade-in flex items-center gap-2 rounded-xl bg-red-600/15 border border-red-600/40 text-red-400 text-sm px-3.5 py-2.5">
@@ -42,9 +46,35 @@
   </label>
 
   <div class="grid grid-cols-2 gap-3">
-    {{ num_input('weight_kg', '体重 (kg)') }}
-    {{ num_input('body_fat_pct', '体脂率 (%)') }}
-    {{ num_input('waist_cm', '腰围 (cm)') }}
+    {% if 'weight_kg' not in hidden %}
+    <div x-data="{ edit: false }">
+      <span class="field-label">体重 (kg)</span>
+      {% if weight_entry.current %}
+      <div x-show="!edit"
+           class="field flex min-h-[44px] items-center justify-between gap-2 bg-slate-900/60">
+        <span class="tabular-nums text-slate-200">{{ weight_entry.current }} kg</span>
+        <button type="button" @click="edit = true"
+                class="text-xs text-emerald-400">修正</button>
+      </div>
+      <div x-show="edit" style="display:none" class="space-y-1.5">
+        <input type="text" inputmode="decimal" name="weight_kg"
+               value="{{ weight_entry.current }}" disabled :disabled="!edit"
+               autocomplete="off" class="field tabular-nums">
+        <button type="button" @click="edit = false"
+                class="text-xs text-slate-500">取消修正</button>
+      </div>
+      <p x-show="!edit" class="mt-1 text-[11px] text-slate-500">
+        {{ weight_entry.source }}记录，不会随其他指标重复提交
+      </p>
+      {% else %}
+      <input type="text" inputmode="decimal" name="weight_kg" value=""
+             placeholder="{% if weight_entry.previous %}上次 {{ weight_entry.previous }}{% endif %}"
+             autocomplete="off" class="field tabular-nums">
+      {% endif %}
+    </div>
+    {% endif %}
+    {{ num_input('body_fat_pct', '体脂率 (%)', ph=('上次 ' ~ previous.body_fat_pct) if previous.body_fat_pct else '') }}
+    {{ num_input('waist_cm', '腰围 (cm)', ph=('上次 ' ~ previous.waist_cm) if previous.waist_cm else '') }}
     {{ num_input('sleep_hours', '睡眠时长 (h)') }}
     {{ num_input('bp_systolic', '收缩压 (mmHg)', mode='numeric') }}
     {{ num_input('bp_diastolic', '舒张压 (mmHg)', mode='numeric') }}

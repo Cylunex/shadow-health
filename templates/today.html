@@ -14,6 +14,20 @@
     </a>
   </section>
 
+  <!-- 自动采集 + Agent 录入后的查看型概览：首屏直接给结论与通道状态。 -->
+  <div hx-get="{{ u('/fragments/today/overview') }}"
+       hx-trigger="load" hx-swap="outerHTML">
+    <section class="card animate-pulse space-y-3">
+      <div class="h-5 w-1/4 rounded-full bg-slate-800"></div>
+      <div class="h-28 rounded-2xl bg-slate-800/60"></div>
+      <div class="grid grid-cols-3 gap-2">
+        <div class="h-16 rounded-xl bg-slate-800/60"></div>
+        <div class="h-16 rounded-xl bg-slate-800/60"></div>
+        <div class="h-16 rounded-xl bg-slate-800/60"></div>
+      </div>
+    </section>
+  </div>
+
   <!-- 1.5 Agent 最近写入提示（近 10 分钟有 agent 通道写入才显示；60s 轮询，
        片段 outerHTML 自替换，空态 hidden 不占 space-y 间距） -->
   <div hidden hx-get="{{ u('/fragments/today/agent-fresh') }}"
@@ -37,12 +51,29 @@
     </div>
   </section>
 
+  <!-- 自动采集与 Agent 已覆盖日常记录，手工入口默认折叠，需要时再展开。 -->
+  <details class="group"
+           hx-on:toggle="if(this.open){this.querySelectorAll('[data-lazy]').forEach(function(el){htmx.trigger(el,'lazy-load')})}">
+    <summary class="card flex min-h-[64px] cursor-pointer list-none items-center gap-3 [&::-webkit-details-marker]:hidden">
+      <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-700/60 bg-slate-800/70 text-emerald-400">＋</span>
+      <span class="min-w-0 flex-1">
+        <span class="block text-sm font-semibold text-slate-200">需要时补录</span>
+        <span class="mt-0.5 block text-xs text-slate-500">指标、饮食、训练和习惯默认收起</span>
+      </span>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round"
+           class="h-5 w-5 shrink-0 text-slate-500 transition-transform group-open:rotate-90">
+        <path d="m9 6 6 6-6 6"/>
+      </svg>
+    </summary>
+
+    <div class="mt-4 space-y-5">
   <!-- 3. 计划卡区（workout 模块片段：每个 active 计划一张卡，无计划时片段自带引导；
        监听 workout-changed——删除/编辑记录后「已完成 ✓」状态才会跟着复位） -->
   <section class="card">
     <h2 class="card-title">训练计划</h2>
-    <div id="workout-plan-cards" hx-get="{{ u('/fragments/workout/plan-cards') }}"
-         hx-trigger="load, workout-changed from:body">
+    <div id="workout-plan-cards" data-lazy hx-get="{{ u('/fragments/workout/plan-cards') }}"
+         hx-trigger="lazy-load once, workout-changed from:body">
       <div class="animate-pulse space-y-2">
         <div class="h-4 w-1/3 rounded-full bg-slate-800"></div>
         <div class="h-12 rounded-xl bg-slate-800/60"></div>
@@ -54,13 +85,13 @@
   <section class="card">
     <h2 class="card-title">习惯打卡</h2>
     <div class="space-y-3">
-      <div hx-get="{{ u('/fragments/habits/today') }}" hx-trigger="load">
+      <div data-lazy hx-get="{{ u('/fragments/habits/today') }}" hx-trigger="lazy-load once">
         <div class="animate-pulse space-y-2">
           <div class="h-11 rounded-xl bg-slate-800/60"></div>
           <div class="h-11 rounded-xl bg-slate-800/60"></div>
         </div>
       </div>
-      <div hx-get="{{ u('/fragments/habits/summary') }}" hx-trigger="load, habit-changed from:body">
+      <div data-lazy hx-get="{{ u('/fragments/habits/summary') }}" hx-trigger="lazy-load once, habit-changed from:body">
         <div class="animate-pulse h-3 w-2/5 rounded-full bg-slate-800/80"></div>
       </div>
     </div>
@@ -72,7 +103,7 @@
       <h2 class="card-title mb-0">快速记指标</h2>
       <a href="{{ u('/metrics') }}" class="inline-flex min-h-[44px] items-center px-2 -mr-2 text-xs font-medium text-emerald-400 active:text-emerald-300">全部指标 →</a>
     </div>
-    <div hx-get="{{ u('/fragments/metrics/quick') }}" hx-trigger="load">
+    <div data-lazy hx-get="{{ u('/fragments/metrics/quick') }}" hx-trigger="lazy-load once">
       <div class="animate-pulse space-y-2">
         <div class="h-4 w-1/4 rounded-full bg-slate-800"></div>
         <div class="h-11 rounded-xl bg-slate-800/60"></div>
@@ -87,13 +118,13 @@
       <a href="{{ u('/diet') }}" class="inline-flex min-h-[44px] items-center px-2 -mr-2 text-xs font-medium text-emerald-400 active:text-emerald-300">去记录 →</a>
     </div>
     <div class="space-y-3">
-      <div hx-get="{{ u('/fragments/diet/summary') }}" hx-trigger="load, diet-changed from:body">
+      <div data-lazy hx-get="{{ u('/fragments/diet/summary') }}" hx-trigger="lazy-load once, diet-changed from:body">
         <div class="animate-pulse space-y-2">
           <div class="h-4 w-1/2 rounded-full bg-slate-800"></div>
           <div class="h-3 w-1/3 rounded-full bg-slate-800/70"></div>
         </div>
       </div>
-      <div hx-get="{{ u('/fragments/diet/chips') }}" hx-trigger="load">
+      <div data-lazy hx-get="{{ u('/fragments/diet/chips') }}" hx-trigger="lazy-load once">
         <div class="animate-pulse flex gap-2">
           <div class="h-10 w-16 rounded-full bg-slate-800/70"></div>
           <div class="h-10 w-20 rounded-full bg-slate-800/70"></div>
@@ -136,6 +167,8 @@
       <path d="m9 6 6 6-6 6"/>
     </svg>
   </a>
+    </div>
+  </details>
 
 </div>
 {% endblock %}

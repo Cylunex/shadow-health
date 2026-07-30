@@ -33,6 +33,22 @@
     {% include "fragments/diet_summary.html" %}
   </section>
 
+  {# Agent 已是主要录入方式，手工扫码/表单/快捷项默认折叠。 #}
+  <details class="group">
+    <summary class="card flex min-h-[64px] cursor-pointer list-none items-center gap-3 [&::-webkit-details-marker]:hidden">
+      <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-700/60 bg-slate-800/70 text-emerald-400">＋</span>
+      <span class="min-w-0 flex-1">
+        <span class="block text-sm font-semibold text-slate-200">需要时手工录入</span>
+        <span class="mt-0.5 block text-xs text-slate-500">扫码、搜索食物和快捷记录</span>
+      </span>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round"
+           class="h-5 w-5 shrink-0 text-slate-500 transition-transform group-open:rotate-90">
+        <path d="m9 6 6 6-6 6"/>
+      </svg>
+    </summary>
+    <div class="mt-4 space-y-5">
+
   {# 扫码记录（V7 D3）：BarcodeDetector 扫码 + 手输条码兜底 #}
   <section class="card" x-data="barcodeScan()">
     <div class="flex items-center justify-between">
@@ -120,6 +136,8 @@
 
   {# 组合菜谱 chips（V6 P5：常规餐一键整组记录） #}
   {% include "fragments/diet_templates.html" %}
+    </div>
+  </details>
 
   {# AI 识别结果条（在 #diet-day 外，日列表被动刷新后消息仍在） #}
   <div id="diet-ai-msg"></div>

@@ -1,0 +1,102 @@
+{# 自动采集优先的首页概览：体重、三星活动、Agent 饮食与通道状态。 #}
+<section id="today-overview"
+         hx-get="{{ u('/fragments/today/overview') }}"
+         hx-trigger="metrics-changed from:body, workout-changed from:body, diet-changed from:body"
+         hx-swap="outerHTML"
+         class="card space-y-4">
+  <div class="flex items-center justify-between">
+    <h2 class="card-title mb-0">今日概览</h2>
+    <div class="flex items-center gap-1">
+      <a href="{{ u('/metrics') }}" class="chip min-h-[36px] px-2.5 text-xs">趋势</a>
+      <a href="{{ u('/report/daily') }}" class="chip min-h-[36px] px-2.5 text-xs">日报</a>
+    </div>
+  </div>
+
+  <div class="rounded-2xl border border-emerald-900/50 bg-emerald-950/25 p-4">
+    <div class="flex items-start justify-between gap-3">
+      <div>
+        <p class="text-xs text-slate-500">
+          {% if weight and weight.is_today %}今日体重{% elif weight %}最近体重 · {{ weight.date }}{% else %}体重{% endif %}
+        </p>
+        {% if weight %}
+        <p class="mt-1 text-3xl font-bold tabular-nums text-slate-100">
+          {{ '%.2f' | format(weight.value) }}<span class="ml-1 text-sm font-normal text-slate-500">kg</span>
+        </p>
+        <div class="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+          <span class="text-emerald-400">{{ weight.source }}</span>
+          {% if weight.fat is not none %}
+          <span class="text-slate-500">体脂 {{ '%.1f' | format(weight.fat) }}%</span>
+          {% endif %}
+          {% if weight.delta is not none %}
+          <span class="{{ 'text-emerald-400' if weight.delta < 0 else ('text-amber-400' if weight.delta > 0 else 'text-slate-500') }}">
+            较上次 {{ '%+.2f' | format(weight.delta) }} kg
+          </span>
+          {% endif %}
+        </div>
+        {% else %}
+        <p class="mt-1 text-sm text-slate-500">还没有体重记录</p>
+        {% endif %}
+      </div>
+      <a href="{{ u('/scale') }}"
+         class="shrink-0 rounded-xl border border-slate-700/70 bg-slate-900/70 px-3 py-2 text-center text-xs text-slate-300">
+        秤状态
+        <span class="mt-0.5 block text-[10px] text-slate-500">查看流水</span>
+      </a>
+    </div>
+
+    {# Android 壳专属：最常用动作保持在首屏；普通浏览器不显示。 #}
+    <button type="button" style="display:none" id="overview-scale-scan-btn"
+            onclick="ShellBridge.startScaleScan()"
+            class="btn-primary mt-3 w-full min-h-[44px]">⚖️ 接收体重 3 分钟</button>
+    <script>
+      if (window.ShellBridge && window.ShellBridge.startScaleScan) {
+        document.getElementById('overview-scale-scan-btn').style.display = '';
+      }
+    </script>
+  </div>
+
+  <div class="grid grid-cols-3 gap-2">
+    <a href="{{ u('/metrics') }}?metric=steps"
+       class="rounded-xl border border-slate-800/70 bg-slate-900/45 px-2.5 py-3 text-center">
+      <p class="text-lg font-bold tabular-nums text-emerald-400">{{ steps_label }}</p>
+      <p class="mt-0.5 text-[11px] text-slate-500">步数</p>
+    </a>
+    <a href="{{ u('/workout') }}"
+       class="rounded-xl border border-slate-800/70 bg-slate-900/45 px-2.5 py-3 text-center">
+      <p class="text-lg font-bold tabular-nums text-sky-400">{{ workout_min }}</p>
+      <p class="mt-0.5 truncate text-[11px] text-slate-500">{{ workout_label or '训练分钟' }}</p>
+    </a>
+    <a href="{{ u('/metrics') }}?metric=sleep"
+       class="rounded-xl border border-slate-800/70 bg-slate-900/45 px-2.5 py-3 text-center">
+      <p class="text-lg font-bold tabular-nums text-violet-400">{{ sleep_h if sleep_h is not none else '—' }}</p>
+      <p class="mt-0.5 text-[11px] text-slate-500">睡眠小时</p>
+    </a>
+  </div>
+
+  <a href="{{ u('/diet') }}"
+     class="flex items-center justify-between gap-3 rounded-xl border border-slate-800/70 bg-slate-900/45 px-3.5 py-3">
+    <div>
+      <p class="text-sm font-medium text-slate-200">今日饮食</p>
+      <p class="mt-0.5 text-xs text-slate-500">{{ diet_count }} 条 · Agent 录入可到流水核对</p>
+    </div>
+    <div class="shrink-0 text-right tabular-nums">
+      <p class="text-sm font-semibold text-amber-300">{{ diet_kcal }} kcal</p>
+      <p class="mt-0.5 text-xs text-slate-500">蛋白 {{ diet_protein }} g</p>
+    </div>
+  </a>
+
+  <div>
+    <div class="mb-1.5 flex items-center justify-between">
+      <p class="text-xs text-slate-500">数据通道</p>
+      <a href="{{ u('/agent-log') }}" class="text-xs text-emerald-400">Agent 流水 →</a>
+    </div>
+    <div class="grid grid-cols-3 gap-1.5">
+      {% for s in sync %}
+      <div class="rounded-lg border border-slate-800/70 px-2 py-2 text-center">
+        <p class="text-[11px] {{ 'text-slate-300' if s.ok else 'text-red-400' }}">{{ s.label }}</p>
+        <p class="mt-0.5 truncate text-[10px] {{ 'text-emerald-500/80' if s.ok else 'text-red-400/80' }}">{{ s.ago }}</p>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</section>
