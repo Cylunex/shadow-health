@@ -103,7 +103,8 @@
       <h2 class="card-title mb-0">快速记指标</h2>
       <a href="{{ u('/metrics') }}" class="inline-flex min-h-[44px] items-center px-2 -mr-2 text-xs font-medium text-emerald-400 active:text-emerald-300">全部指标 →</a>
     </div>
-    <div data-lazy hx-get="{{ u('/fragments/metrics/quick') }}" hx-trigger="lazy-load once">
+    <div data-lazy hx-get="{{ u('/fragments/metrics/quick') }}"
+         hx-trigger="lazy-load once, metrics-entry-changed from:body">
       <div class="animate-pulse space-y-2">
         <div class="h-4 w-1/4 rounded-full bg-slate-800"></div>
         <div class="h-11 rounded-xl bg-slate-800/60"></div>

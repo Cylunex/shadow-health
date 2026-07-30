@@ -1,7 +1,9 @@
 """身体指标：upsert 录入 + 趋势图 + 最近 30 天历史（设计文档 §3.1、§3.2 展示侧、§四 /metrics）。
 
 端点：
-- GET  /metrics                    页面（表单 + 图表区 + 历史表格）
+- GET  /metrics                    页面（独立展示/录入设置 + 表单 + 图表区 + 历史表格）
+- POST /metrics/display            保存趋势/历史展示字段
+- POST /metrics/entry              保存手工录入字段
 - POST /metrics                    按 log_date upsert，只更新非空字段并 mark_manual，返回表单片段
 - GET  /fragments/metrics/form     表单片段（换日期时局部刷新）
 - GET  /fragments/metrics/chart    Chart.js 图表片段（metric × days）
@@ -73,10 +75,12 @@ _NUM_FIELDS = [f[0] for f in _FIELD_DEFS]
 # 无当日记录时预填「最近一次值」的慢变化字段
 _PREFILL_FIELDS = ("weight_kg", "body_fat_pct", "waist_cm")
 
-# 自定义显示（app_settings['metrics_hidden_fields'] = 字段名列表）：永不录入的字段
-# 可从录入表单/历史表/图表选项里隐藏。只影响展示——隐藏字段的既有数据不动，
-# 外部通道（秤/手表/Agent）照常可写。
-_HIDDEN_SETTING_KEY = "metrics_hidden_fields"
+# 展示与录入分别保存隐藏字段。旧版 metrics_hidden_fields 同时控制两者；升级时
+# 保留为展示设置，并在首次访问/修改前复制一份给录入设置，之后互不影响。
+_DISPLAY_HIDDEN_SETTING_KEY = "metrics_hidden_fields"
+_ENTRY_HIDDEN_SETTING_KEY = "metrics_entry_hidden_fields"
+# 兼容内部测试/可能的外部导入；语义明确为展示隐藏项。
+_HIDDEN_SETTING_KEY = _DISPLAY_HIDDEN_SETTING_KEY
 _TOGGLE_FIELDS: list[tuple[str, str]] = [(f[0], f[1]) for f in _FIELD_DEFS] + [
     ("morning_erection", "晨勃"),
 ]
@@ -239,14 +243,63 @@ def _apply_changed_values(row: BodyMetrics, values: dict[str, Any]) -> list[str]
     return changed
 
 
-def _hidden_fields(db: Session) -> set[str]:
-    """已配置隐藏的字段集合；未配置/格式异常按全显示处理。"""
-    value = db.execute(
-        select(AppSetting.value).where(AppSetting.key == _HIDDEN_SETTING_KEY)
-    ).scalar_one_or_none()
-    if not isinstance(value, list):
+def _setting_hidden_fields(db: Session, key: str) -> set[str] | None:
+    """读取隐藏项；缺少设置返回 None，格式异常按空集合处理。"""
+    row = db.get(AppSetting, key)
+    if row is None:
+        return None
+    if not isinstance(row.value, list):
         return set()
-    return {str(v) for v in value} & _TOGGLE_KEYS
+    return {str(v) for v in row.value} & _TOGGLE_KEYS
+
+
+def _display_hidden_fields(db: Session) -> set[str]:
+    return _setting_hidden_fields(db, _DISPLAY_HIDDEN_SETTING_KEY) or set()
+
+
+def _entry_hidden_fields(db: Session) -> set[str]:
+    hidden = _setting_hidden_fields(db, _ENTRY_HIDDEN_SETTING_KEY)
+    # 尚未完成旧配置拆分时，录入沿用旧版显示配置，避免升级后突然冒出全部字段。
+    return _display_hidden_fields(db) if hidden is None else hidden
+
+
+def _hidden_fields(db: Session) -> set[str]:
+    """旧名称兼容：仅代表趋势/历史的展示隐藏项。"""
+    return _display_hidden_fields(db)
+
+
+def _ensure_entry_setting(db: Session) -> None:
+    """把旧版共用配置复制为独立录入配置；幂等且不覆盖已拆分设置。"""
+    if db.get(AppSetting, _ENTRY_HIDDEN_SETTING_KEY) is not None:
+        return
+    old = db.get(AppSetting, _DISPLAY_HIDDEN_SETTING_KEY)
+    hidden = (
+        sorted({str(v) for v in old.value} & _TOGGLE_KEYS)
+        if old is not None and isinstance(old.value, list)
+        else []
+    )
+    # 即使旧设置不存在也写入空清单，确保首次保存展示设置后录入不会随之变化。
+    db.add(AppSetting(key=_ENTRY_HIDDEN_SETTING_KEY, value=hidden))
+    db.flush()
+
+
+def _save_hidden_setting(db: Session, key: str, visible: set[str]) -> None:
+    hidden = sorted(_TOGGLE_KEYS - (visible & _TOGGLE_KEYS))
+    row = db.get(AppSetting, key)
+    if row is None:
+        db.add(AppSetting(key=key, value=hidden))
+    else:
+        row.value = hidden
+    db.flush()
+
+
+def _preferences_context(db: Session, saved_kind: str = "") -> dict[str, Any]:
+    return {
+        "toggle_fields": _TOGGLE_FIELDS,
+        "display_hidden": _display_hidden_fields(db),
+        "entry_hidden": _entry_hidden_fields(db),
+        "settings_saved": saved_kind,
+    }
 
 
 def _visible_chart_options(hidden: set[str]) -> list[tuple[str, str]]:
@@ -293,7 +346,7 @@ def _form_context(
         "source": SOURCE_LABELS.get(weight_source, "自动") if weight_source else "手动",
         "automatic": bool(weight_source),
     }
-    hidden = _hidden_fields(db)
+    hidden = _entry_hidden_fields(db)
     return {
         "log_date": log_date.isoformat(),
         "v": v,
@@ -311,7 +364,6 @@ def _form_context(
         "errors": errors or [],
         "fmt": _fmt,
         "hidden": hidden,
-        "toggle_fields": _TOGGLE_FIELDS,
         "show_more": any(f not in hidden for f in _MORE_FIELDS),
     }
 
@@ -352,7 +404,7 @@ def _quick_context(
         "quick_saved": saved,
         "quick_unchanged": unchanged,
         "quick_errors": errors or [],
-        "quick_hidden": _hidden_fields(db),
+        "quick_hidden": _entry_hidden_fields(db),
     }
 
 
@@ -367,7 +419,7 @@ def _history_context(db: Session) -> dict[str, Any]:
         .scalars()
         .all()
     )
-    hidden = _hidden_fields(db)
+    hidden = _display_hidden_fields(db)
     # 表格列 → 依赖字段（血压两列合一格）；隐藏字段的列整列不渲染
     history_cols = [
         c for c, deps in (
@@ -663,7 +715,7 @@ def _chart_context(db: Session, metric: str, days: int) -> dict[str, Any]:
             "has_data": has_data,
             "target_label": target["label"] if target else None,
             "trend_hint": trend_hint,
-            "metric_options": _visible_chart_options(_hidden_fields(db)),
+            "metric_options": _visible_chart_options(_display_hidden_fields(db)),
             "days_options": _CHART_DAYS,
         }
     }
@@ -671,7 +723,7 @@ def _chart_context(db: Session, metric: str, days: int) -> dict[str, Any]:
 
 def _default_metric(db: Session) -> str:
     """默认图表指标：体重被隐藏时退到第一个可见选项。"""
-    options = _visible_chart_options(_hidden_fields(db))
+    options = _visible_chart_options(_display_hidden_fields(db))
     keys = {k for k, _ in options}
     if "weight" in keys:
         return "weight"
@@ -686,12 +738,14 @@ def metrics_page(
     days: int = 30,
     db: Session = Depends(get_db),
 ):
-    visible_keys = {k for k, _ in _visible_chart_options(_hidden_fields(db))}
+    _ensure_entry_setting(db)
+    visible_keys = {k for k, _ in _visible_chart_options(_display_hidden_fields(db))}
     if metric not in visible_keys:
         metric = _default_metric(db)
     if days not in _CHART_DAYS:
         days = 30
     ctx: dict[str, Any] = {}
+    ctx.update(_preferences_context(db))
     ctx.update(_form_context(db, today_local()))
     ctx.update(_chart_context(db, metric, days))
     ctx.update(_history_context(db))
@@ -700,21 +754,33 @@ def metrics_page(
 
 @router.post("/metrics/display")
 async def metrics_display_save(request: Request, db: Session = Depends(get_db)):
-    """保存自定义显示：勾选的字段可见，其余进隐藏清单；表单/历史/图表随之刷新。"""
+    """保存趋势/历史展示字段，不改变手工录入表单。"""
     form = await request.form()
     visible = {str(v) for v in form.getlist("visible")}
-    hidden = sorted(_TOGGLE_KEYS - visible)
-    row = db.get(AppSetting, _HIDDEN_SETTING_KEY)
-    if row is None:
-        db.add(AppSetting(key=_HIDDEN_SETTING_KEY, value=hidden))
-    else:
-        row.value = hidden
-    db.flush()
+    # 必须先复制旧共用值，再改展示配置，才能保证拆分后的录入配置不跟着变化。
+    _ensure_entry_setting(db)
+    _save_hidden_setting(db, _DISPLAY_HIDDEN_SETTING_KEY, visible)
     resp = templates.TemplateResponse(
-        request, "fragments/metrics_form.html", _form_context(db, today_local())
+        request,
+        "fragments/metrics_preferences.html",
+        _preferences_context(db, saved_kind="display"),
     )
-    # metrics-changed 让历史表与图表（均监听 from:body）跟着换新的列/选项
-    resp.headers["HX-Trigger"] = "metrics-changed"
+    resp.headers["HX-Trigger"] = "metrics-display-changed"
+    return resp
+
+
+@router.post("/metrics/entry")
+async def metrics_entry_save(request: Request, db: Session = Depends(get_db)):
+    """保存手工录入字段，不改变趋势与历史展示。"""
+    form = await request.form()
+    visible = {str(v) for v in form.getlist("visible")}
+    _save_hidden_setting(db, _ENTRY_HIDDEN_SETTING_KEY, visible)
+    resp = templates.TemplateResponse(
+        request,
+        "fragments/metrics_preferences.html",
+        _preferences_context(db, saved_kind="entry"),
+    )
+    resp.headers["HX-Trigger"] = "metrics-entry-changed"
     return resp
 
 
@@ -766,8 +832,8 @@ def metrics_form_fragment(request: Request, log_date: str = "", db: Session = De
 def metrics_chart_fragment(
     request: Request, metric: str = "weight", days: int = 30, db: Session = Depends(get_db)
 ):
-    # 未知指标或刚被自定义显示隐藏（metrics-changed 被动刷新还带着旧参数）：退默认
-    visible_keys = {k for k, _ in _visible_chart_options(_hidden_fields(db))}
+    # 未知指标或展示设置刚隐藏当前项（被动刷新仍带旧参数）时退回默认指标。
+    visible_keys = {k for k, _ in _visible_chart_options(_display_hidden_fields(db))}
     if metric not in visible_keys:
         metric = _default_metric(db)
     if days not in _CHART_DAYS:

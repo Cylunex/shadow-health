@@ -1,5 +1,5 @@
-{# 身体指标录入表单片段：POST /metrics 后整体替换（含成功提示）；外层 .card 由 metrics.html 提供。
-   hidden（自定义显示）里的字段不渲染——只影响录入展示，自动同步与已有数据不受影响 #}
+{# 身体指标录入表单片段：POST /metrics 后整体替换（含成功提示）；hidden 仅来自
+   独立录入设置，自动同步与已有数据不受影响。 #}
 {% macro num_input(name, label, mode='decimal', ph='') %}
 {% if name not in hidden %}
 <label class="block">

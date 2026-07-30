@@ -1,0 +1,73 @@
+{# 展示与录入字段独立配置；两个保存动作只刷新各自消费者。 #}
+<details id="metrics-preferences"
+         class="group rounded-2xl border border-slate-800/70 bg-slate-900/35"
+         {% if settings_saved %}open{% endif %}>
+  <summary class="flex min-h-[56px] cursor-pointer list-none items-center gap-3 px-4 [&::-webkit-details-marker]:hidden">
+    <span class="text-base">⚙️</span>
+    <span class="min-w-0 flex-1">
+      <span class="block text-sm font-medium text-slate-300">自定义指标</span>
+      <span class="block text-xs text-slate-500">展示和录入分别控制</span>
+    </span>
+    {% if settings_saved %}
+    <span class="badge-accent fade-in">{{ '展示' if settings_saved == 'display' else '录入' }}设置已保存</span>
+    {% endif %}
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round"
+         class="h-4 w-4 shrink-0 text-slate-500 transition-transform group-open:rotate-90">
+      <path d="m9 6 6 6-6 6"/>
+    </svg>
+  </summary>
+
+  <div class="border-t border-slate-800/70 p-3.5" x-data="{ tab: '{{ settings_saved or 'display' }}' }">
+    <div class="mb-3 grid grid-cols-2 gap-2">
+      <button type="button" @click="tab = 'display'"
+              :class="tab === 'display' && 'chip-active'"
+              class="chip min-h-[44px]">查看展示</button>
+      <button type="button" @click="tab = 'entry'"
+              :class="tab === 'entry' && 'chip-active'"
+              class="chip min-h-[44px]">手工录入</button>
+    </div>
+
+    <form x-show="tab === 'display'"
+          hx-post="{{ u('/metrics/display') }}"
+          hx-target="#metrics-preferences" hx-swap="outerHTML"
+          hx-disabled-elt="find button[type='submit']"
+          class="space-y-3">
+      <p class="text-xs text-slate-500">
+        控制趋势选项和最近 30 天表格；不会影响录入、已有数据或自动同步。
+      </p>
+      <div class="grid grid-cols-2 gap-1.5">
+        {% for field, label in toggle_fields %}
+        <label class="chip min-h-[44px] cursor-pointer justify-start gap-2">
+          <input type="checkbox" name="visible" value="{{ field }}"
+                 {% if field not in display_hidden %}checked{% endif %}
+                 class="h-4 w-4 accent-emerald-500">
+          <span class="text-xs">{{ label }}</span>
+        </label>
+        {% endfor %}
+      </div>
+      <button type="submit" class="btn-primary min-h-[44px] w-full">保存展示设置</button>
+    </form>
+
+    <form x-show="tab === 'entry'" style="display:none"
+          hx-post="{{ u('/metrics/entry') }}"
+          hx-target="#metrics-preferences" hx-swap="outerHTML"
+          hx-disabled-elt="find button[type='submit']"
+          class="space-y-3">
+      <p class="text-xs text-slate-500">
+        控制补录表单和首页快速录入；不会隐藏趋势、历史或自动采集的数据。
+      </p>
+      <div class="grid grid-cols-2 gap-1.5">
+        {% for field, label in toggle_fields %}
+        <label class="chip min-h-[44px] cursor-pointer justify-start gap-2">
+          <input type="checkbox" name="visible" value="{{ field }}"
+                 {% if field not in entry_hidden %}checked{% endif %}
+                 class="h-4 w-4 accent-emerald-500">
+          <span class="text-xs">{{ label }}</span>
+        </label>
+        {% endfor %}
+      </div>
+      <button type="submit" class="btn-primary min-h-[44px] w-full">保存录入设置</button>
+    </form>
+  </div>
+</details>

@@ -1,7 +1,7 @@
-{# 趋势图片段：metric × days 切换整体替换；保存指标后监听 metrics-changed 被动刷新；外层 .card 由 metrics.html 提供 #}
+{# 趋势图片段：metric × days 切换整体替换；数据和展示设置变化后被动刷新。 #}
 <div id="metrics-chart-frame"
      hx-get="{{ u('/fragments/metrics/chart') }}?metric={{ chart.metric }}&days={{ chart.days }}"
-     hx-trigger="metrics-changed from:body"
+     hx-trigger="metrics-changed from:body, metrics-display-changed from:body"
      hx-swap="outerHTML"
      class="space-y-3">
 

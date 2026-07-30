@@ -1,5 +1,4 @@
-{# 最近 30 天历史表格：自动值旁小徽标标来源（autofilled jsonb）；保存后被动刷新；
-   history_cols（自定义显示）不含的列整列不渲染；外层 .card 由 metrics.html 提供 #}
+{# 最近 30 天历史表格：自动值旁小徽标标来源；数据或独立展示设置变化后刷新。 #}
 {% macro badge(r, field) -%}
 {%- if field in (r.autofilled or {}) -%}
 <span class="badge ml-1 px-1.5 align-middle">{{ source_labels.get(r.autofilled[field], r.autofilled[field]) }}</span>
@@ -7,7 +6,7 @@
 {%- endmacro %}
 <div id="metrics-history"
      hx-get="{{ u('/fragments/metrics/history') }}"
-     hx-trigger="metrics-changed from:body"
+     hx-trigger="metrics-changed from:body, metrics-display-changed from:body"
      hx-swap="outerHTML"
      class="rounded-xl border border-slate-800/70 overflow-hidden">
   <div class="overflow-auto max-h-[60vh]">

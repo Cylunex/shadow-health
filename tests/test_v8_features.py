@@ -1,8 +1,8 @@
-"""V8 批次口径锁：运动类型中文化（deps.session_label）+ 指标自定义显示。
+"""V8/V9 批次口径锁：运动类型中文化 + 指标展示/录入独立配置。
 
 前半纯函数直测；后半 DB 集成（Mac 临时 PG 55433），不可达自动跳过。
-显示配置存 app_settings['metrics_hidden_fields']（按 key 定位，不占测试日期；
-fixture 收尾还原原值，不碰真实配置以外的行）。
+展示配置存 metrics_hidden_fields，录入配置存 metrics_entry_hidden_fields；
+fixture 收尾分别还原，不碰真实配置以外的行。
 """
 from __future__ import annotations
 
@@ -11,7 +11,8 @@ import pytest
 from app.deps import local_hm, session_label
 from app.routers.metrics import (
     _CHART_METRICS,
-    _HIDDEN_SETTING_KEY,
+    _DISPLAY_HIDDEN_SETTING_KEY,
+    _ENTRY_HIDDEN_SETTING_KEY,
     _TOGGLE_KEYS,
     _visible_chart_options,
 )
@@ -114,31 +115,39 @@ def db():
 
 @pytest.fixture()
 def restore_display_setting(db):
-    """记住 metrics_hidden_fields 原值，测试结束还原（含原本不存在 → 删行）。"""
+    """记住展示/录入设置原值，测试结束分别还原（含原本不存在 → 删行）。"""
     from app.models import AppSetting
 
-    row = db.get(AppSetting, _HIDDEN_SETTING_KEY)
-    original = None if row is None else row.value
+    keys = (_DISPLAY_HIDDEN_SETTING_KEY, _ENTRY_HIDDEN_SETTING_KEY)
+    originals = {}
+    for key in keys:
+        row = db.get(AppSetting, key)
+        originals[key] = None if row is None else row.value
     yield
     db.rollback()
-    row = db.get(AppSetting, _HIDDEN_SETTING_KEY)
-    if original is None:
-        if row is not None:
-            db.delete(row)
-    else:
-        if row is None:
-            db.add(AppSetting(key=_HIDDEN_SETTING_KEY, value=original))
+    for key, original in originals.items():
+        row = db.get(AppSetting, key)
+        if original is None:
+            if row is not None:
+                db.delete(row)
         else:
-            row.value = original
+            if row is None:
+                db.add(AppSetting(key=key, value=original))
+            else:
+                row.value = original
     db.commit()
 
 
-def _set_hidden(db, fields: list[str]) -> None:
+def _set_hidden(
+    db,
+    fields: list[str],
+    key: str = _DISPLAY_HIDDEN_SETTING_KEY,
+) -> None:
     from app.models import AppSetting
 
-    row = db.get(AppSetting, _HIDDEN_SETTING_KEY)
+    row = db.get(AppSetting, key)
     if row is None:
-        db.add(AppSetting(key=_HIDDEN_SETTING_KEY, value=fields))
+        db.add(AppSetting(key=key, value=fields))
     else:
         row.value = fields
     db.commit()
@@ -156,7 +165,7 @@ def test_form_context_respects_hidden(db, restore_display_setting):
     from app.routers.metrics import _MORE_FIELDS, _form_context
     from app.timeutil import today_local
 
-    _set_hidden(db, list(_MORE_FIELDS))
+    _set_hidden(db, list(_MORE_FIELDS), _ENTRY_HIDDEN_SETTING_KEY)
     ctx = _form_context(db, today_local())
     assert ctx["show_more"] is False  # 更多指标全隐藏 → 折叠区不渲染
     assert set(_MORE_FIELDS) <= ctx["hidden"]
@@ -224,23 +233,78 @@ def page(db):
 
 
 def test_metrics_display_endpoint(db, page, restore_display_setting):
-    from app.routers.metrics import _hidden_fields
+    from app.routers.metrics import _display_hidden_fields, _entry_hidden_fields
 
-    # 只勾体重与睡眠 → 其余全部进隐藏清单，响应是表单片段且带被动刷新事件
+    # 展示保存不能改变已经独立的录入设置。
+    _set_hidden(db, ["mood_score"], _ENTRY_HIDDEN_SETTING_KEY)
     resp = page.post("/metrics/display", data={"visible": ["weight_kg", "sleep_hours"]})
     assert resp.status_code == 200
-    assert resp.headers.get("HX-Trigger") == "metrics-changed"
-    assert 'name="weight_kg"' in resp.text
-    assert 'name="bp_systolic"' not in resp.text
+    assert resp.headers.get("HX-Trigger") == "metrics-display-changed"
+    assert "展示设置已保存" in resp.text
     db.expire_all()
-    assert _hidden_fields(db) == _TOGGLE_KEYS - {"weight_kg", "sleep_hours"}
+    assert _display_hidden_fields(db) == _TOGGLE_KEYS - {"weight_kg", "sleep_hours"}
+    assert _entry_hidden_fields(db) == {"mood_score"}
+
+
+def test_metrics_entry_endpoint(db, page, restore_display_setting):
+    from app.routers.metrics import _display_hidden_fields, _entry_hidden_fields
+
+    # 录入保存不能改变展示设置。
+    _set_hidden(db, ["bp_systolic", "bp_diastolic"])
+    resp = page.post("/metrics/entry", data={"visible": ["weight_kg", "sleep_hours"]})
+    assert resp.status_code == 200
+    assert resp.headers.get("HX-Trigger") == "metrics-entry-changed"
+    assert "录入设置已保存" in resp.text
+    db.expire_all()
+    assert _entry_hidden_fields(db) == _TOGGLE_KEYS - {"weight_kg", "sleep_hours"}
+    assert _display_hidden_fields(db) == {"bp_systolic", "bp_diastolic"}
+
+
+def test_old_shared_setting_is_copied_before_display_changes(
+    db, page, restore_display_setting,
+):
+    from app.models import AppSetting
+    from app.routers.metrics import _display_hidden_fields, _entry_hidden_fields
+
+    entry = db.get(AppSetting, _ENTRY_HIDDEN_SETTING_KEY)
+    if entry is not None:
+        db.delete(entry)
+        db.commit()
+    _set_hidden(db, ["mood_score"])
+
+    resp = page.post("/metrics/display", data={"visible": ["weight_kg"]})
+    assert resp.status_code == 200
+    db.expire_all()
+    assert _entry_hidden_fields(db) == {"mood_score"}
+    assert _display_hidden_fields(db) == _TOGGLE_KEYS - {"weight_kg"}
+
+
+def test_new_install_entry_defaults_stay_visible_when_display_changes(
+    db, page, restore_display_setting,
+):
+    from app.models import AppSetting
+    from app.routers.metrics import _display_hidden_fields, _entry_hidden_fields
+
+    for key in (_DISPLAY_HIDDEN_SETTING_KEY, _ENTRY_HIDDEN_SETTING_KEY):
+        row = db.get(AppSetting, key)
+        if row is not None:
+            db.delete(row)
+    db.commit()
+
+    resp = page.post("/metrics/display", data={"visible": ["weight_kg"]})
+    assert resp.status_code == 200
+    db.expire_all()
+    assert _entry_hidden_fields(db) == set()
+    assert _display_hidden_fields(db) == _TOGGLE_KEYS - {"weight_kg"}
 
 
 def test_metrics_page_renders_with_hidden(db, page, restore_display_setting):
     _set_hidden(db, ["mood_score", "morning_erection"])
     resp = page.get("/metrics")
     assert resp.status_code == 200
-    assert "自定义显示" in resp.text
+    assert "展示和录入分别控制" in resp.text
+    assert "保存展示设置" in resp.text
+    assert "保存录入设置" in resp.text
 
 
 def test_today_overview_fragment(db, page):
