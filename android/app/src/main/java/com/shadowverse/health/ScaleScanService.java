@@ -40,7 +40,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * 小米体脂秤 2（XMTZC05HM）BLE 前台监听服务。
+ * 小米体脂秤 2（XMTZC05HM）与 S400（MJTZC01YM）BLE 前台监听服务。
  *
  * 秤每次测量通过 BLE Service Data（UUID 0x181B）广播体重/阻抗/RTC 时间，
  * 无需配对。本服务常驻低功耗扫描，测量稳定后 POST 到 shadow-health 的
@@ -68,6 +68,8 @@ public class ScaleScanService extends Service {
     static final long TIMED_SCAN_MS = 3 * 60_000;
     private static final ParcelUuid UUID_BODY_COMPOSITION =
             ParcelUuid.fromString("0000181b-0000-1000-8000-00805f9b34fb");
+    private static final ParcelUuid UUID_MIBEACON =
+            ParcelUuid.fromString("0000fe95-0000-1000-8000-00805f9b34fb");
 
     /** 一次测量连播多帧：先纯体重、后带阻抗；等这个窗口再上报，避免丢阻抗。 */
     private static final long SETTLE_MS = 12_000;
@@ -85,7 +87,10 @@ public class ScaleScanService extends Service {
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     // pending/sent 只在主线程访问：BLE 回调与 IO 回调统一 handler.post 回主线程
     private final Map<String, Measurement> pending = new HashMap<>();
+    /** S400 按设备合并「体重+低频阻抗」首帧与「高频阻抗」末帧。 */
+    private final Map<String, Measurement> s400Pending = new HashMap<>();
     private final Map<String, Long> sent = new HashMap<>();
+    private long lastBindkeyWarningMs;
     private volatile boolean stopped;
     private BroadcastReceiver btStateReceiver;
 
@@ -93,14 +98,19 @@ public class ScaleScanService extends Service {
         final String key;
         final String tsIso;
         final double weightKg;
-        Integer impedance;   // 后续帧可补
+        Double impedance;   // 旧秤阻抗 / S400 50kHz 低频阻抗
+        Double impedanceHigh;
+        Integer heartRate;
+        Integer profileId;
+        String model;
         final Runnable flush;
 
-        Measurement(String key, String tsIso, double weightKg, Integer impedance, Runnable flush) {
+        Measurement(String key, String tsIso, double weightKg, Double impedance, Runnable flush) {
             this.key = key;
             this.tsIso = tsIso;
             this.weightKg = weightKg;
             this.impedance = impedance;
+            this.model = "XMTZC05HM";
             this.flush = flush;
         }
     }
@@ -217,6 +227,11 @@ public class ScaleScanService extends Service {
                 if (data != null) {
                     handler.post(() -> handleFrame(data));  // 状态统一主线程访问
                 }
+                byte[] s400 = result.getScanRecord().getServiceData(UUID_MIBEACON);
+                if (s400 != null && result.getDevice() != null) {
+                    String address = result.getDevice().getAddress();
+                    handler.post(() -> handleS400Frame(address, s400));
+                }
             }
 
             @Override
@@ -235,6 +250,9 @@ public class ScaleScanService extends Service {
             List<ScanFilter> filters = new ArrayList<>();
             filters.add(new ScanFilter.Builder()
                     .setServiceData(UUID_BODY_COMPOSITION, new byte[0])
+                    .build());
+            filters.add(new ScanFilter.Builder()
+                    .setServiceData(UUID_MIBEACON, new byte[0])
                     .build());
             scanner.startScan(filters, settings, scanCallback);
         } catch (Exception e) {
@@ -261,6 +279,84 @@ public class ScaleScanService extends Service {
 
     // ---- 帧处理（与 NAS 网关同款去抖/去重） -----------------------------------
 
+    private void handleS400Frame(String address, byte[] data) {
+        SharedPreferences prefs = getSharedPreferences("shell", MODE_PRIVATE);
+        String bindkey = prefs.getString(MainActivity.KEY_SCALE_BINDKEY, "");
+        XiaomiScaleParser.S400Frame frame =
+                XiaomiScaleParser.parseS400(data, address, bindkey);
+        if (frame == null) {
+            if (XiaomiScaleParser.isS400(data)
+                    && System.currentTimeMillis() - lastBindkeyWarningMs > 30_000) {
+                lastBindkeyWarningMs = System.currentTimeMillis();
+                updateNotification("检测到 S400：请在连接设置填写正确的 BLE bindkey");
+            }
+            return;
+        }
+        String deviceKey = address.toUpperCase(Locale.US);
+        if (frame.reset) {
+            Measurement old = s400Pending.remove(deviceKey);
+            if (old != null) {
+                handler.removeCallbacks(old.flush);
+            }
+            return;
+        }
+        cleanupSent();
+        if (frame.weightKg != null) {
+            Calendar cal = Calendar.getInstance();
+            cal.set(Calendar.SECOND, 0);
+            cal.set(Calendar.MILLISECOND, 0);
+            String tsIso = String.format(Locale.US, "%04d-%02d-%02dT%02d:%02d:%02d",
+                    cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1,
+                    cal.get(Calendar.DAY_OF_MONTH), cal.get(Calendar.HOUR_OF_DAY),
+                    cal.get(Calendar.MINUTE), cal.get(Calendar.SECOND));
+            String key = String.format(Locale.US, "%s-%d",
+                    tsIso.replaceAll("[-:]", ""), Math.round(frame.weightKg * 200));
+            if (sent.containsKey(key)) {
+                return;
+            }
+            Measurement previous = s400Pending.remove(deviceKey);
+            if (previous != null) {
+                handler.removeCallbacks(previous.flush);
+            }
+            Runnable flush = () -> flushS400(deviceKey);
+            Measurement m = new Measurement(
+                    key, tsIso, frame.weightKg, frame.impedanceLow, flush);
+            m.heartRate = frame.heartRate;
+            m.profileId = frame.profileId;
+            m.model = "MJTZC01YM/S400";
+            s400Pending.put(deviceKey, m);
+            handler.postDelayed(flush, SETTLE_MS);
+            return;
+        }
+        if (frame.impedanceHigh != null) {
+            Measurement m = s400Pending.get(deviceKey);
+            if (m != null && m.profileId != null && m.profileId == frame.profileId) {
+                m.impedanceHigh = frame.impedanceHigh;
+                handler.removeCallbacks(m.flush);
+                flushS400(deviceKey);
+            }
+        }
+    }
+
+    private void flushS400(String deviceKey) {
+        Measurement m = s400Pending.remove(deviceKey);
+        if (m == null) {
+            return;
+        }
+        pending.put(m.key, m);
+        flushMeasurement(m.key);
+    }
+
+    private void cleanupSent() {
+        long now = System.currentTimeMillis();
+        Iterator<Map.Entry<String, Long>> it = sent.entrySet().iterator();
+        while (it.hasNext()) {
+            if (now - it.next().getValue() > SENT_TTL_MS) {
+                it.remove();
+            }
+        }
+    }
+
     private void handleFrame(byte[] d) {
         if (d.length != 13) {
             return;
@@ -286,11 +382,11 @@ public class ScaleScanService extends Service {
         }
         weight = Math.round(weight * 100) / 100.0;
 
-        Integer impedance = null;
+        Double impedance = null;
         if (hasImpedance) {
             int z = ((d[10] & 0xFF) << 8) | (d[9] & 0xFF);
             if (z > 0 && z < 3000) {
-                impedance = z;
+                impedance = (double) z;
             }
         }
 
@@ -369,8 +465,16 @@ public class ScaleScanService extends Service {
             return;
         }
         final String measurementJson = String.format(Locale.US,
-                "{\"ts\":\"%s\",\"weight_kg\":%.2f,\"impedance\":%s}",
-                m.tsIso, m.weightKg, m.impedance == null ? "null" : m.impedance.toString());
+                "{\"ts\":\"%s\",\"weight_kg\":%.2f,\"impedance\":%s,"
+                        + "\"impedance_low\":%s,\"impedance_high\":%s,"
+                        + "\"heart_rate\":%s,\"profile_id\":%s,\"model\":\"%s\"}",
+                m.tsIso, m.weightKg,
+                m.impedance == null ? "null" : m.impedance.toString(),
+                m.impedance == null ? "null" : m.impedance.toString(),
+                m.impedanceHigh == null ? "null" : m.impedanceHigh.toString(),
+                m.heartRate == null ? "null" : m.heartRate.toString(),
+                m.profileId == null ? "null" : m.profileId.toString(),
+                m.model);
         io.execute(() -> {
             // 多服务器：探测可达地址（IO 线程）；全不通退回活动地址走原有三连重试
             String server = ServerConfig.resolveOrActive(ScaleScanService.this);

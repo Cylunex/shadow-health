@@ -9,6 +9,7 @@ import importlib.util
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 _GATEWAY = Path(__file__).resolve().parent.parent / "gateway" / "miscale_listener.py"
 spec = importlib.util.spec_from_file_location("miscale_listener", _GATEWAY)
@@ -97,3 +98,50 @@ def test_scale_clock_ahead_corrected():
     rtc = NOW + timedelta(hours=1)
     m = listener.parse_adv(at(rtc), now=NOW)
     assert m.ts == NOW
+
+
+# xiaomi-ble 上游 MJTZC01YM 实机加密广播向量（MiBeacon v5 / object 0x6E16）。
+S400_ADDRESS = "8C:D0:B2:F6:BE:EF"
+S400_BINDKEY = "0728974d657a4b60964c1b1677f35f7c"
+
+
+def test_s400_encrypted_weight_low_impedance_and_heart_rate():
+    raw = bytes.fromhex("4859d53b0abc078ff2348c844138e930220000009e538599")
+    f = listener.parse_s400_adv(raw, S400_ADDRESS, S400_BINDKEY)
+    assert f is not None
+    assert f.profile_id == 1
+    assert f.weight_kg == 69.9
+    assert f.impedance_low == 543.2
+    assert f.heart_rate == 92
+    assert f.impedance_high is None and not f.reset
+
+
+def test_s400_encrypted_final_high_impedance_packet():
+    raw = bytes.fromhex("4859d53b0bd6ef0b25db72785e7e2f46d6000000d8642df6")
+    f = listener.parse_s400_adv(raw, S400_ADDRESS, S400_BINDKEY)
+    assert f is not None
+    assert f.profile_id == 1
+    assert f.weight_kg is None and f.impedance_low is None
+    assert f.impedance_high == 497.6
+
+
+def test_s400_rejects_missing_or_wrong_bindkey():
+    raw = bytes.fromhex("4859d53b0abc078ff2348c844138e930220000009e538599")
+    assert listener.parse_s400_adv(raw, S400_ADDRESS, None) is None
+    assert listener.parse_s400_adv(raw, S400_ADDRESS, "00" * 16) is None
+
+
+def test_s400_gateway_merges_two_packets_before_flush():
+    first = bytes.fromhex("4859d53b0abc078ff2348c844138e930220000009e538599")
+    final = bytes.fromhex("4859d53b0bd6ef0b25db72785e7e2f46d6000000d8642df6")
+    gw = listener.Gateway("http://example.invalid", "token", None, bindkey=S400_BINDKEY)
+    device = SimpleNamespace(address=S400_ADDRESS)
+    gw.on_adv(device, SimpleNamespace(service_data={listener.UUID_MIBEACON: first}))
+    assert len(gw.s400_pending) == 1 and not gw.pending
+    m = gw.s400_pending[S400_ADDRESS][1]
+    assert m.weight_kg == 69.9 and m.impedance == 543.2
+    assert m.impedance_high is None and m.heart_rate == 92
+
+    gw.on_adv(device, SimpleNamespace(service_data={listener.UUID_MIBEACON: final}))
+    m = gw.s400_pending[S400_ADDRESS][1]
+    assert m.impedance_high == 497.6

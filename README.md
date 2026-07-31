@@ -2,7 +2,7 @@
 
 单用户、局域网自用的健康/饮食/运动管理 Web 应用。（详细设计文档在本地维护，不随仓库分发。）
 
-四大模块：**饮食记录+营养分析 · 运动训练管理 · 身体指标追踪 · 养生任务打卡**，外加三星健康历史数据一次性导入、Health Connect 增量同步、小米体脂秤 2 蓝牙直连（上秤即记录，见 [gateway/README.md](gateway/README.md)）。
+四大模块：**饮食记录+营养分析 · 运动训练管理 · 身体指标追踪 · 养生任务打卡**，外加三星健康历史数据一次性导入、Health Connect 增量同步、小米体脂秤 2 / S400 蓝牙直连（上秤即记录，见 [S400 适配说明](docs/miscale-s400.md)）。
 
 亮点：餐次拍照 + **AI 识别热量**（Claude Vision）· 自定义食物库 · 身体围度追踪 · 图表目标参考线 · 睡眠分期堆叠图 · 习惯/训练打卡热力图 · 训练周负荷（sRPE）· HIIT/组间计时器 · 累计成就 · 每日提醒 · 报告中心（日报/周报/月报 + 手写复盘）· AI 分析与**能动手记录的 AI 问答**（Claude/OpenAI 双通道 tool use）· PWA 离线可用。
 
@@ -75,4 +75,4 @@ slim 镜像无系统 zoneinfo，`ZoneInfo("Asia/Shanghai")` 依赖它），无�
 | Health Connect webhook | ⚠️ 接收端保留 | `POST /api/ingest/health_connect`；实测国行三星健康不向 HC 写数据，通道已被上行直读取代 |
 | Keep 文件导入 | ✅ CLI + Web 上传 | `app/importers/keep_file.py`，支持 .7z / .zip（AES 密码）/ .xlsx，跨源去重；.fit 为占位 stub 只清点不导入 |
 | Keep API 同步 | ⏳ 暂缓 | 看过 Keep xlsx 内容后再决定是否值得做 |
-| 小米体脂秤 2 BLE | ✅ 双监听端 | `POST /api/ingest/miscale`；NAS 网关（`gateway/`，compose 叠加启动）+ Android 壳内置监听，服务端按秤时间戳去重、阻抗算体成分，见 [gateway/README.md](gateway/README.md) |
+| 小米体脂秤 2 / S400 BLE | ✅ 双监听端 | `POST /api/ingest/miscale`；NAS 网关 + Android 壳双监听，S400 支持 MiBeacon v5 加密、双频阻抗与心率原始值留档，见 [docs/miscale-s400.md](docs/miscale-s400.md) |

@@ -650,7 +650,9 @@ def _miscale_profile(db: Session) -> tuple[str | None, float | None, float | Non
 async def ingest_miscale(request: Request, db: Session = Depends(get_db)) -> Response:
     """体脂秤测量接收：手机/NAS 监听器解析 BLE 广播后 POST 解析结果。
 
-    请求体：{"measurements":[{"ts": ISO8601|epoch, "weight_kg": float, "impedance": int?}]}
+    请求体：{"measurements":[{"ts": ISO8601|epoch, "weight_kg": float,
+      "impedance": number?, "impedance_low": number?, "impedance_high": number?,
+      "heart_rate": int?, "profile_id": int?, "model": str?}]}
     （或单个测量对象）。去重键 = 秤 RTC 时间戳 + 体重，两个监听器同时上报只记一条。
     体成分按档案（性别/生日/身高）计算；档案不全只记体重。响应恒 200（防重发风暴）。
     """
@@ -686,13 +688,28 @@ async def ingest_miscale(request: Request, db: Session = Depends(get_db)) -> Res
         # 秤 RTC 掉电/未对时的兜底：时间明显不对就用服务器当前时间
         if ts is None or ts.year < 2015 or ts > now + timedelta(days=1):
             ts = now
-        z = _qty(item.get("impedance"))
+        # S400 的 50kHz 低频阻抗用于现有体成分公式；旧客户端仍只发 impedance。
+        z = _qty(item.get("impedance_low"))
+        if z is None:
+            z = _qty(item.get("impedance"))
         impedance = float(z) if z is not None and 0 < z < 3000 else None
+        zh = _qty(item.get("impedance_high"))
+        impedance_high = float(zh) if zh is not None and 0 < zh < 3000 else None
+        hr = _qty(item.get("heart_rate"))
+        heart_rate = round(float(hr)) if hr is not None and 30 <= hr <= 240 else None
+        profile_raw = item.get("profile_id")
+        profile_id = profile_raw if isinstance(profile_raw, int) and 0 <= profile_raw <= 255 else None
+        model_raw = item.get("model")
+        model = model_raw.strip()[:64] if isinstance(model_raw, str) and model_raw.strip() else None
         # 秤 RTC 失效时监听器/服务端都以"当前时间取整到分钟"兜底，双端 key 才能对齐
         if ts == now:
             ts = now.replace(second=0, microsecond=0)
         ext_id = f"{ts.astimezone(LOCAL_TZ):%Y%m%dT%H%M%S}-{round(w * 200)}"
-        parsed[ext_id] = {"ts": ts, "weight": round(float(w), 2), "impedance": impedance}
+        parsed[ext_id] = {
+            "ts": ts, "weight": round(float(w), 2), "impedance": impedance,
+            "impedance_high": impedance_high, "heart_rate": heart_rate,
+            "profile_id": profile_id, "model": model,
+        }
 
     received = len(records)
     if not parsed:
@@ -705,7 +722,12 @@ async def ingest_miscale(request: Request, db: Session = Depends(get_db)) -> Res
             "source": MISCALE_SOURCE,
             "record_type": "measurement",
             "external_id": ext_id,
-            "raw": {"ts": m["ts"].isoformat(), "weight_kg": m["weight"], "impedance": m["impedance"]},
+            "raw": {
+                "ts": m["ts"].isoformat(), "weight_kg": m["weight"],
+                "impedance": m["impedance"], "impedance_low": m["impedance"],
+                "impedance_high": m["impedance_high"], "heart_rate": m["heart_rate"],
+                "profile_id": m["profile_id"], "model": m["model"],
+            },
             "parse_status": "pending",
             "parse_version": 0,
             "last_seen_at": now,

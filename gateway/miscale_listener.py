@@ -15,6 +15,7 @@
   SHADOW_URL    服务端地址，如 http://127.0.0.1:8080
   INGEST_TOKEN  与服务端 .env 一致的 Bearer token
   MISCALE_MAC   可选，秤的 MAC 过滤（米家 App 设备信息里能查到）
+  MISCALE_BINDKEY 可选，S400 的 32 位十六进制 BLE key（旧秤不需要）
   QUEUE_FILE    可选，上报失败的本地持久队列（默认 ./miscale_queue.json；
                 compose 里挂 /data 卷）——服务端重启窗口内的测量不再丢失
   LOG_LEVEL     可选，默认 INFO
@@ -55,6 +56,8 @@ def _now_local() -> datetime:
 log = logging.getLogger("miscale")
 
 UUID_BODY_COMPOSITION = "0000181b-0000-1000-8000-00805f9b34fb"
+UUID_MIBEACON = "0000fe95-0000-1000-8000-00805f9b34fb"
+S400_PRODUCT_IDS = {0x30D9, 0x3BD5, 0x48CF}
 
 # 一次测量会连播多帧：稳定后先出纯体重帧、随后出带阻抗帧。
 # 缓冲 SETTLE_S 秒（期间优先保留带阻抗的帧）再上报，避免把阻抗丢掉。
@@ -76,11 +79,124 @@ def _round_half_up(x: float) -> int:
 class Measurement:
     ts: datetime          # 秤 RTC 时间（本地钟）
     weight_kg: float
-    impedance: int | None
+    impedance: float | None
+    impedance_high: float | None = None
+    heart_rate: int | None = None
+    profile_id: int | None = None
+    model: str = "XMTZC05HM"
 
     @property
     def key(self) -> str:
         return f"{self.ts:%Y%m%dT%H%M%S}-{_round_half_up(self.weight_kg * 200)}"
+
+
+@dataclass
+class S400Frame:
+    """S400 的一帧测量对象；完整测量由带体重帧和末尾高频阻抗帧组成。"""
+
+    profile_id: int
+    weight_kg: float | None
+    impedance_low: float | None
+    impedance_high: float | None
+    heart_rate: int | None
+    reset: bool = False
+
+
+def _mac_bytes(address: str) -> bytes | None:
+    try:
+        raw = bytes.fromhex(address.replace(":", ""))
+    except ValueError:
+        return None
+    return raw if len(raw) == 6 else None
+
+
+def parse_s400_adv(data: bytes, address: str, bindkey: str | None) -> S400Frame | None:
+    """解析 S400 (MJTZC01YM) 的 0xFE95 MiBeacon 广播。
+
+    已绑定的 S400 使用 MiBeacon v5 AES-CCM 加密；bindkey 是米家设备的
+    16 字节 BLE key（32 位十六进制字符串）。协议实现与 xiaomi-ble 的
+    0x6E16 data object 保持一致。
+    """
+    if len(data) < 8:
+        return None
+    frame_control = int.from_bytes(data[0:2], "little")
+    if frame_control >> 12 < 2 or frame_control & (1 << 7):
+        return None
+    product_id = int.from_bytes(data[2:4], "little")
+    if product_id not in S400_PRODUCT_IDS or not (frame_control & (1 << 6)):
+        return None
+
+    i = 5
+    source_mac = _mac_bytes(address)
+    if frame_control & (1 << 4):
+        if len(data) < i + 6:
+            return None
+        xiaomi_mac = data[i:i + 6][::-1]
+        i += 6
+    else:
+        xiaomi_mac = source_mac
+    if xiaomi_mac is None:
+        return None
+    if frame_control & (1 << 5):
+        if len(data) <= i:
+            return None
+        capability = data[i]
+        i += 1
+        if capability & 0x20:
+            i += 1
+            if len(data) < i:
+                return None
+
+    if frame_control & (1 << 3):
+        key = (bindkey or "").strip()
+        if len(key) != 32:
+            return None
+        try:
+            key_bytes = bytes.fromhex(key)
+        except ValueError:
+            return None
+        if len(data) < i + 9:
+            return None
+        try:
+            from Cryptodome.Cipher import AES
+
+            nonce = xiaomi_mac[::-1] + data[2:5] + data[-7:-4]
+            cipher = AES.new(key_bytes, AES.MODE_CCM, nonce=nonce, mac_len=4)
+            cipher.update(b"\x11")
+            payload = cipher.decrypt_and_verify(data[i:-7], data[-4:])
+        except (ImportError, ValueError):
+            return None
+    else:
+        payload = data[i:]
+
+    offset = 0
+    while offset + 3 <= len(payload):
+        obj_type = int.from_bytes(payload[offset:offset + 2], "little")
+        obj_len = payload[offset + 2]
+        end = offset + 3 + obj_len
+        if end > len(payload):
+            return None
+        if obj_type == 0x6E16 and obj_len == 9:
+            obj = payload[offset + 3:end]
+            profile_id = obj[0]
+            packed = int.from_bytes(obj[1:5], "little")
+            mass = packed & 0x7FF
+            heart = (packed >> 11) & 0x7F
+            impedance = packed >> 18
+            if mass == 0 and heart == 0 and impedance == 0:
+                return S400Frame(profile_id, None, None, None, None, reset=True)
+            heart_rate = heart + 50 if 0 < heart < 127 else None
+            z = impedance / 10.0 if impedance else None
+            if mass:
+                weight = mass / 10.0
+                if not (10 <= weight <= 300):
+                    return None
+                return S400Frame(profile_id, weight, z, None, heart_rate)
+            if heart == 0 and z is not None:
+                return S400Frame(profile_id, None, None, z, None)
+            return None
+        offset = end
+    return None
 
 
 def parse_adv(data: bytes, now: datetime | None = None) -> Measurement | None:
@@ -140,9 +256,7 @@ def parse_adv(data: bytes, now: datetime | None = None) -> Measurement | None:
 
 
 def post_measurement(url: str, token: str, m: Measurement) -> bool:
-    payload = json.dumps(
-        {"measurements": [{"ts": m.ts.isoformat(), "weight_kg": m.weight_kg, "impedance": m.impedance}]}
-    ).encode("utf-8")
+    payload = json.dumps({"measurements": [_measurement_dict(m)]}).encode("utf-8")
     req = urllib.request.Request(
         url.rstrip("/") + "/api/ingest/miscale",
         data=payload,
@@ -153,7 +267,11 @@ def post_measurement(url: str, token: str, m: Measurement) -> bool:
         try:
             with urllib.request.urlopen(req, timeout=10) as resp:
                 body = resp.read().decode("utf-8", "replace")
-                log.info("已上报 %.2fkg z=%s → %s %s", m.weight_kg, m.impedance, resp.status, body)
+                log.info(
+                    "已上报 %.2fkg low=%s high=%s hr=%s → %s %s",
+                    m.weight_kg, m.impedance, m.impedance_high, m.heart_rate,
+                    resp.status, body,
+                )
                 return True
         except (urllib.error.URLError, OSError) as exc:
             log.warning("上报失败（第 %d 次）：%s", attempt, exc)
@@ -161,14 +279,29 @@ def post_measurement(url: str, token: str, m: Measurement) -> bool:
     return False
 
 
+def _measurement_dict(m: Measurement) -> dict:
+    return {
+        "ts": m.ts.isoformat(),
+        "weight_kg": m.weight_kg,
+        "impedance": m.impedance,  # 旧字段继续传低频值，兼容现有服务端/历史客户端
+        "impedance_low": m.impedance,
+        "impedance_high": m.impedance_high,
+        "heart_rate": m.heart_rate,
+        "profile_id": m.profile_id,
+        "model": m.model,
+    }
+
+
 class Gateway:
     def __init__(self, url: str, token: str, mac_filter: str | None,
-                 queue_path: str | None = None) -> None:
+                 queue_path: str | None = None, bindkey: str | None = None) -> None:
         self.url = url
         self.token = token
         self.mac_filter = mac_filter.upper() if mac_filter else None
         self.pending: dict[str, tuple[float, Measurement]] = {}  # key -> (首见时刻, 最优帧)
+        self.s400_pending: dict[str, tuple[float, Measurement]] = {}
         self.sent: dict[str, float] = {}
+        self.bindkey = (bindkey or "").strip()
         self.queue_path = queue_path
         self._last_drain = 0.0
 
@@ -196,7 +329,7 @@ class Gateway:
 
     def enqueue(self, m: Measurement) -> None:
         items = self._load_queue()
-        items.append({"ts": m.ts.isoformat(), "weight_kg": m.weight_kg, "impedance": m.impedance})
+        items.append(_measurement_dict(m))
         self._save_queue(items)
         log.warning("上报失败已入本地队列（%d 条待补发）", len(items))
 
@@ -211,6 +344,10 @@ class Gateway:
                     ts=datetime.fromisoformat(str(it["ts"])),
                     weight_kg=float(it["weight_kg"]),
                     impedance=it.get("impedance"),
+                    impedance_high=it.get("impedance_high"),
+                    heart_rate=it.get("heart_rate"),
+                    profile_id=it.get("profile_id"),
+                    model=it.get("model", "XMTZC05HM"),
                 )
             except (KeyError, TypeError, ValueError):
                 continue  # 坏条目直接丢弃
@@ -224,14 +361,42 @@ class Gateway:
     def on_adv(self, device, adv) -> None:
         if self.mac_filter and device.address.upper() != self.mac_filter:
             return
+        now = time.monotonic()
+        self.sent = {k: t for k, t in self.sent.items() if now - t < SENT_TTL_S}
+
+        s400_data = adv.service_data.get(UUID_MIBEACON)
+        if s400_data:
+            frame = parse_s400_adv(bytes(s400_data), device.address, self.bindkey)
+            if frame is not None:
+                address = device.address.upper()
+                if frame.reset:
+                    self.s400_pending.pop(address, None)
+                    return
+                if frame.weight_kg is not None:
+                    # S400 不广播 RTC。两监听端统一取接收时间的分钟，服务端仍可去重。
+                    ts = _now_local().replace(second=0, microsecond=0)
+                    m = Measurement(
+                        ts=ts,
+                        weight_kg=frame.weight_kg,
+                        impedance=frame.impedance_low,
+                        heart_rate=frame.heart_rate,
+                        profile_id=frame.profile_id,
+                        model="MJTZC01YM/S400",
+                    )
+                    first_seen = self.s400_pending.get(address, (now, m))[0]
+                    self.s400_pending[address] = (first_seen, m)
+                elif frame.impedance_high is not None:
+                    pending = self.s400_pending.get(address)
+                    if pending is not None and pending[1].profile_id == frame.profile_id:
+                        pending[1].impedance_high = frame.impedance_high
+                return
+
         data = adv.service_data.get(UUID_BODY_COMPOSITION)
         if not data:
             return
         m = parse_adv(bytes(data))
         if m is None:
             return
-        now = time.monotonic()
-        self.sent = {k: t for k, t in self.sent.items() if now - t < SENT_TTL_S}
         if m.key in self.sent:
             return
         first_seen, best = self.pending.get(m.key, (now, m))
@@ -245,9 +410,15 @@ class Gateway:
         while True:
             await asyncio.sleep(1)
             now = time.monotonic()
+            for address, (first_seen, m) in list(self.s400_pending.items()):
+                # 高频末帧到达即可提交；穿袜子或丢末帧时最多等一个窗口后仍保住体重。
+                if m.impedance_high is not None or now - first_seen >= SETTLE_S:
+                    del self.s400_pending[address]
+                    if m.key not in self.sent:
+                        self.pending[m.key] = (now - SETTLE_S, m)
             for key, (first_seen, m) in list(self.pending.items()):
-                # 已拿到阻抗，或等待窗口结束（光脚失败/穿袜子只有体重）→ 上报
-                if m.impedance is not None or now - first_seen >= SETTLE_S:
+                # 旧秤拿到阻抗即可提交；S400 已在双帧缓冲完成后放进来。
+                if m.model.startswith("MJTZC01YM") or m.impedance is not None or now - first_seen >= SETTLE_S:
                     del self.pending[key]
                     self.sent[key] = now
                     ok = await loop.run_in_executor(None, post_measurement, self.url, self.token, m)
@@ -278,8 +449,13 @@ async def main() -> None:
     gw = Gateway(
         url, token, os.environ.get("MISCALE_MAC"),
         queue_path=os.environ.get("QUEUE_FILE", "miscale_queue.json").strip() or None,
+        bindkey=os.environ.get("MISCALE_BINDKEY"),
     )
-    log.info("开始监听体脂秤广播（0x181B）%s", f"，MAC 过滤 {gw.mac_filter}" if gw.mac_filter else "")
+    log.info(
+        "开始监听体脂秤广播（旧秤 0x181B + S400 0xFE95）%s%s",
+        f"，MAC 过滤 {gw.mac_filter}" if gw.mac_filter else "",
+        "，S400 bindkey 已配置" if gw.bindkey else "",
+    )
 
     flusher = asyncio.create_task(gw.flush_loop())
     try:

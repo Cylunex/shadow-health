@@ -67,6 +67,7 @@ public class MainActivity extends Activity {
     private static final String KEY_SERVER_URL = ServerConfig.KEY_ACTIVE;
     private static final String KEY_INGEST_TOKEN = "ingest_token";
     private static final String KEY_SCALE_SCAN = "scale_scan_enabled";
+    static final String KEY_SCALE_BINDKEY = "scale_bindkey";
     private static final String DEFAULT_SERVER_URL = ServerConfig.DEFAULT_SERVER_URL;
     private static final String LOCAL_PAGE_URL = "file:///android_asset/offline.html";
     private static final int DARK_BG = Color.parseColor("#0f172a");
@@ -384,6 +385,12 @@ public class MainActivity extends Activity {
         scanBox.setText("后台监听体脂秤（常驻通知）");
         scanBox.setChecked(prefs.getBoolean(KEY_SCALE_SCAN, false));
 
+        final EditText bindkeyInput = new EditText(this);
+        bindkeyInput.setInputType(InputType.TYPE_CLASS_TEXT
+                | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        bindkeyInput.setHint("小米 S400 BLE bindkey（32 位十六进制；旧秤留空）");
+        bindkeyInput.setText(prefs.getString(KEY_SCALE_BINDKEY, ""));
+
         final CheckBox samsungBox = new CheckBox(this);
         samsungBox.setText("同步三星健康数据（手表）");
         samsungBox.setChecked(prefs.getBoolean(SamsungSync.PREF_ENABLED, false));
@@ -406,6 +413,7 @@ public class MainActivity extends Activity {
         col.addView(input);
         col.addView(tokenInput);
         col.addView(scanBox);
+        col.addView(bindkeyInput);
         col.addView(samsungBox);
         col.addView(reminderBox);
         col.addView(hint);
@@ -426,12 +434,19 @@ public class MainActivity extends Activity {
                         urls.add(DEFAULT_SERVER_URL);
                     }
                     boolean scanOn = scanBox.isChecked();
+                    String scaleBindkey = bindkeyInput.getText().toString().trim().toLowerCase(Locale.US);
+                    if (!scaleBindkey.isEmpty() && !scaleBindkey.matches("[0-9a-f]{32}")) {
+                        Toast.makeText(this, "S400 bindkey 格式错误，需 32 位十六进制",
+                                Toast.LENGTH_LONG).show();
+                        scaleBindkey = "";
+                    }
                     boolean samsungOn = samsungBox.isChecked();
                     boolean samsungWas = prefs.getBoolean(SamsungSync.PREF_ENABLED, false);
                     boolean reminderOn = reminderBox.isChecked();
                     ServerConfig.save(this, urls);
                     prefs.edit()
                             .putString(KEY_INGEST_TOKEN, tokenInput.getText().toString().trim())
+                            .putString(KEY_SCALE_BINDKEY, scaleBindkey)
                             .putBoolean(KEY_SCALE_SCAN, scanOn)
                             .putBoolean(SamsungSync.PREF_ENABLED, samsungOn)
                             .putBoolean(Reminders.PREF_ENABLED, reminderOn)

@@ -14,8 +14,8 @@ android {
         // 1.x 手工流水线时代为 26
         minSdk = 29
         targetSdk = 34
-        versionCode = 2
-        versionName = "2.0"
+        versionCode = 3
+        versionName = "2.1"
     }
 
     buildTypes {
@@ -47,4 +47,7 @@ dependencies {
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
     implementation("androidx.work:work-runtime-ktx:2.9.1")  // 周期同步
+    implementation("org.bouncycastle:bcprov-jdk18on:1.84")  // S400 MiBeacon v5 AES-CCM
+
+    testImplementation("junit:junit:4.13.2")
 }
