@@ -3,44 +3,57 @@
      hx-get="{{ u('/fragments/metrics/chart') }}?metric={{ chart.metric }}&days={{ chart.days }}"
      hx-trigger="metrics-changed from:body, metrics-display-changed from:body"
      hx-swap="outerHTML"
-     class="space-y-3">
+     class="min-w-0 space-y-4">
 
-  <div class="flex gap-2 overflow-x-auto scrollbar-none -mx-4 px-4 pb-1">
-    {% for key, label in chart.metric_options %}
-    <button type="button"
-            hx-get="{{ u('/fragments/metrics/chart') }}?metric={{ key }}&days={{ chart.days }}"
-            hx-target="#metrics-chart-frame" hx-swap="outerHTML"
-            hx-disabled-elt="this"
-            class="chip shrink-0 min-h-[44px] whitespace-nowrap {% if key == chart.metric %}chip-active{% endif %}">
+  <div class="section-heading px-0">
+    <div><h2>{{ chart.metric_label }}趋势</h2><p>最近 {{ chart.days }} 天 · 点击下面的指标切换</p></div>
+    {% if chart.target_label %}<span class="badge-accent hidden sm:inline-flex">{{ chart.target_label }}</span>{% endif %}
+  </div>
+
+  <div class="grid grid-cols-3 gap-2 sm:grid-cols-5">
+    {% for key, label in chart.primary_options %}
+    <a href="{{ u('/metrics') }}?metric={{ key }}&days={{ chart.days }}"
+       class="chip min-h-[42px] px-2 text-xs {% if key == chart.metric %}chip-active{% endif %}">
       {{ label }}
-    </button>
+    </a>
     {% endfor %}
   </div>
 
-  <div class="flex gap-2">
+  {% if chart.more_options %}
+  <label class="block">
+    <span class="sr-only">更多趋势指标</span>
+    <select class="field min-h-[42px] text-sm text-slate-300"
+            onchange="if(this.value) location.href=this.value">
+      <option value="" {% if not chart.selected_in_more %}selected{% endif %}>更多指标…</option>
+      {% for key, label in chart.more_options %}
+      <option value="{{ u('/metrics') }}?metric={{ key }}&days={{ chart.days }}" {% if key == chart.metric %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  {% endif %}
+
+  <div class="segmented" aria-label="趋势时间范围">
     {% for d in chart.days_options %}
-    <button type="button"
-            hx-get="{{ u('/fragments/metrics/chart') }}?metric={{ chart.metric }}&days={{ d }}"
-            hx-target="#metrics-chart-frame" hx-swap="outerHTML"
-            hx-disabled-elt="this"
-            class="chip flex-1 min-h-[44px] tabular-nums {% if d == chart.days %}chip-active{% endif %}">
+    <a href="{{ u('/metrics') }}?metric={{ chart.metric }}&days={{ d }}"
+       class="tabular-nums {% if d == chart.days %}active{% endif %}">
       {{ d }} 天
-    </button>
+    </a>
     {% endfor %}
   </div>
 
   {% if not chart.has_data %}
-  <div class="fade-in flex flex-col items-center gap-1.5 py-3 text-center">
-    <svg class="w-9 h-9 text-slate-700" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+  <div class="fade-in flex min-h-52 flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-slate-800/80 bg-slate-950/20 px-4 py-8 text-center">
+    <svg class="h-10 w-10 text-slate-700" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
       <path d="M3 3v16a2 2 0 0 0 2 2h16"/>
       <path d="M7 15l4-5 3 3 5-7" stroke-dasharray="2.5 3"/>
     </svg>
-    <p class="text-sm text-slate-500">该区间暂无数据</p>
+    <p class="text-sm font-medium text-slate-400">最近 {{ chart.days }} 天没有{{ chart.metric_label }}数据</p>
+    <p class="max-w-sm text-xs leading-relaxed text-slate-600">自动同步到达后会在这里形成趋势；需要修正历史数据时再手工补录。</p>
+    <a href="#metrics-entry" class="btn-ghost mt-2 min-h-[40px] px-3 text-xs">补录一条</a>
   </div>
-  {% endif %}
-
-  <div class="relative h-56 sm:h-64">
-    <canvas id="metrics-chart-canvas"></canvas>
+  {% else %}
+  <div class="relative h-56 min-w-0 overflow-hidden sm:h-64">
+    <canvas id="metrics-chart-canvas" class="!max-w-full"></canvas>
   </div>
   <p class="text-xs text-slate-500 text-center">● 手动录入 · △ 自动同步{% if chart.target_label %} · <span class="text-amber-400/90">┄ {{ chart.target_label }}</span>{% endif %}</p>
   {% if chart.trend_hint %}
@@ -189,4 +202,5 @@
     }, 120);
   })();
   </script>
+  {% endif %}
 </div>

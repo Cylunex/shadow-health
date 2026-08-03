@@ -1,53 +1,100 @@
 {% extends "base.html" %}
-{% block title %}身体指标 · shadow-health{% endblock %}
+{% block title %}身体趋势 · shadow-health{% endblock %}
 {% block page_title %}身体趋势{% endblock %}
 {% block content %}
 <div class="space-y-5">
-  <div class="section-heading">
-    <div><p class="eyebrow">BODY TRENDS</p><h2 class="mt-1">身体趋势</h2><p>自动数据优先，手工只用于补录和修正</p></div>
-    <a href="{{ u('/scale') }}" class="btn-ghost hidden sm:inline-flex">体脂秤状态</a>
+  <div class="flex flex-wrap items-center justify-between gap-3 px-1">
+    <div>
+      <p class="eyebrow">BODY TRENDS</p>
+      <p class="mt-1 text-sm text-slate-400">先看变化，再按需补录；自动同步的数据不会重复写入。</p>
+    </div>
+    <div class="flex gap-2">
+      <a href="{{ u('/scale') }}" class="btn-ghost min-h-[40px] px-3 text-xs">体脂秤状态</a>
+      <a href="#metrics-entry" class="btn-primary min-h-[40px] px-3 text-xs">＋ 补录指标</a>
+    </div>
   </div>
 
-  <div class="grid items-start gap-5 xl:grid-cols-[17rem_minmax(0,1fr)]">
-    <aside class="order-2 space-y-4 xl:order-1 xl:sticky xl:top-24">
+  <section aria-labelledby="metrics-snapshot-title">
+    <div class="section-heading mb-3">
+      <div><h2 id="metrics-snapshot-title">当前状态</h2><p>各指标取最近一次有效记录，不强求来自同一天</p></div>
+    </div>
+    <div class="grid grid-cols-2 gap-2.5 lg:grid-cols-4">
+      {% for item in snapshot_items %}
+      <a href="{{ u('/metrics') }}?metric={{ item.metric }}&days={{ chart.days }}"
+         class="app-panel min-w-0 p-3.5 transition hover:-translate-y-0.5 hover:border-violet-500/25 sm:p-4">
+        <div class="flex items-center justify-between gap-2">
+          <span class="metric-label">{{ item.label }}</span>
+          <span class="text-slate-700">›</span>
+        </div>
+        {% if item.value is not none %}
+        <p class="mt-2 truncate text-2xl font-semibold tracking-tight text-slate-50 tabular-nums">
+          {{ item.value }}<span class="ml-1 text-[10px] font-normal text-slate-500">{{ item.unit }}</span>
+        </p>
+        <div class="mt-2 flex min-w-0 items-center justify-between gap-2 text-[10px]">
+          <span class="truncate text-slate-600">{{ item.date.strftime('%m-%d') }} · {{ item.source }}</span>
+          {% if item.delta is not none %}
+          <span class="shrink-0 {{ 'text-violet-300' if item.delta > 0 else ('text-cyan-300' if item.delta < 0 else 'text-slate-600') }}">
+            {{ '↑' if item.delta > 0 else ('↓' if item.delta < 0 else '·') }} {{ item.delta | abs }}
+          </span>
+          {% endif %}
+        </div>
+        {% else %}
+        <p class="mt-3 text-lg font-medium text-slate-600">暂无数据</p>
+        <p class="mt-2 text-[10px] text-slate-700">等待同步或手工补录</p>
+        {% endif %}
+      </a>
+      {% endfor %}
+    </div>
+  </section>
+
+  <div class="grid min-w-0 items-start gap-5 xl:grid-cols-[minmax(0,1fr)_18rem]">
+    <div class="min-w-0 space-y-5">
+      <section class="card min-w-0 overflow-hidden">
+        {% include "fragments/metrics_chart.html" %}
+      </section>
+
+      <section class="card min-w-0">
+        <div class="section-heading mb-4 px-0">
+          <div><h2>最近记录</h2><p>自动与手工来源分别标记，表格可以横向滑动</p></div>
+          <a href="#metrics-entry" class="text-xs text-violet-300">补录 ›</a>
+        </div>
+        {% include "fragments/metrics_history.html" %}
+      </section>
+    </div>
+
+    <aside id="metrics-tools" class="min-w-0 space-y-3 xl:sticky xl:top-24">
+      <div class="section-heading px-1"><div><h2>数据工具</h2><p>低频操作集中放在这里</p></div></div>
+
+      <details id="metrics-entry" class="group app-panel scroll-mt-24">
+        <summary class="flex min-h-[64px] cursor-pointer list-none items-center gap-3 px-4 [&::-webkit-details-marker]:hidden">
+          <span class="icon-tile">＋</span>
+          <span class="min-w-0 flex-1">
+            <span class="block text-sm font-semibold text-slate-200">补录或修正</span>
+            <span class="mt-0.5 block text-xs text-slate-500">自动体重不会重复提交</span>
+          </span>
+          <span class="text-slate-600 transition-transform group-open:rotate-90">›</span>
+        </summary>
+        <section class="border-t border-slate-800/60 p-4">
+          <h2 class="card-title">记录指标</h2>
+          <div id="metrics-entry-form-frame"
+               hx-get="{{ u('/fragments/metrics/form') }}"
+               hx-trigger="metrics-entry-changed from:body"
+               hx-target="this" hx-swap="innerHTML">
+            {% include "fragments/metrics_form.html" %}
+          </div>
+        </section>
+      </details>
+
       {% include "fragments/metrics_preferences.html" %}
 
-  <details id="metrics-entry" class="group app-panel">
-    <summary class="card flex min-h-[64px] cursor-pointer list-none items-center gap-3 [&::-webkit-details-marker]:hidden">
-      <span class="icon-tile">＋</span>
-      <span class="min-w-0 flex-1">
-        <span class="block text-sm font-semibold text-slate-200">需要时补录或修正</span>
-        <span class="mt-0.5 block text-xs text-slate-500">自动体重和手表数据不会重复提交</span>
-      </span>
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-           stroke-linecap="round" stroke-linejoin="round"
-           class="h-5 w-5 shrink-0 text-slate-500 transition-transform group-open:rotate-90">
-        <path d="m9 6 6 6-6 6"/>
-      </svg>
-    </summary>
-  <section class="border-t border-slate-800/60 p-4">
-    <h2 class="card-title">记录指标</h2>
-    <div id="metrics-entry-form-frame"
-         hx-get="{{ u('/fragments/metrics/form') }}"
-         hx-trigger="metrics-entry-changed from:body"
-         hx-target="this" hx-swap="innerHTML">
-      {% include "fragments/metrics_form.html" %}
-    </div>
-  </section>
-  </details>
+      <a href="{{ u('/scale') }}" class="list-row">
+        <span class="flex min-w-0 items-center gap-3">
+          <span class="icon-tile h-9 w-9">◎</span>
+          <span class="min-w-0"><span class="block text-sm text-slate-200">体脂秤接收</span><span class="block text-xs text-slate-600">确认最近测量是否到达</span></span>
+        </span>
+        <span class="text-slate-600">›</span>
+      </a>
     </aside>
-
-    <div class="order-1 space-y-5 xl:order-2">
-  <section class="card">
-    <div class="section-heading mb-4 px-0"><div><h2>趋势图</h2><p>点击指标和时间范围切换</p></div></div>
-    {% include "fragments/metrics_chart.html" %}
-  </section>
-
-  <section class="card">
-    <div class="section-heading mb-4 px-0"><div><h2>最近记录</h2><p>手动与自动来源会分别标记</p></div></div>
-    {% include "fragments/metrics_history.html" %}
-  </section>
-    </div>
   </div>
 </div>
 {% endblock %}

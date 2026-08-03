@@ -305,6 +305,22 @@ def test_metrics_page_renders_with_hidden(db, page, restore_display_setting):
     assert "展示和录入分别控制" in resp.text
     assert "保存展示设置" in resp.text
     assert "保存录入设置" in resp.text
+    assert "当前状态" in resp.text
+    assert "更多指标…" in resp.text
+    assert 'href="/metrics?metric=sleep&days=30"' in resp.text
+
+
+def test_metrics_entry_deep_link_and_mobile_parent_navigation(db, page):
+    metrics = page.get("/metrics").text
+    assert "if (target.tagName === 'DETAILS') target.open = true" in metrics
+    assert 'href="#metrics-entry"' in metrics
+
+    scale = page.get("/scale").text
+    assert 'aria-label="返回身体趋势"' in scale
+    assert 'href="/metrics"' in scale
+
+    foods = page.get("/diet/foods").text
+    assert 'aria-label="返回饮食记录"' in foods
 
 
 def test_today_overview_fragment(db, page):

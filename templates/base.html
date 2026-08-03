@@ -13,7 +13,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="健康">
-  <link rel="stylesheet" href="{{ u('/static/app.css') }}?v=26">
+  <link rel="stylesheet" href="{{ u('/static/app.css') }}?v=28">
   <script src="{{ u('/static/vendor/htmx.min.js') }}" defer></script>
   <script src="{{ u('/static/vendor/alpine.min.js') }}" defer></script>
   {% block head %}{% endblock %}
@@ -21,6 +21,20 @@
 <body class="min-h-screen text-slate-100 antialiased lg:pb-0" data-root="{{ u('') }}"
       x-data="{ quickOpen: false }" @keydown.escape.window="quickOpen = false">
   {% set p = request.url.path %}
+  {% set mobile_primary = p in ['/', '/metrics', '/diet', '/more'] %}
+  {% set mobile_parent = '/more' %}
+  {% set mobile_parent_label = '返回我的' %}
+  {% if p.startswith('/diet/') %}
+    {% set mobile_parent = '/diet' %}{% set mobile_parent_label = '返回饮食记录' %}
+  {% elif p.startswith('/workout/') %}
+    {% set mobile_parent = '/workout' %}{% set mobile_parent_label = '返回运动记录' %}
+  {% elif p.startswith('/settings/') %}
+    {% set mobile_parent = '/settings' %}{% set mobile_parent_label = '返回数据与设置' %}
+  {% elif p.startswith('/report/') or p.startswith('/review/') or p.startswith('/achievements') or p.startswith('/ai') %}
+    {% set mobile_parent = '/report' %}{% set mobile_parent_label = '返回报告与复盘' %}
+  {% elif p.startswith('/scale') %}
+    {% set mobile_parent = '/metrics' %}{% set mobile_parent_label = '返回身体趋势' %}
+  {% endif %}
 
   <aside class="fixed inset-y-0 left-0 z-30 hidden w-64 border-r border-slate-800/60 bg-[#07101b]/95 px-4 py-5 backdrop-blur-xl lg:flex lg:flex-col">
     <a href="{{ u('/') }}" class="flex min-h-[52px] items-center gap-3 px-2">
@@ -73,6 +87,7 @@
   <div class="min-h-screen lg:pl-64">
     <header class="sticky top-0 z-20 border-b border-slate-800/50 bg-[#07101b]/88 backdrop-blur-xl lg:hidden">
       <div class="mx-auto flex min-h-[58px] max-w-3xl items-center justify-between px-4">
+        {% if mobile_primary %}
         <a href="{{ u('/') }}" class="flex items-center gap-2.5">
           <span class="h-7 w-7 rounded-full border-2 border-violet-400/70 border-r-cyan-300/60 shadow-[0_0_16px_rgba(139,92,246,.25)]"></span>
           <span class="text-sm font-semibold">shadow-health</span>
@@ -80,6 +95,13 @@
         <a href="{{ u('/settings') }}" aria-label="设置" class="flex h-10 w-10 items-center justify-center rounded-xl text-slate-400 active:bg-slate-800">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="h-5 w-5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l-2.12 2.12a1.7 1.7 0 0 0-1.88-.34A1.7 1.7 0 0 0 14.7 20.2V21h-3v-.8a1.7 1.7 0 0 0-1.04-1.56 1.7 1.7 0 0 0-1.88.34l-2.12-2.12A1.7 1.7 0 0 0 8 15a1.7 1.7 0 0 0-1.56-1.04H5v-3h1.44A1.7 1.7 0 0 0 8 9.9a1.7 1.7 0 0 0-.34-1.88L9.78 5.9a1.7 1.7 0 0 0 1.88.34A1.7 1.7 0 0 0 12.7 4.7V4h3v.7a1.7 1.7 0 0 0 1.04 1.56 1.7 1.7 0 0 0 1.88-.34l2.12 2.12A1.7 1.7 0 0 0 20.4 9.9a1.7 1.7 0 0 0 1.56 1.04H22v3h-.04A1.7 1.7 0 0 0 20.4 15Z"/></svg>
         </a>
+        {% else %}
+        <a href="{{ u(mobile_parent) }}" aria-label="{{ mobile_parent_label }}" class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-slate-400 active:bg-slate-800">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><path d="m15 18-6-6 6-6"/></svg>
+        </a>
+        <span class="min-w-0 flex-1 truncate px-2 text-center text-sm font-semibold">{{ self.page_title() }}</span>
+        <button type="button" @click="quickOpen = true" aria-label="快速记录" class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-xl text-violet-300 active:bg-slate-800">＋</button>
+        {% endif %}
       </div>
     </header>
 
@@ -95,7 +117,7 @@
     </header>
 
     <main class="mx-auto max-w-[1440px] px-4 pb-28 pt-5 sm:px-6 lg:px-7 lg:pb-8 lg:pt-6 xl:px-9">
-      <div class="mb-5 lg:hidden">
+      <div class="mb-5 lg:hidden {% if not mobile_primary %}hidden{% endif %}">
         <h1 class="text-xl font-semibold tracking-tight">{{ self.page_title() }}</h1>
         <p class="mt-1 text-xs text-slate-600 tabular-nums">{{ today_local().strftime('%Y年%m月%d日') }}</p>
       </div>
@@ -169,6 +191,18 @@
         show(msg,false);
       });
       document.body.addEventListener('htmx:sendError', function(){show('网络错误：连不上服务器',false)});
+    })();
+    (function () {
+      // 快速记录和空态 CTA 会深链到折叠区；到达后自动展开并把标题滚入视野。
+      function revealHashTarget() {
+        if (!location.hash) return;
+        var target = document.getElementById(location.hash.slice(1));
+        if (!target) return;
+        if (target.tagName === 'DETAILS') target.open = true;
+        requestAnimationFrame(function () { target.scrollIntoView({ block: 'start' }); });
+      }
+      window.addEventListener('DOMContentLoaded', revealHashTarget);
+      window.addEventListener('hashchange', revealHashTarget);
     })();
   </script>
   {% block scripts %}{% endblock %}

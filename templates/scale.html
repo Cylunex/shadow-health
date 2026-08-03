@@ -2,7 +2,7 @@
 {% block page_title %}体脂秤接收{% endblock %}
 {% block content %}
 <div class="space-y-4">
-  <div class="section-heading"><div><p class="eyebrow">SCALE STATUS</p><h2 class="mt-1">体脂秤接收</h2><p>实时确认测量是否到达 NAS</p></div></div>
+  <div class="section-heading"><div><p class="eyebrow">SCALE STATUS</p><h2 class="mt-1">体脂秤接收</h2><p>实时确认测量是否到达 NAS</p></div><a href="{{ u('/metrics') }}" class="btn-ghost hidden sm:inline-flex">查看身体趋势</a></div>
 
   {# 壳内专属：一页完成 开监听 → 上秤 → 看结果；浏览器里只看状态。
      注意用内联 display:none——btn-primary 的 display:inline-flex 会压过 hidden 属性 #}
@@ -25,6 +25,11 @@
     也只会记一条（按秤时间戳去重）。若持续收不到：确认蓝牙权限、秤单位为 kg、
     监听已开启（本页按钮限时 3 分钟，常驻监听在连接设置里勾选）。
   </p>
+
+  <a href="{{ u('/metrics') }}" class="list-row sm:hidden">
+    <span><span class="block text-sm text-slate-200">返回身体趋势</span><span class="mt-0.5 block text-xs text-slate-600">查看体重、体脂及长期变化</span></span>
+    <span class="text-slate-600">›</span>
+  </a>
 
 </div>
 {% endblock %}

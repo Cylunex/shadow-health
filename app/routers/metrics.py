@@ -108,6 +108,9 @@ _CHART_METRICS: list[tuple[str, str]] = [
     ("girth", "围度"),
     ("mood", "心情"),
 ]
+# 首屏只放最常看的五项，剩余指标收进下拉菜单；避免十几个横向 chip
+# 把趋势页变成“找入口”的页面。顺序与用户日常关注优先级一致。
+_PRIMARY_CHART_KEYS = ("weight", "body_fat", "sleep", "steps", "hr")
 # 跑步图的 session_type 命中词（跑步/慢跑/running…；快走等走路类不算）
 _RUN_KEYWORDS = ("跑", "run")
 _METRIC_KEYS = {m for m, _ in _CHART_METRICS}
@@ -444,6 +447,55 @@ def _history_context(db: Session) -> dict[str, Any]:
     }
 
 
+def _snapshot_context(db: Session) -> dict[str, Any]:
+    """趋势页首屏快照：每个指标独立取最近两次非空值。
+
+    不要求同一天的数据齐全，避免体重、睡眠、心率来源不同导致整张快照空白。
+    """
+    defs = (
+        ("weight_kg", "体重", "kg", "weight", 1),
+        ("body_fat_pct", "体脂率", "%", "body_fat", 1),
+        ("sleep_hours", "睡眠", "小时", "sleep", 1),
+        ("resting_hr", "静息心率", "bpm", "hr", 0),
+    )
+    items: list[dict[str, Any]] = []
+    for field, label, unit, metric, precision in defs:
+        col = getattr(BodyMetrics, field)
+        rows = (
+            db.execute(
+                select(BodyMetrics)
+                .where(col.is_not(None))
+                .order_by(BodyMetrics.log_date.desc())
+                .limit(2)
+            )
+            .scalars()
+            .all()
+        )
+        current = rows[0] if rows else None
+        previous = rows[1] if len(rows) > 1 else None
+        delta = None
+        if current is not None and previous is not None:
+            delta = float(getattr(current, field)) - float(getattr(previous, field))
+        source = (current.autofilled or {}).get(field) if current else None
+        items.append(
+            {
+                "field": field,
+                "label": label,
+                "unit": unit,
+                "metric": metric,
+                "value": _fmt(getattr(current, field)) if current else None,
+                "date": current.log_date if current else None,
+                "source": (
+                    SOURCE_LABELS.get(source, source)
+                    if source
+                    else ("手动" if current else None)
+                ),
+                "delta": round(delta, precision) if delta is not None else None,
+            }
+        )
+    return {"snapshot_items": items}
+
+
 # ---------- 图表数据 ----------
 def _line_dataset(
     label: str,
@@ -707,15 +759,24 @@ def _chart_context(db: Session, metric: str, days: int) -> dict[str, Any]:
         field, _unit = _TREND_HINT_FIELDS[metric]
         label = dict(_CHART_METRICS).get(metric, "")
         trend_hint = _metric_trend_hint(db, field, target["value"], label)
+    metric_options = _visible_chart_options(_display_hidden_fields(db))
+    primary_options = [
+        it for key in _PRIMARY_CHART_KEYS for it in metric_options if it[0] == key
+    ]
+    more_options = [it for it in metric_options if it[0] not in _PRIMARY_CHART_KEYS]
     return {
         "chart": {
             "metric": metric,
+            "metric_label": dict(metric_options).get(metric, metric),
             "days": days,
             "payload_json": json.dumps(payload, ensure_ascii=False),
             "has_data": has_data,
             "target_label": target["label"] if target else None,
             "trend_hint": trend_hint,
-            "metric_options": _visible_chart_options(_display_hidden_fields(db)),
+            "metric_options": metric_options,
+            "primary_options": primary_options,
+            "more_options": more_options,
+            "selected_in_more": metric not in _PRIMARY_CHART_KEYS,
             "days_options": _CHART_DAYS,
         }
     }
@@ -747,6 +808,7 @@ def metrics_page(
     ctx: dict[str, Any] = {}
     ctx.update(_preferences_context(db))
     ctx.update(_form_context(db, today_local()))
+    ctx.update(_snapshot_context(db))
     ctx.update(_chart_context(db, metric, days))
     ctx.update(_history_context(db))
     return templates.TemplateResponse(request, "metrics.html", ctx)
