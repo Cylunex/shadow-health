@@ -24,6 +24,23 @@ def test_parses_items_with_noise_and_filters_bad_entries():
     assert r["items"][0]["fat_g"] == 8 and r["items"][0]["carb_g"] == 12
     assert r["items"][1]["fat_g"] is None  # 缺项容错为 None
     assert r["note"] == "按一人份估算"
+    assert r["confidence"] is None
+
+
+def test_parses_confidence_and_falls_back_to_item_average():
+    r = _run(
+        '{"items": ['
+        '{"name": "米饭", "kcal": 180, "confidence": 0.8},'
+        '{"name": "青菜", "kcal": 60, "confidence": 0.6}'
+        '], "note": ""}'
+    )
+    assert r["items"][0]["confidence"] == 0.8
+    assert r["confidence"] == 0.7
+
+    explicit = _run(
+        '{"confidence": 0.92, "items": [{"name": "面条", "kcal": 300}], "note": ""}'
+    )
+    assert explicit["confidence"] == 0.92
 
 
 def test_out_of_range_values_become_none():
@@ -138,3 +155,26 @@ def test_image_call_uses_vision_config():
         result = llm._call(None, "system", "user", [("image/png", "eA==")])
     assert result == "正常"
     assert call.call_args.args[0] == vision
+
+
+def test_vision_trace_is_safe_and_records_config_source():
+    vision = {
+        "provider": "openai", "model": "vision-model", "api_key": "sk-secret",
+        "base_url": "https://secret.invalid/v1", "configured": True,
+        "key_from_env": False, "fallback_to_main": True,
+    }
+    with (
+        patch.object(llm, "get_vision_config", return_value=vision),
+        patch.object(llm, "now_local") as clock,
+    ):
+        clock.return_value.isoformat.return_value = "2026-08-03T12:00:00+08:00"
+        trace = llm.vision_trace(None, "meal-photo-v2", confidence=0.8764)
+    assert trace == {
+        "provider": "openai",
+        "model": "vision-model",
+        "config_source": "main",
+        "prompt_version": "meal-photo-v2",
+        "analyzed_at": "2026-08-03T12:00:00+08:00",
+        "confidence": 0.876,
+    }
+    assert "api_key" not in trace and "base_url" not in trace

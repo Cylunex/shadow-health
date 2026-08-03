@@ -3,6 +3,12 @@
   <div class="flex-1 min-w-0">
     <div class="text-sm text-slate-100 truncate">
       {{ name }}{% if log.food_id is none %}<span class="badge ml-1.5 align-middle">自由</span>{% endif %}
+      {% if log.provenance and log.provenance.method == 'vision' %}
+      <span class="ml-1 align-middle text-[10px] text-violet-300/80"
+            title="识图来源：{{ log.provenance.trace.provider or 'AI' }} / {{ log.provenance.trace.model or '视觉模型' }} · {{ log.provenance.trace.prompt_version or '' }}">
+        ✦ 识图{% if log.provenance.trace.confidence is number %} {{ (log.provenance.trace.confidence * 100) | round | int }}%{% endif %}
+      </span>
+      {% endif %}
     </div>
     <div class="mt-0.5 text-xs text-slate-400 tabular-nums">
       {%- if log.amount_g is not none %}{{ fmt(log.amount_g) }}g{% endif -%}

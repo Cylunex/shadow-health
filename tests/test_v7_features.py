@@ -150,3 +150,70 @@ def test_lab_save_and_group(db):
         db.rollback()
         db.execute(delete(LabResult).where(LabResult.report_date == TEST_DAY))
         db.commit()
+
+
+def test_lab_provenance_is_saved_and_manual_overwrite_clears_it(db):
+    from sqlalchemy import delete, select
+
+    from app.models import LabResult
+    from app.routers.labs import _save_row
+    from decimal import Decimal
+
+    try:
+        provenance = {
+            "method": "vision",
+            "trace": {"provider": "openai", "model": "vision-model", "confidence": 0.9},
+        }
+        _save_row(
+            db, TEST_DAY, "hba1c", "糖化血红蛋白", Decimal("5.6"), "%",
+            Decimal("4"), Decimal("6"), provenance=provenance,
+        )
+        db.flush()
+        row = db.execute(select(LabResult).where(
+            LabResult.report_date == TEST_DAY, LabResult.item_key == "hba1c"
+        )).scalar_one()
+        assert row.provenance == provenance
+
+        _save_row(
+            db, TEST_DAY, "hba1c", "糖化血红蛋白", Decimal("5.5"), "%",
+            Decimal("4"), Decimal("6"),
+        )
+        db.flush()
+        db.refresh(row)
+        assert row.provenance is None
+    finally:
+        db.rollback()
+        db.execute(delete(LabResult).where(LabResult.report_date == TEST_DAY))
+        db.commit()
+
+
+def test_diet_photo_analysis_is_live_only_while_generated_log_exists(db):
+    from sqlalchemy import delete
+
+    from app.models import DietLog, DietPhoto
+    from app.routers.diet import _photo_analysis_is_live
+
+    try:
+        photo = DietPhoto(
+            log_date=TEST_DAY, meal="午餐", filename="pytest-vision.jpg", content_type="image/jpeg"
+        )
+        log = DietLog(log_date=TEST_DAY, meal="午餐", free_text="测试餐", kcal=123)
+        db.add_all([photo, log])
+        db.flush()
+        photo.analysis = {
+            "status": "success",
+            "diet_log_ids": [log.id],
+            "trace": {"provider": "openai", "model": "vision-model"},
+        }
+        db.flush()
+        assert _photo_analysis_is_live(db, photo) is True
+        db.delete(log)
+        db.flush()
+        assert _photo_analysis_is_live(db, photo) is False
+    finally:
+        db.rollback()
+        db.execute(delete(DietPhoto).where(DietPhoto.filename == "pytest-vision.jpg"))
+        db.execute(delete(DietLog).where(
+            DietLog.log_date == TEST_DAY, DietLog.free_text == "测试餐"
+        ))
+        db.commit()

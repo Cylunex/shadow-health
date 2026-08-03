@@ -40,7 +40,7 @@ from app.models import (
     WorkoutLog,
     WorkoutPlan,
 )
-from app.timeutil import today_local
+from app.timeutil import now_local, today_local
 
 CONFIG_KEY = "llm_config"
 VISION_CONFIG_KEY = "vision_llm_config"
@@ -123,6 +123,26 @@ def is_vision_configured(db: Session) -> bool:
 
 def model_name(db: Session) -> str:
     return get_config(db)["model"]
+
+
+def vision_trace(
+    db: Session,
+    prompt_version: str,
+    *,
+    confidence: float | None = None,
+) -> dict[str, Any]:
+    """返回可安全落库的识图元数据；绝不包含 Key 或 Base URL。"""
+    cfg = get_vision_config(db)
+    trace: dict[str, Any] = {
+        "provider": cfg["provider"],
+        "model": cfg["model"],
+        "config_source": "main" if cfg.get("fallback_to_main") else "vision",
+        "prompt_version": prompt_version,
+        "analyzed_at": now_local().isoformat(),
+    }
+    if confidence is not None:
+        trace["confidence"] = max(0.0, min(1.0, round(float(confidence), 3)))
+    return trace
 
 
 # ---------- 数据聚合：紧凑上下文包 ----------
@@ -675,10 +695,11 @@ def _call_openai(
 
 
 # ---------- 餐食照片营养估算（对标 Keep 拍照识别） ----------
+MEAL_PHOTO_PROMPT_VERSION = "meal-photo-v2"
 MEAL_PHOTO_PROMPT = """你是营养估算助手。观察这张餐食照片，识别其中的食物并按照片中实际可见份量估算营养（中式家常口径；无法判断时按常见一人份）。
 
 只返回一个 JSON 对象（不要 markdown 代码块、不要多余文字），格式：
-{"items": [{"name": "食物名(≤12字中文)", "amount_g": 估算克数, "kcal": 该份量总热量, "protein_g": 蛋白克数, "fat_g": 脂肪克数, "carb_g": 碳水克数}], "note": "一句话说明份量假设或不确定性"}
+{"confidence": 0到1的整体置信度, "items": [{"name": "食物名(≤12字中文)", "amount_g": 估算克数, "kcal": 该份量总热量, "protein_g": 蛋白克数, "fat_g": 脂肪克数, "carb_g": 碳水克数, "confidence": 0到1的单项置信度}], "note": "一句话说明份量假设或不确定性"}
 
 注意：营养值均为照片中这一份的总值，不是每100g；识别不出食物时 items 给空数组并在 note 说明。"""
 
@@ -687,7 +708,7 @@ VISION_MEDIA_TYPES = ("image/jpeg", "image/png", "image/webp", "image/gif")
 
 
 def analyze_meal_photo(db: Session, image_bytes: bytes, media_type: str) -> dict[str, Any]:
-    """餐食照片 → {"items": [...], "note": str}；解析失败抛 LLMError。"""
+    """餐食照片 → items/note/confidence；解析失败抛 LLMError。"""
     import base64
     import json
 
@@ -717,6 +738,13 @@ def analyze_meal_photo(db: Session, image_bytes: bytes, media_type: str) -> dict
             return None
         return round(f, 1) if lo <= f <= hi else None
 
+    def _confidence(v: Any) -> float | None:
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            return None
+        return round(f, 3) if 0 <= f <= 1 else None
+
     items: list[dict[str, Any]] = []
     for it in data.get("items") or []:
         if not isinstance(it, dict):
@@ -731,8 +759,18 @@ def analyze_meal_photo(db: Session, image_bytes: bytes, media_type: str) -> dict
             "protein_g": _num(it.get("protein_g"), 0, 500),
             "fat_g": _num(it.get("fat_g"), 0, 500),
             "carb_g": _num(it.get("carb_g"), 0, 1000),
+            "confidence": _confidence(it.get("confidence")),
         })
-    return {"items": items, "note": str(data.get("note") or "").strip()[:200]}
+    confidence = _confidence(data.get("confidence"))
+    if confidence is None:
+        item_confidences = [it["confidence"] for it in items if it["confidence"] is not None]
+        if item_confidences:
+            confidence = round(sum(item_confidences) / len(item_confidences), 3)
+    return {
+        "items": items,
+        "note": str(data.get("note") or "").strip()[:200],
+        "confidence": confidence,
+    }
 
 
 def analyze(db: Session, days: int = 30) -> str:

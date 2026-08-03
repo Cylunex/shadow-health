@@ -8,7 +8,7 @@
      @keydown.escape.window="zoom = null"
      class="space-y-4">
   {% for g in meal_groups %}
-  <section class="card">
+  <section class="rounded-2xl border border-slate-800/60 bg-slate-900/35 px-4 py-3.5 shadow-sm shadow-black/10">
     <div class="mb-3 flex items-center justify-between">
       <h3 class="card-title mb-0">{{ g.meal }}</h3>
       {% if g.rows %}
@@ -51,19 +51,29 @@
     </div>
     {% endif %}
 
-    <div class="mt-3 flex flex-wrap items-start gap-2">
+    <div class="mt-3 border-t border-slate-800/60 pt-3">
+      <div class="mb-2 flex items-center justify-between">
+        <span class="text-[11px] font-medium tracking-wide text-slate-500">餐照</span>
+        {% if g.photos %}<span class="text-[10px] text-slate-600">点照片可放大</span>{% endif %}
+      </div>
+      <div class="flex flex-wrap items-start gap-2.5">
       {% for p in g.photos %}
-      <div class="flex flex-col items-center gap-1">
-        <img src="{{ u('/diet/photos/') }}{{ p.id }}" alt="{{ g.meal }}照片" loading="lazy"
-             class="w-16 h-16 rounded-lg object-cover border border-slate-800 cursor-pointer hover:border-emerald-500/60 transition-colors"
-             @click="zoom = { url: '{{ u('/diet/photos/') }}{{ p.id }}', id: {{ p.id }} }">
-        {% if ai_on %}
+      <div class="relative w-[5.25rem]">
+        <img src="{{ u('/diet/photos/') }}{{ p.photo.id }}" alt="{{ g.meal }}照片" loading="lazy"
+             class="h-[5.25rem] w-[5.25rem] cursor-pointer rounded-xl border border-slate-700/70 object-cover shadow-sm shadow-black/30 transition hover:border-emerald-500/60"
+             @click="zoom = { url: '{{ u('/diet/photos/') }}{{ p.photo.id }}', id: {{ p.photo.id }} }">
+        {% if p.recognized %}
+        <span class="absolute inset-x-1 bottom-1 rounded-md bg-slate-950/85 px-1.5 py-1 text-center text-[9px] font-medium text-emerald-300 backdrop-blur"
+              title="已由 {{ p.trace.provider or 'AI' }} / {{ p.trace.model or '视觉模型' }} 识别">
+          ✓ 已识别{% if p.confidence_pct is not none %} {{ p.confidence_pct }}%{% endif %}
+        </span>
+        {% elif ai_on %}
         <button type="button"
-                hx-post="{{ u('/diet/photos/') }}{{ p.id }}/analyze"
+                hx-post="{{ u('/diet/photos/') }}{{ p.photo.id }}/analyze"
                 hx-target="#diet-ai-msg" hx-swap="innerHTML"
                 hx-disabled-elt="this"
-                class="chip px-2 py-0.5 min-h-0 text-[10px] text-emerald-400 [&.htmx-request]:animate-pulse [&.htmx-request]:opacity-60"
-                title="AI 估算这张照片的热量蛋白并计入{{ g.meal }}">✨ AI 识别</button>
+                class="absolute inset-x-1 bottom-1 rounded-md bg-slate-950/85 px-1.5 py-1 text-[9px] font-medium text-emerald-300 backdrop-blur [&.htmx-request]:animate-pulse [&.htmx-request]:opacity-60"
+                title="AI 估算这张照片的热量蛋白并计入{{ g.meal }}">✨ 识别并录入</button>
         {% endif %}
       </div>
       {% endfor %}
@@ -72,16 +82,17 @@
             class="[&.htmx-request]:animate-pulse">
         <input type="hidden" name="d" value="{{ d.isoformat() }}">
         <input type="hidden" name="meal" value="{{ g.meal }}">
-        <label class="w-16 h-16 rounded-lg border border-dashed border-slate-700 flex flex-col items-center justify-center gap-0.5 text-slate-500 cursor-pointer hover:border-emerald-500/60 hover:text-emerald-400 transition-colors">
+        <label class="flex h-[5.25rem] w-[5.25rem] cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-slate-700/80 bg-slate-950/20 text-slate-500 transition-colors hover:border-emerald-500/60 hover:text-emerald-400">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
                stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5">
             <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/>
             <circle cx="12" cy="13" r="3"/>
           </svg>
-          <span class="text-[10px]">传图</span>
+          <span class="text-[10px]">添加餐照</span>
           <input type="file" name="file" accept="image/*" class="hidden">
         </label>
       </form>
+      </div>
     </div>
   </section>
   {% endfor %}

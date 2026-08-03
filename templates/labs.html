@@ -2,126 +2,171 @@
 {% block page_title %}化验档案{% endblock %}
 {% block content %}
 <div class="space-y-4">
+  <section class="overflow-hidden rounded-2xl border border-slate-800/60 bg-gradient-to-br from-slate-900 via-slate-900/90 to-emerald-950/30 p-4 shadow-lg shadow-black/10">
+    <div class="flex items-start justify-between gap-4">
+      <div>
+        <p class="text-[11px] font-medium tracking-[0.18em] text-emerald-400/80">LAB ARCHIVE</p>
+        <h2 class="mt-1 text-lg font-semibold text-slate-100">看趋势，不堆录入框</h2>
+        <p class="mt-1 text-xs leading-relaxed text-slate-500">化验单识别后先核对，再进入长期档案。</p>
+      </div>
+      <div class="shrink-0 rounded-xl border border-slate-700/60 bg-slate-950/30 px-3 py-2 text-right">
+        <p class="text-xl font-semibold tabular-nums text-slate-100">{{ summary.item_count }}</p>
+        <p class="text-[10px] text-slate-500">跟踪项目</p>
+      </div>
+    </div>
+    {% if summary.latest_date %}
+    <div class="mt-4 grid grid-cols-3 gap-2 border-t border-slate-800/70 pt-3 text-center">
+      <div><p class="text-xs font-medium tabular-nums text-slate-200">{{ summary.latest_date.strftime('%Y-%m-%d') }}</p><p class="mt-0.5 text-[10px] text-slate-600">最近报告</p></div>
+      <div><p class="text-xs font-medium tabular-nums text-slate-200">{{ summary.latest_count }} 项</p><p class="mt-0.5 text-[10px] text-slate-600">本次收录</p></div>
+      <div><p class="text-xs font-medium tabular-nums {{ 'text-amber-300' if summary.latest_abnormal else 'text-emerald-300' }}">{{ summary.latest_abnormal }} 项</p><p class="mt-0.5 text-[10px] text-slate-600">超参考范围</p></div>
+    </div>
+    {% endif %}
+  </section>
 
   {% if saved %}
-  <div class="rounded-xl bg-emerald-600/15 border border-emerald-600/40 text-emerald-400 text-sm px-3 py-2 fade-in">已保存</div>
+  <div class="fade-in rounded-xl border border-emerald-600/30 bg-emerald-600/10 px-3 py-2 text-sm text-emerald-400">已保存到化验档案</div>
   {% endif %}
   {% if error %}
-  <div class="rounded-xl bg-red-600/15 border border-red-600/40 text-red-400 text-sm px-3 py-2 fade-in">{{ error }}</div>
+  <div class="fade-in rounded-xl border border-red-600/30 bg-red-600/10 px-3 py-2 text-sm text-red-400">{{ error }}</div>
   {% endif %}
 
-  {# ---- AI 预览确认（拍照解析后出现） ---- #}
   {% if parsed %}
-  <section class="card border-emerald-900/50">
-    <h2 class="card-title">识别结果确认</h2>
-    <form method="post" action="{{ u('/labs/bulk') }}" class="space-y-2">
+  <section class="rounded-2xl border border-emerald-500/25 bg-emerald-950/15 p-4 shadow-sm shadow-black/20">
+    <div class="mb-3 flex items-start justify-between gap-3">
+      <div>
+        <h2 class="text-sm font-semibold text-emerald-200">识别完成，核对后入库</h2>
+        <p class="mt-1 text-[11px] text-slate-500">
+          {{ parsed.metadata.trace.provider | upper }} · {{ parsed.metadata.trace.model }}
+          {% if parsed.metadata.trace.confidence is number %} · 置信度 {{ (parsed.metadata.trace.confidence * 100) | round | int }}%{% endif %}
+        </p>
+      </div>
+      <span class="rounded-full bg-emerald-400/10 px-2 py-1 text-[10px] text-emerald-300">{{ parsed['items'] | length }} 项</span>
+    </div>
+    <form method="post" action="{{ u('/labs/bulk') }}" class="space-y-3">
+      <input type="hidden" name="metadata" value="{{ parsed.metadata_json }}">
       <label class="block">
         <span class="field-label">报告日期</span>
         <input type="date" name="report_date" value="{{ parsed.report_date }}" class="field tabular-nums">
       </label>
-      <div class="space-y-1.5">
+      <div class="space-y-2">
         {% for it in parsed['items'] %}
-        <div class="grid grid-cols-[1fr_5rem_4rem_auto] items-center gap-1.5 text-xs">
-          <input type="text" name="label_{{ loop.index0 }}" value="{{ it.label }}" class="field !min-h-0 !py-1.5">
-          <input type="text" inputmode="decimal" name="value_{{ loop.index0 }}" value="{{ it.value }}" class="field !min-h-0 !py-1.5 tabular-nums">
-          <input type="text" name="unit_{{ loop.index0 }}" value="{{ it.unit or '' }}" class="field !min-h-0 !py-1.5">
-          <label class="flex items-center gap-1 text-slate-500"><input type="checkbox" name="skip_{{ loop.index0 }}" value="1">跳过</label>
+        <div class="rounded-xl border border-slate-800/70 bg-slate-950/25 p-3">
+          <div class="mb-2 flex items-center justify-between gap-2">
+            <span class="text-[11px] text-slate-500">指标 {{ loop.index }}</span>
+            <label class="flex min-h-[32px] cursor-pointer items-center gap-1.5 text-[11px] text-slate-500">
+              <input type="checkbox" name="skip_{{ loop.index0 }}" value="1" class="rounded border-slate-700 bg-slate-900">不入库
+            </label>
+          </div>
+          <div class="grid grid-cols-[minmax(0,1fr)_5.5rem] gap-2">
+            <label>
+              <span class="sr-only">指标名</span>
+              <input type="text" name="label_{{ loop.index0 }}" value="{{ it.label }}" class="field !min-h-0 !py-2 text-sm">
+            </label>
+            <label>
+              <span class="sr-only">数值</span>
+              <input type="text" inputmode="decimal" name="value_{{ loop.index0 }}" value="{{ it.value }}" class="field !min-h-0 !py-2 text-right text-sm font-medium tabular-nums">
+            </label>
+          </div>
+          <div class="mt-2 flex items-center gap-2">
+            <input type="text" name="unit_{{ loop.index0 }}" value="{{ it.unit or '' }}" placeholder="单位" class="field !min-h-0 max-w-28 !py-1.5 text-xs">
+            {% if it.confidence is number %}<span class="text-[10px] text-slate-600">识别 {{ (it.confidence * 100) | round | int }}%</span>{% endif %}
+          </div>
           <input type="hidden" name="ref_low_{{ loop.index0 }}" value="{{ it.ref_low if it.ref_low is not none else '' }}">
           <input type="hidden" name="ref_high_{{ loop.index0 }}" value="{{ it.ref_high if it.ref_high is not none else '' }}">
         </div>
         {% endfor %}
       </div>
-      <button type="submit" class="btn-primary w-full">确认入库</button>
-      <p class="text-xs text-slate-600">核对数值后再入库；识别有误直接改，不想要的勾「跳过」。</p>
+      <button type="submit" class="btn-primary w-full">确认并保存 {{ parsed['items'] | length }} 项</button>
+      <p class="text-xs leading-relaxed text-slate-600">数值、名称和单位都可以直接修正；不确定的项目先勾“不入库”。</p>
     </form>
   </section>
   {% endif %}
 
-  {# ---- 录入：手动 + AI 拍照 ---- #}
-  <section class="card">
-    <div class="mb-3 flex items-center justify-between">
-      <h2 class="card-title mb-0">录一条化验值</h2>
-      {% if ai_on %}
-      <form method="post" action="{{ u('/labs/photo') }}" enctype="multipart/form-data"
-            onchange="if (this.file.files.length) this.submit()" class="shrink-0">
-        <label class="chip text-xs text-emerald-400 cursor-pointer">
-          ✨ 拍化验单识别
-          <input type="file" name="file" accept="image/*" class="hidden">
-        </label>
-      </form>
-      {% endif %}
-    </div>
-    <form method="post" action="{{ u('/labs') }}" x-data="{ item: 'total_chol' }" class="space-y-3">
+  {% if ai_on and not parsed %}
+  <form method="post" action="{{ u('/labs/photo') }}" enctype="multipart/form-data"
+        onchange="if (this.file.files.length) this.submit()">
+    <label class="flex min-h-[76px] cursor-pointer items-center gap-3 rounded-2xl border border-dashed border-emerald-700/45 bg-emerald-950/10 px-4 py-3 transition hover:border-emerald-500/70 hover:bg-emerald-950/20">
+      <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-400/10 text-lg text-emerald-300">✦</span>
+      <span class="min-w-0 flex-1">
+        <span class="block text-sm font-medium text-slate-200">拍照或选择化验单</span>
+        <span class="mt-0.5 block text-xs text-slate-500">自动提取项目，确认后才会保存</span>
+      </span>
+      <span class="text-lg text-slate-600">›</span>
+      <input type="file" name="file" accept="image/*" class="hidden">
+    </label>
+  </form>
+  {% endif %}
+
+  <details class="group rounded-2xl border border-slate-800/60 bg-slate-900/30">
+    <summary class="flex min-h-[52px] cursor-pointer list-none items-center justify-between px-4 text-sm text-slate-400 [&::-webkit-details-marker]:hidden">
+      <span>需要时手动录入</span>
+      <span class="text-slate-600 transition group-open:rotate-90">›</span>
+    </summary>
+    <form method="post" action="{{ u('/labs') }}" x-data="{ item: 'total_chol' }" class="space-y-3 border-t border-slate-800/60 p-4">
       <div class="grid grid-cols-2 gap-3">
-        <label class="block">
-          <span class="field-label">日期</span>
-          <input type="date" name="report_date" value="{{ today }}" max="{{ today }}" class="field tabular-nums">
-        </label>
+        <label class="block"><span class="field-label">日期</span><input type="date" name="report_date" value="{{ today }}" max="{{ today }}" class="field tabular-nums"></label>
         <label class="block">
           <span class="field-label">项目</span>
           <select name="item" x-model="item" class="field">
-            {% for key, label, unit, lo, hi in common_items %}
-            <option value="{{ key }}">{{ label }}</option>
-            {% endfor %}
+            {% for key, label, unit, lo, hi in common_items %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
             <option value="custom">自定义…</option>
           </select>
         </label>
-        <label class="block" x-show="item === 'custom'" style="display: none">
-          <span class="field-label">自定义项目名</span>
-          <input type="text" name="custom_label" class="field">
-        </label>
-        <label class="block">
-          <span class="field-label">数值</span>
-          <input type="text" inputmode="decimal" name="value" autocomplete="off" class="field tabular-nums">
-        </label>
-        <label class="block">
-          <span class="field-label">单位（可空=默认）</span>
-          <input type="text" name="unit" class="field">
-        </label>
-        <label class="block">
-          <span class="field-label">参考下限（可空）</span>
-          <input type="text" inputmode="decimal" name="ref_low" class="field tabular-nums">
-        </label>
-        <label class="block">
-          <span class="field-label">参考上限（可空）</span>
-          <input type="text" inputmode="decimal" name="ref_high" class="field tabular-nums">
-        </label>
+        <label class="col-span-2 block" x-show="item === 'custom'" style="display: none"><span class="field-label">自定义项目名</span><input type="text" name="custom_label" class="field"></label>
+        <label class="block"><span class="field-label">数值</span><input type="text" inputmode="decimal" name="value" autocomplete="off" class="field tabular-nums"></label>
+        <label class="block"><span class="field-label">单位（可空）</span><input type="text" name="unit" class="field"></label>
+        <label class="block"><span class="field-label">参考下限</span><input type="text" inputmode="decimal" name="ref_low" class="field tabular-nums"></label>
+        <label class="block"><span class="field-label">参考上限</span><input type="text" inputmode="decimal" name="ref_high" class="field tabular-nums"></label>
       </div>
-      <button type="submit" class="btn-primary w-full">保存</button>
+      <button type="submit" class="btn-primary w-full">保存一条</button>
     </form>
-  </section>
+  </details>
 
-  {# ---- 档案：按项目分组的多年序列 ---- #}
   {% if groups %}
-  <section class="card">
-    <h2 class="card-title">档案（{{ groups | length }} 项）</h2>
-    <div class="space-y-3">
+  <section>
+    <div class="mb-2 flex items-center justify-between px-1">
+      <h2 class="text-sm font-medium text-slate-300">长期趋势</h2>
+      <span class="text-[11px] text-slate-600">{{ groups | length }} 项</span>
+    </div>
+    <div class="space-y-2.5">
       {% for key, g in groups.items() %}
-      <div class="rounded-xl border border-slate-800/70 bg-slate-900/60 px-3.5 py-3">
-        <div class="flex items-baseline justify-between gap-2">
-          <span class="text-sm text-slate-200">{{ g.label }}</span>
-          <span class="text-xs text-slate-500">{{ g.unit or '' }}</span>
+      {% set latest = g.points | last %}
+      <article class="rounded-2xl border border-slate-800/60 bg-slate-900/35 px-4 py-3.5">
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <p class="truncate text-sm text-slate-300">{{ g.label }}</p>
+            <p class="mt-0.5 text-[10px] text-slate-600">最近 {{ latest.date.strftime('%Y-%m-%d') }}</p>
+          </div>
+          <div class="shrink-0 text-right">
+            <p class="text-lg font-semibold tabular-nums {{ 'text-amber-300' if latest.flag else 'text-slate-100' }}">
+              {{ latest.value | round(2) }}{% if latest.flag %}<span class="ml-0.5 text-xs">{{ '↑' if latest.flag == 'high' else '↓' }}</span>{% endif %}
+            </p>
+            <p class="text-[10px] text-slate-600">{{ g.unit or '' }}</p>
+          </div>
         </div>
-        <div class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs tabular-nums">
-          {% for p in g.points %}
-          <span class="inline-flex items-center gap-1 {{ 'text-amber-400' if p.flag else 'text-slate-300' }}"
-                title="{% if p.ref_low is not none or p.ref_high is not none %}参考 {{ p.ref_low if p.ref_low is not none else '' }}–{{ p.ref_high if p.ref_high is not none else '' }}{% endif %}">
+        <div class="mt-3 flex flex-wrap gap-x-3 gap-y-1.5 border-t border-slate-800/50 pt-2.5 text-[11px] tabular-nums">
+          {% for p in g.points | reverse %}
+          <span class="inline-flex items-center gap-1 {{ 'text-amber-400' if p.flag else 'text-slate-400' }}"
+                title="{% if p.ref_low is not none or p.ref_high is not none %}参考 {{ p.ref_low if p.ref_low is not none else '' }}–{{ p.ref_high if p.ref_high is not none else '' }}{% endif %}{% if p.provenance %} · 识图 {{ p.provenance.trace.provider or 'AI' }} / {{ p.provenance.trace.model or '' }}{% endif %}">
             <span class="text-slate-600">{{ p.date.strftime('%y-%m') }}</span>
             {{ p.value | round(2) }}{% if p.flag %}{{ '↑' if p.flag == 'high' else '↓' }}{% endif %}
-            <button type="button" class="text-slate-700 hover:text-red-400"
+            {% if p.provenance and p.provenance.method == 'vision' %}<span class="text-violet-300/70">✦</span>{% endif %}
+            <button type="button" class="ml-0.5 text-slate-700 hover:text-red-400"
                     hx-delete="{{ u('/labs/') }}{{ p.id }}" hx-target="closest span" hx-swap="outerHTML"
                     hx-confirm="删除 {{ g.label }} {{ p.date }} 这条记录？">✕</button>
           </span>
           {% endfor %}
         </div>
-      </div>
+      </article>
       {% endfor %}
     </div>
-    <p class="mt-3 text-xs text-slate-600 leading-relaxed">
-      ↑↓ = 超出参考范围（以化验单原范围为准），持续异常请就医确认——这里只做档案与趋势，不做诊断。
-    </p>
+    <p class="mt-3 px-1 text-xs leading-relaxed text-slate-600">↑↓ 表示超出录入时的参考范围。这里只保存档案与趋势，不做诊断；持续异常请就医确认。</p>
   </section>
+  {% else %}
+  <div class="rounded-2xl border border-slate-800/50 bg-slate-900/20 px-4 py-8 text-center">
+    <p class="text-sm text-slate-500">还没有化验记录</p>
+    <p class="mt-1 text-xs text-slate-700">有报告时拍一张即可开始积累趋势</p>
+  </div>
   {% endif %}
-
 </div>
 {% endblock %}

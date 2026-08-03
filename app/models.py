@@ -182,6 +182,7 @@ class LabResult(Base):
     ref_low: Mapped[float | None] = mapped_column(Numeric(10, 3))
     ref_high: Mapped[float | None] = mapped_column(Numeric(10, 3))
     notes: Mapped[str | None] = mapped_column(Text)
+    provenance: Mapped[dict | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=_tz_now
     )
@@ -223,6 +224,7 @@ class DietLog(TimestampMixin, Base):
     protein_g: Mapped[float | None] = mapped_column(Numeric(5, 1))
     fat_g: Mapped[float | None] = mapped_column(Numeric(5, 1))
     carb_g: Mapped[float | None] = mapped_column(Numeric(6, 1))
+    provenance: Mapped[dict | None] = mapped_column(JSONB)
 
 
 class DietPhoto(Base):
@@ -240,6 +242,7 @@ class DietPhoto(Base):
     meal: Mapped[str] = mapped_column(Text, nullable=False)
     filename: Mapped[str] = mapped_column(Text, nullable=False)
     content_type: Mapped[str | None] = mapped_column(Text)
+    analysis: Mapped[dict | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=_tz_now
     )

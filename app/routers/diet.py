@@ -235,6 +235,34 @@ def _row_ctx(db: Session, log: DietLog) -> dict:
     return {"log": log, "name": name or log.free_text or "—", "fmt": _fmt}
 
 
+def _analysis_log_ids(photo: DietPhoto) -> list[int]:
+    analysis = photo.analysis if isinstance(photo.analysis, dict) else {}
+    ids = analysis.get("diet_log_ids") if analysis.get("status") == "success" else []
+    return [i for i in ids or [] if isinstance(i, int) and i > 0]
+
+
+def _photo_analysis_is_live(db: Session, photo: DietPhoto) -> bool:
+    """成功识别且至少一条生成记录仍存在；用于防止重复回显/重复录入。"""
+    ids = _analysis_log_ids(photo)
+    return bool(ids) and db.execute(
+        select(DietLog.id).where(DietLog.id.in_(ids)).limit(1)
+    ).first() is not None
+
+
+def _photo_view(db: Session, photo: DietPhoto) -> dict[str, Any]:
+    analysis = photo.analysis if isinstance(photo.analysis, dict) else {}
+    live = _photo_analysis_is_live(db, photo)
+    trace = analysis.get("trace") if isinstance(analysis.get("trace"), dict) else {}
+    confidence = trace.get("confidence")
+    confidence_pct = round(float(confidence) * 100) if isinstance(confidence, (int, float)) else None
+    return {
+        "photo": photo,
+        "recognized": live,
+        "confidence_pct": confidence_pct,
+        "trace": trace,
+    }
+
+
 def _day_ctx(db: Session, d: date) -> dict:
     rows = db.execute(
         select(DietLog, Food.name)
@@ -247,11 +275,11 @@ def _day_ctx(db: Session, d: date) -> dict:
         by_meal.setdefault(log.meal, []).append(
             {"log": log, "name": fname or log.free_text or "—"}
         )
-    photos_by_meal: dict[str, list[DietPhoto]] = {m: [] for m in MEALS}
+    photos_by_meal: dict[str, list[dict[str, Any]]] = {m: [] for m in MEALS}
     for p in db.execute(
         select(DietPhoto).where(DietPhoto.log_date == d).order_by(DietPhoto.id)
     ).scalars():
-        photos_by_meal.setdefault(p.meal, []).append(p)
+        photos_by_meal.setdefault(p.meal, []).append(_photo_view(db, p))
     meal_groups = [
         {
             "meal": meal,
@@ -1020,7 +1048,7 @@ def diet_photo_delete(photo_id: int, db: Session = Depends(get_db)):
 
 @router.post("/diet/photos/{photo_id}/analyze")
 def diet_photo_analyze(photo_id: int, request: Request, db: Session = Depends(get_db)):
-    """AI 识别餐食照片（Claude Vision）：估算各食物营养 → 生成该餐次的饮食记录。
+    """AI 识别餐食照片：估算各食物营养 → 生成该餐次的饮食记录。
 
     识别结果按自由文本记录（kcal/protein 为该份量总值），可行内编辑修正。
     成功带 HX-Trigger: diet-changed，餐次列表立刻出现新行。
@@ -1029,17 +1057,26 @@ def diet_photo_analyze(photo_id: int, request: Request, db: Session = Depends(ge
 
     photo = _load_photo(db, photo_id)
 
-    def _msg(error: str | None = None, ok: str | None = None, note: str = ""):
+    def _msg(error: str | None = None, ok: str | None = None, note: str = "",
+             trace: dict[str, Any] | None = None):
         headers = dict(HX_TRIGGER) if ok else None
         return templates.TemplateResponse(
             request,
             "fragments/diet_ai_result.html",
-            {"error": error, "ok": ok, "note": note},
+            {"error": error, "ok": ok, "note": note, "trace": trace},
             headers=headers,
         )
 
     if not llm.is_vision_configured(db):
         return _msg(error="未配置 AI 模型 API Key——到 设置→AI 模型 填入即可使用识别。")
+    if _photo_analysis_is_live(db, photo):
+        analysis = photo.analysis or {}
+        trace = analysis.get("trace") if isinstance(analysis.get("trace"), dict) else None
+        return _msg(
+            ok=f"这张照片已经识别并计入{photo.meal}，没有重复录入。",
+            note=str(analysis.get("note") or ""),
+            trace=trace,
+        )
     path = get_settings().photo_dir / photo.filename
     if not path.is_file():
         return _msg(error="照片文件缺失。")
@@ -1053,10 +1090,14 @@ def diet_photo_analyze(photo_id: int, request: Request, db: Session = Depends(ge
     items = result["items"]
     if not items:
         return _msg(error=f"没识别出食物。{result['note']}")
+    trace = llm.vision_trace(
+        db, llm.MEAL_PHOTO_PROMPT_VERSION, confidence=result.get("confidence")
+    )
     total_kcal = 0.0
     new_foods = 0
+    created_logs: list[DietLog] = []
     for it in items:
-        db.add(DietLog(
+        log = DietLog(
             log_date=photo.log_date,
             meal=photo.meal,
             free_text=it["name"],
@@ -1065,18 +1106,36 @@ def diet_photo_analyze(photo_id: int, request: Request, db: Session = Depends(ge
             protein_g=it["protein_g"],
             fat_g=it.get("fat_g"),
             carb_g=it.get("carb_g"),
-        ))
+            provenance={
+                "method": "vision",
+                "photo_id": photo.id,
+                "trace": {**trace, "confidence": it.get("confidence")}
+                if it.get("confidence") is not None else trace,
+                "input": it,
+            },
+        )
+        db.add(log)
+        created_logs.append(log)
         total_kcal += it["kcal"] or 0
         # 识别出的新菜自动进食物库（估算值按每 100g 折算，重名跳过）
         if _auto_catalog_food(db, it["name"], it["amount_g"], it["kcal"],
                               it["protein_g"], it.get("fat_g"), it.get("carb_g")):
             new_foods += 1
     db.flush()
+    photo.analysis = {
+        "status": "success",
+        "trace": trace,
+        "items": items,
+        "note": result["note"],
+        "diet_log_ids": [log.id for log in created_logs],
+    }
+    db.flush()
     names = "、".join(it["name"] for it in items[:5]) + ("…" if len(items) > 5 else "")
     return _msg(
         ok=f"已识别 {len(items)} 项计入{photo.meal}：{names}（约 {round(total_kcal)} kcal）"
            + (f"，{new_foods} 个新食物已入库" if new_foods else ""),
         note=result["note"],
+        trace=trace,
     )
 
 

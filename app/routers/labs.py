@@ -41,10 +41,11 @@ COMMON_ITEMS: list[tuple[str, str, str, float | None, float | None]] = [
 ]
 _COMMON_BY_KEY = {i[0]: i for i in COMMON_ITEMS}
 
+LAB_PHOTO_PROMPT_VERSION = "lab-photo-v2"
 LAB_PHOTO_PROMPT = """你是化验单结构化助手。读取这张体检/化验单照片，提取数值型指标。
 
 只返回一个 JSON 对象（不要 markdown 代码块），格式：
-{"report_date": "YYYY-MM-DD 或空字符串", "items": [{"label": "指标中文名", "value": 数值, "unit": "单位", "ref_low": 参考下限或null, "ref_high": 参考上限或null}]}
+{"report_date": "YYYY-MM-DD 或空字符串", "confidence": 0到1的整体置信度, "items": [{"label": "指标中文名", "value": 数值, "unit": "单位", "ref_low": 参考下限或null, "ref_high": 参考上限或null, "confidence": 0到1的单项置信度}]}
 
 注意：只提取有明确数值的指标；参考范围按化验单原样；识别不出日期就留空。"""
 
@@ -77,7 +78,21 @@ def _page_ctx(db: Session, saved: bool = False, error: str | None = None,
                          float(r.ref_high) if r.ref_high is not None else None),
             "ref_low": float(r.ref_low) if r.ref_low is not None else None,
             "ref_high": float(r.ref_high) if r.ref_high is not None else None,
+            "provenance": r.provenance if isinstance(r.provenance, dict) else None,
         })
+    latest_date = max((r.report_date for r in rows), default=None)
+    latest_rows = [r for r in rows if r.report_date == latest_date]
+    latest_abnormal = sum(
+        flag(
+            float(r.value),
+            float(r.ref_low) if r.ref_low is not None else None,
+            float(r.ref_high) if r.ref_high is not None else None,
+        ) is not None
+        for r in latest_rows
+    )
+    if parsed is not None:
+        parsed = dict(parsed)
+        parsed["metadata_json"] = json_lib.dumps(parsed.get("metadata") or {}, ensure_ascii=False)
     return {
         "groups": groups,
         "common_items": COMMON_ITEMS,
@@ -86,20 +101,28 @@ def _page_ctx(db: Session, saved: bool = False, error: str | None = None,
         "saved": saved,
         "error": error,
         "parsed": parsed,
+        "summary": {
+            "item_count": len(groups),
+            "latest_date": latest_date,
+            "latest_count": len(latest_rows),
+            "latest_abnormal": latest_abnormal,
+        },
     }
 
 
 def _save_row(db: Session, report_date: date, key: str, label: str, value: Decimal,
-              unit: str | None, ref_low: Decimal | None, ref_high: Decimal | None) -> None:
+              unit: str | None, ref_low: Decimal | None, ref_high: Decimal | None,
+              provenance: dict[str, Any] | None = None) -> None:
     stmt = pg_insert(LabResult).values(
         report_date=report_date, item_key=key, item_label=label, value=value,
-        unit=unit, ref_low=ref_low, ref_high=ref_high,
+        unit=unit, ref_low=ref_low, ref_high=ref_high, provenance=provenance,
     )
     db.execute(stmt.on_conflict_do_update(
         index_elements=["report_date", "item_key"],
         set_={"value": stmt.excluded.value, "item_label": stmt.excluded.item_label,
               "unit": stmt.excluded.unit, "ref_low": stmt.excluded.ref_low,
-              "ref_high": stmt.excluded.ref_high},
+              "ref_high": stmt.excluded.ref_high,
+              "provenance": stmt.excluded.provenance},
     ))
 
 
@@ -196,11 +219,29 @@ async def labs_photo(request: Request, file: UploadFile, db: Session = Depends(g
         payload = json_lib.loads(text[start:end + 1]) if start != -1 else {}
     except ValueError:
         payload = {}
-    items = [
-        it for it in (payload.get("items") or [])
-        if isinstance(it, dict) and str(it.get("label") or "").strip()
-        and isinstance(it.get("value"), (int, float))
-    ][:30]
+    def confidence(value: Any) -> float | None:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        return round(number, 3) if 0 <= number <= 1 else None
+
+    items = []
+    for raw in payload.get("items") or []:
+        if not isinstance(raw, dict) or not str(raw.get("label") or "").strip():
+            continue
+        if not isinstance(raw.get("value"), (int, float)):
+            continue
+        items.append({
+            "label": str(raw.get("label") or "").strip()[:50],
+            "value": raw["value"],
+            "unit": str(raw.get("unit") or "").strip()[:20],
+            "ref_low": raw.get("ref_low") if isinstance(raw.get("ref_low"), (int, float)) else None,
+            "ref_high": raw.get("ref_high") if isinstance(raw.get("ref_high"), (int, float)) else None,
+            "confidence": confidence(raw.get("confidence")),
+        })
+        if len(items) >= 30:
+            break
     if not items:
         return templates.TemplateResponse(
             request, "labs.html", _page_ctx(db, error="没识别出可用指标，试试手动录入")
@@ -209,6 +250,12 @@ async def labs_photo(request: Request, file: UploadFile, db: Session = Depends(g
         "report_date": str(payload.get("report_date") or "").strip()
         or today_local().isoformat(),
         "items": items,
+        "metadata": {
+            "trace": llm.vision_trace(
+                db, LAB_PHOTO_PROMPT_VERSION, confidence=confidence(payload.get("confidence"))
+            ),
+            "items": items,
+        },
     }
     return templates.TemplateResponse(request, "labs.html", _page_ctx(db, parsed=parsed))
 
@@ -223,6 +270,28 @@ async def labs_bulk(request: Request, db: Session = Depends(get_db)):
         return templates.TemplateResponse(
             request, "labs.html", _page_ctx(db, error="日期格式不正确")
         )
+    try:
+        metadata = json_lib.loads(str(form.get("metadata") or "{}"))
+    except (TypeError, ValueError):
+        metadata = {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+    raw_trace = metadata.get("trace") if isinstance(metadata.get("trace"), dict) else {}
+    trace: dict[str, Any] = {}
+    for key, limit in (
+        ("provider", 20), ("model", 100), ("config_source", 20),
+        ("prompt_version", 50), ("analyzed_at", 50),
+    ):
+        value = str(raw_trace.get(key) or "").strip()
+        if value:
+            trace[key] = value[:limit]
+    try:
+        trace_confidence = float(raw_trace.get("confidence"))
+    except (TypeError, ValueError):
+        trace_confidence = None
+    if trace_confidence is not None and 0 <= trace_confidence <= 1:
+        trace["confidence"] = round(trace_confidence, 3)
+    original_items = metadata.get("items") if isinstance(metadata.get("items"), list) else []
     n = 0
     for i in range(30):
         label = str(form.get(f"label_{i}") or "").strip()[:50]
@@ -240,7 +309,35 @@ async def labs_bulk(request: Request, db: Session = Depends(get_db)):
         match = next((c for c in COMMON_ITEMS if c[1] in label or label in c[1]), None)
         key = match[0] if match else f"custom_{label}"
         unit = str(form.get(f"unit_{i}") or "").strip() or (match[2] if match else None)
-        _save_row(db, d, key, label if not match else match[1], value, unit, ref_low, ref_high)
+        raw_original = (
+            original_items[i]
+            if i < len(original_items) and isinstance(original_items[i], dict)
+            else {}
+        )
+        original = {
+            key: raw_original.get(key)
+            for key in ("label", "value", "unit", "ref_low", "ref_high", "confidence")
+            if key in raw_original
+        }
+        row_trace = dict(trace)
+        if isinstance(original.get("confidence"), (int, float)):
+            row_trace["confidence"] = original["confidence"]
+        provenance = {
+            "method": "vision",
+            "trace": row_trace,
+            "input": original,
+            "confirmed": {
+                "label": label,
+                "value": float(value),
+                "unit": unit,
+                "ref_low": float(ref_low) if ref_low is not None else None,
+                "ref_high": float(ref_high) if ref_high is not None else None,
+            },
+        } if trace else None
+        _save_row(
+            db, d, key, label if not match else match[1], value, unit, ref_low, ref_high,
+            provenance=provenance,
+        )
         n += 1
     if n:
         db.flush()
