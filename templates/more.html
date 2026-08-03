@@ -1,97 +1,60 @@
 {% extends "base.html" %}
-{% block page_title %}更多{% endblock %}
+{% block page_title %}我的{% endblock %}
 {% block content %}
-<div class="space-y-5">
-
-  {# ---- 累计成就（对标 Keep 的里程碑激励） ---- #}
-  <section class="card">
-    <h2 class="card-title">累计成就</h2>
-    <div class="grid grid-cols-3 gap-3 text-center">
-      <div>
-        <p class="text-2xl font-bold tabular-nums text-emerald-400">{{ stats.workout_count }}</p>
-        <p class="mt-0.5 text-xs text-slate-500">训练次数</p>
-      </div>
-      <div>
-        <p class="text-2xl font-bold tabular-nums text-emerald-400">{{ stats.workout_min }}</p>
-        <p class="mt-0.5 text-xs text-slate-500">训练分钟</p>
-      </div>
-      <div>
-        <p class="text-2xl font-bold tabular-nums text-emerald-400">{{ stats.workout_km }}</p>
-        <p class="mt-0.5 text-xs text-slate-500">累计公里</p>
-      </div>
-      <div>
-        <p class="text-2xl font-bold tabular-nums text-sky-400">{{ stats.habit_count }}</p>
-        <p class="mt-0.5 text-xs text-slate-500">打卡次数</p>
-      </div>
-      <div>
-        <p class="text-2xl font-bold tabular-nums text-sky-400">{{ stats.best_streak }}</p>
-        <p class="mt-0.5 text-xs text-slate-500">最长连击 (天)</p>
-      </div>
-      <div>
-        <p class="text-2xl font-bold tabular-nums text-sky-400">{{ stats.record_days }}</p>
-        <p class="mt-0.5 text-xs text-slate-500">记录天数</p>
-      </div>
+<div class="space-y-6">
+  <section class="app-panel relative overflow-hidden p-5 sm:p-6">
+    <div class="absolute -right-20 -top-20 h-52 w-52 rounded-full bg-violet-500/15 blur-3xl"></div>
+    <div class="relative flex items-center gap-4">
+      <span class="flex h-14 w-14 items-center justify-center rounded-2xl border border-violet-400/25 bg-violet-500/15 text-xl text-violet-200">影</span>
+      <div class="min-w-0 flex-1"><p class="eyebrow">PRIVATE HEALTH ARCHIVE</p><h2 class="mt-1 text-xl font-semibold">Shadow 的健康档案</h2><p class="mt-1 text-xs text-slate-500">NAS 私有部署 · 自动采集优先</p></div>
+      <a href="{{ u('/settings') }}" class="btn-ghost hidden sm:inline-flex">设置</a>
+    </div>
+    <div class="relative mt-5 grid grid-cols-3 divide-x divide-slate-700/30 border-t border-slate-700/30 pt-4 text-center">
+      <div><p class="text-xl font-medium tabular-nums text-violet-200">{{ stats.record_days }}</p><p class="metric-label">记录天数</p></div>
+      <div><p class="text-xl font-medium tabular-nums text-cyan-300">{{ stats.habit_count }}</p><p class="metric-label">习惯打卡</p></div>
+      <div><p class="text-xl font-medium tabular-nums text-emerald-300">{{ stats.best_streak }}</p><p class="metric-label">最长连续</p></div>
     </div>
   </section>
 
-  <div class="space-y-2.5">
-    {% set items = [('/ai', 'AI 分析', '数据分析报告 · 智能问答',
-                     'M12 3v3m6.4-.4-2.1 2.1M21 12h-3m.4 6.4-2.1-2.1M12 18v3m-6.4-.4 2.1-2.1M3 12h3m-.4-6.4 2.1 2.1M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z'),
-                    ('/discipline', '自律 / 释放', '三星“起飞”自动同步 · 自律天数 · 释放历史',
-                     'M12 21s7-4.35 7-11A7 7 0 0 0 5 3c0 4.5 7 8 7 8ZM9 11l2 2 4-4'),
-                    ('/habits', '养生打卡', '习惯管理 · streak · 月完成率',
-                     'M22 11.1V12a10 10 0 1 1-5.93-9.14M22 4 12 14.01l-3-3'),
-                    ('/diet/recipes', '食疗方库', '药膳浏览 · 按功效筛选',
-                     'M4 19.5A2.5 2.5 0 0 1 6.5 17H20M4 19.5A2.5 2.5 0 0 0 6.5 22H20V2H6.5A2.5 2.5 0 0 0 4 4.5v15Z'),
-                    ('/diet/foods', '食物库', '自定义食物 · 增删改营养值',
-                     'M18 8h1a4 4 0 0 1 0 8h-1M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8ZM6 1v3M10 1v3M14 1v3'),
-                    ('/workout/plans', '训练计划', '7 套预置计划 · 启动/查看',
-                     'M6.5 6.5v11M17.5 6.5v11M3 9.5v5M21 9.5v5M6.5 12h11'),
-                    ('/report', '报告', '日报 · 周报 · 月报 + 手写复盘',
-                     'M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z'),
-                    ('/achievements', '成就', '连续纪录 · 累计里程碑 · 个人 PR',
-                     'M6 9a6 6 0 1 0 12 0A6 6 0 0 0 6 9ZM9 14.5 7.5 21 12 18.5 16.5 21 15 14.5'),
-                    ('/report/annual', '年度回顾', '全年训练/跑量/体重/成就一页定格',
-                     'M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83'),
-                    ('/fitness', '体测', '四项自测协议 · 雷达图 · 4-8 周复测',
-                     'M22 12h-4l-3 9L9 3l-3 9H2'),
-                    ('/labs', '化验档案', '体检指标结构化 · 多年趋势 · AI 解析',
-                     'M10 2v7.5L4.5 19a2 2 0 0 0 1.8 3h11.4a2 2 0 0 0 1.8-3L14 9.5V2M8.5 2h7M7 16h10'),
-                    ('/scale', '秤接收状态', '实时看测量有没有到 · 开秤监听',
-                     'M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2ZM8 9a4.5 4.5 0 0 1 8 0M12 11l1.8-1.8'),
-                    ('/agent-log', 'Agent 记录', 'agent 写入流水 · 核对 · 撤销',
-                     'M12 8V4H8m8 0h-4M4 12a8 8 0 0 1 16 0v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-6ZM9 13h.01M15 13h.01M9 17h6'),
-                    ('/settings', '设置', '目标值 · 数据导入 · CSV 导出',
-                     'M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6')] %}
-    {% for href, label, desc, icon in items %}
-    <a href="{{ u(href) }}" class="list-row transition-colors active:bg-slate-800/70">
-      <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-700/60 bg-slate-800/80 text-emerald-400">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
-             stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5">
-          <path d="{{ icon }}"/>
-        </svg>
-      </span>
-      <span class="min-w-0 flex-1">
-        <span class="block font-semibold text-slate-200">{{ label }}</span>
-        <span class="block text-sm text-slate-400">{{ desc }}</span>
-      </span>
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-           stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0 text-slate-600">
-        <path d="m9 6 6 6-6 6"/>
-      </svg>
-    </a>
-    {% endfor %}
-  </div>
+  {% set groups = [
+    ('健康档案', '你最常回看的长期记录', [
+      ('/discipline','自律 / 释放','自律天数与释放历史','♣','text-emerald-300 bg-emerald-500/10'),
+      ('/labs','化验档案','化验单识别与多年趋势','⌑','text-amber-300 bg-amber-500/10'),
+      ('/habits','习惯管理','打卡、连击和月完成率','✓','text-cyan-300 bg-cyan-500/10'),
+      ('/fitness','体测档案','周期自测与能力变化','◇','text-rose-300 bg-rose-500/10')
+    ]),
+    ('洞察与回顾', '让数据变成可以行动的结论', [
+      ('/report','健康报告','日报、周报与月度复盘','▤','text-violet-300 bg-violet-500/10'),
+      ('/ai','AI 分析','数据分析与可执行问答','✦','text-fuchsia-300 bg-fuchsia-500/10'),
+      ('/report/annual','年度回顾','全年变化一页定格','◷','text-sky-300 bg-sky-500/10'),
+      ('/achievements','成就','连续记录与个人里程碑','☆','text-yellow-300 bg-yellow-500/10')
+    ]),
+    ('数据与工具', '低频管理入口集中放在这里', [
+      ('/agent-log','Agent 流水','核对和撤销自动写入','↻','text-sky-300 bg-sky-500/10'),
+      ('/scale','秤接收状态','检查体脂秤是否到数','◎','text-emerald-300 bg-emerald-500/10'),
+      ('/diet/foods','食物库','维护自定义食物营养','⌕','text-orange-300 bg-orange-500/10'),
+      ('/diet/recipes','食疗方库','按功效浏览药膳','♧','text-lime-300 bg-lime-500/10'),
+      ('/workout/plans','训练计划','预置计划与执行状态','△','text-cyan-300 bg-cyan-500/10'),
+      ('/workout/exercises','动作库','动作要领与进阶链','⌁','text-blue-300 bg-blue-500/10'),
+      ('/settings','设置与备份','目标、同步、导入和导出','⚙','text-violet-300 bg-violet-500/10')
+    ])
+  ] %}
 
-  <form method="post" action="{{ u('/logout') }}" class="pt-2">
-    <button type="submit" class="btn-ghost w-full">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
-           stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4">
-        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>
-      </svg>
-      退出登录
-    </button>
-  </form>
+  {% for title, desc, items in groups %}
+  <section class="space-y-3">
+    <div class="section-heading"><div><h2>{{ title }}</h2><p>{{ desc }}</p></div></div>
+    <div class="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
+      {% for href, label, text, icon, color in items %}
+      <a href="{{ u(href) }}" class="app-panel flex min-h-[88px] items-center gap-3 p-3.5 transition hover:-translate-y-0.5 hover:border-violet-500/25">
+        <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-lg {{ color }}">{{ icon }}</span>
+        <span class="min-w-0 flex-1"><span class="block text-sm font-medium text-slate-200">{{ label }}</span><span class="mt-1 block text-xs leading-relaxed text-slate-600">{{ text }}</span></span>
+        <span class="text-slate-700">›</span>
+      </a>
+      {% endfor %}
+    </div>
+  </section>
+  {% endfor %}
 
+  <form method="post" action="{{ u('/logout') }}"><button type="submit" class="btn-ghost w-full sm:w-auto">退出登录</button></form>
 </div>
 {% endblock %}

@@ -310,8 +310,9 @@ def test_metrics_page_renders_with_hidden(db, page, restore_display_setting):
 def test_today_overview_fragment(db, page):
     resp = page.get("/fragments/today/overview")
     assert resp.status_code == 200
-    assert "今日概览" in resp.text
-    assert "数据通道" in resp.text
+    assert "体重与体成分" in resp.text
+    assert "今日活动" in resp.text
+    assert "同步状态" in resp.text
     assert "需要时补录" not in resp.text
 
 

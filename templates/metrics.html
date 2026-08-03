@@ -1,13 +1,20 @@
 {% extends "base.html" %}
 {% block title %}身体指标 · shadow-health{% endblock %}
-{% block page_title %}身体指标{% endblock %}
+{% block page_title %}身体趋势{% endblock %}
 {% block content %}
 <div class="space-y-5">
-  {% include "fragments/metrics_preferences.html" %}
+  <div class="section-heading">
+    <div><p class="eyebrow">BODY TRENDS</p><h2 class="mt-1">身体趋势</h2><p>自动数据优先，手工只用于补录和修正</p></div>
+    <a href="{{ u('/scale') }}" class="btn-ghost hidden sm:inline-flex">体脂秤状态</a>
+  </div>
 
-  <details class="group">
+  <div class="grid items-start gap-5 xl:grid-cols-[17rem_minmax(0,1fr)]">
+    <aside class="order-2 space-y-4 xl:order-1 xl:sticky xl:top-24">
+      {% include "fragments/metrics_preferences.html" %}
+
+  <details id="metrics-entry" class="group app-panel">
     <summary class="card flex min-h-[64px] cursor-pointer list-none items-center gap-3 [&::-webkit-details-marker]:hidden">
-      <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-700/60 bg-slate-800/70 text-emerald-400">＋</span>
+      <span class="icon-tile">＋</span>
       <span class="min-w-0 flex-1">
         <span class="block text-sm font-semibold text-slate-200">需要时补录或修正</span>
         <span class="mt-0.5 block text-xs text-slate-500">自动体重和手表数据不会重复提交</span>
@@ -18,7 +25,7 @@
         <path d="m9 6 6 6-6 6"/>
       </svg>
     </summary>
-  <section class="card mt-4">
+  <section class="border-t border-slate-800/60 p-4">
     <h2 class="card-title">记录指标</h2>
     <div id="metrics-entry-form-frame"
          hx-get="{{ u('/fragments/metrics/form') }}"
@@ -28,15 +35,19 @@
     </div>
   </section>
   </details>
+    </aside>
 
+    <div class="order-1 space-y-5 xl:order-2">
   <section class="card">
-    <h2 class="card-title">趋势</h2>
+    <div class="section-heading mb-4 px-0"><div><h2>趋势图</h2><p>点击指标和时间范围切换</p></div></div>
     {% include "fragments/metrics_chart.html" %}
   </section>
 
   <section class="card">
-    <h2 class="card-title">最近 30 天</h2>
+    <div class="section-heading mb-4 px-0"><div><h2>最近记录</h2><p>手动与自动来源会分别标记</p></div></div>
     {% include "fragments/metrics_history.html" %}
   </section>
+    </div>
+  </div>
 </div>
 {% endblock %}

@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}报告 · shadow-health{% endblock %}
-{% block page_title %}报告{% endblock %}
+{% block page_title %}报告与复盘{% endblock %}
 {% block content %}
+<div class="mb-5 section-heading"><div><p class="eyebrow">REPORTS</p><h2 class="mt-1">报告与复盘</h2><p>把每天的数据整理成周期性结论</p></div><a href="{{ u('/ai') }}" class="btn-primary hidden sm:inline-flex">✦ AI 分析</a></div>
 {% include "fragments/report_tabs.html" %}
 {% endblock %}

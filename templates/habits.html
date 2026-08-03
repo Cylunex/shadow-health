@@ -1,7 +1,8 @@
 {% extends "base.html" %}
-{% block page_title %}养生打卡{% endblock %}
+{% block page_title %}习惯管理{% endblock %}
 {% block content %}
 <div class="space-y-5">
+  <div class="section-heading"><div><p class="eyebrow">HABITS</p><h2 class="mt-1">习惯管理</h2><p>管理启停、连击与月完成率</p></div></div>
   {# 汇总条：打卡/启停后经 HX-Trigger: habit-changed 被动刷新 #}
   <div hx-get="{{ u('/fragments/habits/summary') }}" hx-trigger="load, habit-changed from:body" hx-swap="innerHTML">
     <div class="rounded-xl border border-slate-800/70 bg-slate-900/60 px-3.5 py-3 text-sm text-slate-500 animate-pulse">汇总加载中…</div>

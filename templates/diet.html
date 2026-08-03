@@ -1,10 +1,15 @@
 {% extends "base.html" %}
-{% block page_title %}饮食{% endblock %}
+{% block page_title %}饮食记录{% endblock %}
 {% block content %}
 {# chips 一击记录通过 hx-include 携带当前查看的日期 #}
 <input type="hidden" id="diet-date" name="d" value="{{ d.isoformat() }}">
 
-<div class="space-y-5">
+<div class="space-y-5" x-data>
+
+  <div class="section-heading">
+    <div><p class="eyebrow">DIET RECORDS</p><h2 class="mt-1">饮食记录</h2><p>Agent 与餐照负责录入，你只需要核对</p></div>
+    <a href="{{ u('/diet/foods') }}" class="btn-ghost hidden sm:inline-flex">食物库</a>
+  </div>
 
   {# 翻天导航：一体化胶囊 ‹ 日期 › #}
   <div class="card rounded-full p-1.5 flex items-center justify-between gap-2">
@@ -29,14 +34,23 @@
 
   {# 日热量/蛋白汇总 vs 目标 #}
   <section class="card">
-    <h2 class="card-title">当日摄入</h2>
+    <div class="section-heading mb-4 px-0"><div><h2>摄入总计</h2><p>当日营养与目标进度</p></div></div>
     {% include "fragments/diet_summary.html" %}
   </section>
 
+  <section class="grid grid-cols-4 gap-2 sm:gap-3">
+    <form method="post" action="{{ u('/diet/photos') }}" enctype="multipart/form-data" onchange="if(this.file.files.length)this.submit()">
+      <label class="quick-action h-full cursor-pointer"><span class="text-lg text-violet-300">▣</span><span>拍照识别</span><input type="file" name="file" accept="image/*" capture="environment" class="hidden"></label>
+    </form>
+    <button type="button" class="quick-action" onclick="document.getElementById('manual-diet').open=true;document.getElementById('diet-q').focus()"><span class="text-lg text-cyan-300">⌕</span><span>搜索食物</span></button>
+    <button type="button" class="quick-action" onclick="document.getElementById('manual-diet').open=true;document.getElementById('manual-diet').scrollIntoView({behavior:'smooth'})"><span class="text-lg text-red-300">⌗</span><span>扫码条码</span></button>
+    <button type="button" class="quick-action" onclick="document.getElementById('manual-diet').open=true;document.getElementById('diet-q').focus()"><span class="text-lg text-emerald-300">＋</span><span>手动记录</span></button>
+  </section>
+
   {# Agent 已是主要录入方式，手工扫码/表单/快捷项默认折叠。 #}
-  <details class="group">
+  <details id="manual-diet" class="group">
     <summary class="card flex min-h-[64px] cursor-pointer list-none items-center gap-3 [&::-webkit-details-marker]:hidden">
-      <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-700/60 bg-slate-800/70 text-emerald-400">＋</span>
+      <span class="icon-tile">＋</span>
       <span class="min-w-0 flex-1">
         <span class="block text-sm font-semibold text-slate-200">需要时手工录入</span>
         <span class="mt-0.5 block text-xs text-slate-500">扫码、搜索食物和快捷记录</span>
@@ -134,8 +148,6 @@
   {# 最近常吃 chips（近 30 天 top8，一击记录） #}
   {% include "fragments/diet_chips.html" %}
 
-  {# 组合菜谱 chips（V6 P5：常规餐一键整组记录） #}
-  {% include "fragments/diet_templates.html" %}
     </div>
   </details>
 
@@ -144,6 +156,11 @@
 
   {# 四餐分组列表 #}
   {% include "fragments/diet_day.html" %}
+
+  <section class="card">
+    <div class="section-heading mb-3 px-0"><div><h2>常用组合</h2><p>一键记录整套餐食</p></div><a href="{{ u('/diet/foods') }}" class="text-xs text-violet-300">管理食物 ›</a></div>
+    {% include "fragments/diet_templates.html" %}
+  </section>
 
   <div class="text-center">
     <a href="{{ u('/diet/recipes') }}" class="btn-ghost px-6">🌿 食疗方库</a>

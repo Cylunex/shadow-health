@@ -4,15 +4,19 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>登录 · shadow-health</title>
-  <link rel="stylesheet" href="{{ u('/static/app.css') }}">
+  <link rel="stylesheet" href="{{ u('/static/app.css') }}?v=26">
 </head>
-<body class="text-slate-100 min-h-screen flex items-center justify-center px-6 py-10 antialiased">
-  <form method="post" action="{{ u('/login') }}" class="card w-full max-w-sm p-6 space-y-5 fade-in">
+<body class="relative flex min-h-screen items-center justify-center overflow-hidden px-6 py-10 text-slate-100 antialiased">
+  <div class="pointer-events-none absolute left-1/2 top-1/2 h-[34rem] w-[34rem] -translate-x-1/2 -translate-y-1/2 rounded-full bg-violet-600/10 blur-3xl"></div>
+  <form method="post" action="{{ u('/login') }}" class="app-panel fade-in relative w-full max-w-sm space-y-5 p-6 sm:p-7">
     <div class="flex flex-col items-center gap-3 pt-2">
-      <img src="{{ u('/static/icon.svg') }}" alt="shadow-health" class="w-14 h-14 drop-shadow-[0_0_18px_rgba(52,211,153,0.35)]">
+      <span class="relative flex h-16 w-16 items-center justify-center rounded-full border border-violet-400/25 bg-violet-500/10">
+        <span class="h-4 w-4 rounded-full bg-violet-400 shadow-[0_0_20px_rgba(139,92,246,.9)]"></span>
+        <span class="absolute inset-2 rounded-full border-2 border-violet-400/60 border-r-cyan-300/70"></span>
+      </span>
       <div class="text-center">
         <h1 class="text-xl font-bold tracking-wide">shadow-health</h1>
-        <p class="mt-1 text-xs text-slate-500">私人健康管理面板</p>
+        <p class="mt-1 text-xs text-slate-500">数据只属于你的私人健康管理面板</p>
       </div>
     </div>
     {% if error %}
@@ -28,7 +32,8 @@
       <label class="field-label">访问密码</label>
       <input type="password" name="password" placeholder="密码" autofocus required class="field">
     </div>
-    <button type="submit" class="btn-primary w-full">登录</button>
+    <button type="submit" class="btn-primary w-full">进入健康档案</button>
+    <p class="text-center text-[10px] text-slate-700">NAS PRIVATE · LOCAL FIRST</p>
   </form>
 </body>
 </html>

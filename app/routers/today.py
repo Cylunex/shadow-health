@@ -21,6 +21,7 @@ from app.models import (
     Habit,
     HabitLog,
     ImportRaw,
+    SleepSession,
     SyncState,
     WorkoutLog,
 )
@@ -92,6 +93,9 @@ def _overview_ctx(db: Session, day: date | None = None) -> dict:
             "is_today": body.log_date == day,
             "source": _SOURCE_LABELS.get(source, "手动"),
             "delta": delta,
+            "muscle": float(body.muscle_mass_kg) if body.muscle_mass_kg is not None else None,
+            "visceral": body.visceral_fat_level,
+            "bmr": body.bmr_kcal,
         }
 
     activity = db.get(DailyActivity, day)
@@ -115,6 +119,12 @@ def _overview_ctx(db: Session, day: date | None = None) -> dict:
         ).where(DietLog.log_date == day)
     ).one()
     sleep_min = total_sleep_min(db, day)
+    sleep_session = db.execute(
+        select(SleepSession)
+        .where(SleepSession.wake_date == day)
+        .order_by(SleepSession.end_at.desc())
+        .limit(1)
+    ).scalar_one_or_none()
     if not sleep_min:
         today_body = db.execute(
             select(BodyMetrics).where(BodyMetrics.log_date == day)
@@ -140,10 +150,14 @@ def _overview_ctx(db: Session, day: date | None = None) -> dict:
         "weight": weight,
         "steps": activity.steps if activity is not None else None,
         "steps_label": f"{activity.steps:,}" if activity is not None and activity.steps is not None else "—",
+        "target_steps": _target_steps(db),
+        "active_kcal": round(float(activity.active_kcal)) if activity is not None and activity.active_kcal is not None else None,
         "workout_count": int(workout_count),
         "workout_min": int(workout_min),
         "workout_label": session_label(latest_workout.session_type) if latest_workout else "",
         "sleep_h": round(sleep_min / 60, 1) if sleep_min else None,
+        "sleep_start": sleep_session.start_at.strftime("%H:%M") if sleep_session else None,
+        "sleep_end": sleep_session.end_at.strftime("%H:%M") if sleep_session else None,
         "diet_count": int(diet_count),
         "diet_kcal": round(float(diet_kcal)),
         "diet_protein": round(float(diet_protein), 1),

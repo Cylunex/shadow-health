@@ -1,15 +1,16 @@
 {% extends "base.html" %}
-{% block page_title %}Agent 记录{% endblock %}
+{% block page_title %}Agent 流水{% endblock %}
 {% block content %}
 <div class="space-y-4">
+  <div class="section-heading"><div><p class="eyebrow">AGENT AUDIT</p><h2 class="mt-1">Agent 流水</h2><p>核对、追踪并撤销自动写入</p></div></div>
 
   {# 类型筛选：状态放 URL query（轮询整块替换留不住 DOM 态），点击整页跳转 #}
   <div class="flex flex-wrap gap-1.5 text-xs">
     <a href="{{ u('/agent-log') }}"
-       class="rounded-full px-3 py-1.5 {{ 'bg-emerald-600 text-white' if not rtype else 'bg-slate-800 text-slate-300' }}">全部</a>
+       class="chip min-h-[36px] {{ 'chip-active' if not rtype else '' }}">全部</a>
     {% for t, label in type_labels.items() %}
     <a href="{{ u('/agent-log') }}?t={{ t }}"
-       class="rounded-full px-3 py-1.5 {{ 'bg-emerald-600 text-white' if rtype == t else 'bg-slate-800 text-slate-300' }}">{{ label }}</a>
+       class="chip min-h-[36px] {{ 'chip-active' if rtype == t else '' }}">{{ label }}</a>
     {% endfor %}
   </div>
 

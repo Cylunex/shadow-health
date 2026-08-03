@@ -65,7 +65,7 @@ PREFIX = {"X-Forwarded-Prefix": "/shealth"}
 
 def test_login_page_urls_prefixed(client):
     html = client.get("/login", headers=PREFIX).text
-    assert '"/shealth/static/app.css"' in html
+    assert '"/shealth/static/app.css?v=' in html
     assert 'action="/shealth/login"' in html
     # 不允许再冒出裸的 /static 引用
     assert 'href="/static/' not in html
@@ -73,7 +73,7 @@ def test_login_page_urls_prefixed(client):
 
 def test_login_page_urls_bare_without_header(client):
     html = client.get("/login").text
-    assert 'href="/static/app.css"' in html
+    assert 'href="/static/app.css?v=' in html
     assert "/shealth" not in html
 
 

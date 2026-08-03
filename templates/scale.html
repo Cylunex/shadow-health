@@ -1,7 +1,8 @@
 {% extends "base.html" %}
-{% block page_title %}秤接收状态{% endblock %}
+{% block page_title %}体脂秤接收{% endblock %}
 {% block content %}
 <div class="space-y-4">
+  <div class="section-heading"><div><p class="eyebrow">SCALE STATUS</p><h2 class="mt-1">体脂秤接收</h2><p>实时确认测量是否到达 NAS</p></div></div>
 
   {# 壳内专属：一页完成 开监听 → 上秤 → 看结果；浏览器里只看状态。
      注意用内联 display:none——btn-primary 的 display:inline-flex 会压过 hidden 属性 #}

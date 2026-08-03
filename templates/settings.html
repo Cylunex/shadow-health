@@ -1,8 +1,10 @@
 {% extends "base.html" %}
 {% block title %}设置 · shadow-health{% endblock %}
-{% block page_title %}设置{% endblock %}
+{% block page_title %}数据与设置{% endblock %}
 {% block content %}
 <div class="space-y-5">
+  <div class="section-heading"><div><p class="eyebrow">DATA & SETTINGS</p><h2 class="mt-1">数据与设置</h2><p>目标、模型、同步、导入和备份</p></div></div>
+  <div class="grid items-start gap-5 xl:grid-cols-2">
   <section class="card">
     <h2 class="card-title">目标值</h2>
     {% include "fragments/settings_targets.html" %}
@@ -50,5 +52,6 @@
       一键全量备份（全部表 CSV + 照片 zip）
     </a>
   </section>
+  </div>
 </div>
 {% endblock %}

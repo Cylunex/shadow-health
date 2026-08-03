@@ -1,11 +1,11 @@
 {# 展示与录入字段独立配置；两个保存动作只刷新各自消费者。 #}
 <details id="metrics-preferences"
-         class="group rounded-2xl border border-slate-800/70 bg-slate-900/35"
+         class="group app-panel"
          {% if settings_saved %}open{% endif %}>
   <summary class="flex min-h-[56px] cursor-pointer list-none items-center gap-3 px-4 [&::-webkit-details-marker]:hidden">
-    <span class="text-base">⚙️</span>
+    <span class="icon-tile h-8 w-8 text-xs">◎</span>
     <span class="min-w-0 flex-1">
-      <span class="block text-sm font-medium text-slate-300">自定义指标</span>
+      <span class="block text-sm font-medium text-slate-200">指标管理</span>
       <span class="block text-xs text-slate-500">展示和录入分别控制</span>
     </span>
     {% if settings_saved %}
