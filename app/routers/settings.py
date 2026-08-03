@@ -269,8 +269,8 @@ _LLM_ENV_KEYS = {
 }
 
 
-def _llm_raw(db: Session) -> dict:
-    row = db.get(AppSetting, llm.CONFIG_KEY)
+def _llm_raw(db: Session, key: str = llm.CONFIG_KEY) -> dict:
+    row = db.get(AppSetting, key)
     return row.value if row is not None and isinstance(row.value, dict) else {}
 
 
@@ -282,13 +282,14 @@ def _llm_context(
     test_error: str | None = None,
 ) -> dict[str, Any]:
     raw = _llm_raw(db)
+    vision_raw = _llm_raw(db, llm.VISION_CONFIG_KEY)
 
-    def sub(p: str) -> dict:
-        v = raw.get(p)
+    def sub(source: dict, p: str) -> dict:
+        v = source.get(p)
         return v if isinstance(v, dict) else {}
 
-    def key_hint(p: str) -> str:
-        k = str(sub(p).get("api_key") or "")
+    def key_hint(source: dict, p: str) -> str:
+        k = str(sub(source, p).get("api_key") or "")
         if k:
             masked = f"{k[:4]}……{k[-4:]}" if len(k) > 12 else "已配置"
             return f"已保存（{masked}）——留空保持不变，输入「清除」删除"
@@ -298,19 +299,33 @@ def _llm_context(
         return f"未配置（也可写 .env 的 {env_names}）"
 
     effective = llm.get_config(db)
+    vision_effective = llm.get_vision_config(db)
     return {
         "llm_provider": raw.get("provider") if raw.get("provider") in llm.PROVIDERS else "claude",
         "llm_forms": {
             p: {
-                "model": str(sub(p).get("model") or ""),
-                "base_url": str(sub(p).get("base_url") or ""),
+                "model": str(sub(raw, p).get("model") or ""),
+                "base_url": str(sub(raw, p).get("base_url") or ""),
             }
             for p in llm.PROVIDERS
         },
-        "llm_key_hints": {p: key_hint(p) for p in llm.PROVIDERS},
+        "llm_key_hints": {p: key_hint(raw, p) for p in llm.PROVIDERS},
+        "llm_vision_provider": (
+            vision_raw.get("provider") if vision_raw.get("provider") in llm.PROVIDERS else ""
+        ),
+        "llm_vision_forms": {
+            p: {
+                "model": str(sub(vision_raw, p).get("model") or ""),
+                "base_url": str(sub(vision_raw, p).get("base_url") or ""),
+            }
+            for p in llm.PROVIDERS
+        },
+        "llm_vision_key_hints": {p: key_hint(vision_raw, p) for p in llm.PROVIDERS},
         "llm_defaults": llm.DEFAULT_MODELS,
         "llm_effective": effective,
         "llm_effective_label": llm.PROVIDER_LABELS[effective["provider"]],
+        "llm_vision_effective": vision_effective,
+        "llm_vision_effective_label": llm.PROVIDER_LABELS[vision_effective["provider"]],
         "llm_saved": saved,
         "llm_errors": errors or [],
         "llm_test_result": test_result,
@@ -326,44 +341,58 @@ def _llm_fragment(request: Request, db: Session, **kwargs):
 
 @router.post("/llm")
 async def llm_save(request: Request, db: Session = Depends(get_db)):
-    """保存 LLM 配置到 app_settings['llm_config']（Key 留空=不变、「清除」=删）。"""
+    """保存主/识图 LLM 配置（Key 留空=不变、「清除」=删）。"""
     form = await request.form()
     prev = _llm_raw(db)
+    vision_prev = _llm_raw(db, llm.VISION_CONFIG_KEY)
     errors: list[str] = []
 
     provider = str(form.get("provider") or "").strip()
     if provider not in llm.PROVIDERS:
         provider = "claude"
-    new_cfg: dict[str, Any] = {"provider": provider}
-    for p in llm.PROVIDERS:
-        prev_sub = prev.get(p) if isinstance(prev.get(p), dict) else {}
-        model = str(form.get(f"{p}_model") or "").strip()[:100]
-        base_url = str(form.get(f"{p}_base_url") or "").strip()[:300]
-        if base_url and not base_url.startswith(("http://", "https://")):
-            errors.append(f"{llm.PROVIDER_LABELS[p]} 的 Base URL 须以 http(s):// 开头")
-            base_url = str(prev_sub.get("base_url") or "")
-        key_in = str(form.get(f"{p}_api_key") or "").strip()
-        if key_in == "":
-            api_key = str(prev_sub.get("api_key") or "")  # 留空 = 保持不变
-        elif key_in == "清除":
-            api_key = ""
-        else:
-            api_key = key_in[:400]
-        new_cfg[p] = {"model": model, "base_url": base_url, "api_key": api_key}
+    vision_provider = str(form.get("vision_provider") or "").strip()
+    if vision_provider not in llm.PROVIDERS:
+        vision_provider = ""
 
-    stmt = pg_insert(AppSetting).values(key=llm.CONFIG_KEY, value=new_cfg)
-    stmt = stmt.on_conflict_do_update(
-        index_elements=["key"],
-        set_={"value": stmt.excluded.value, "updated_at": text("now()")},
-    )
-    db.execute(stmt)
+    def parse_config(prefix: str, selected: str, previous: dict) -> dict[str, Any]:
+        new_cfg: dict[str, Any] = {"provider": selected}
+        scope = "识图 " if prefix else ""
+        for p in llm.PROVIDERS:
+            prev_sub = previous.get(p) if isinstance(previous.get(p), dict) else {}
+            model = str(form.get(f"{prefix}{p}_model") or "").strip()[:100]
+            base_url = str(form.get(f"{prefix}{p}_base_url") or "").strip()[:300]
+            if base_url and not base_url.startswith(("http://", "https://")):
+                errors.append(
+                    f"{scope}{llm.PROVIDER_LABELS[p]} 的 Base URL 须以 http(s):// 开头"
+                )
+                base_url = str(prev_sub.get("base_url") or "")
+            key_in = str(form.get(f"{prefix}{p}_api_key") or "").strip()
+            if key_in == "":
+                api_key = str(prev_sub.get("api_key") or "")  # 留空 = 保持不变
+            elif key_in == "清除":
+                api_key = ""
+            else:
+                api_key = key_in[:400]
+            new_cfg[p] = {"model": model, "base_url": base_url, "api_key": api_key}
+        return new_cfg
+
+    for key, value in (
+        (llm.CONFIG_KEY, parse_config("", provider, prev)),
+        (llm.VISION_CONFIG_KEY, parse_config("vision_", vision_provider, vision_prev)),
+    ):
+        stmt = pg_insert(AppSetting).values(key=key, value=value)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["key"],
+            set_={"value": stmt.excluded.value, "updated_at": text("now()")},
+        )
+        db.execute(stmt)
     db.flush()
     return _llm_fragment(request, db, saved=not errors, errors=errors)
 
 
 @router.post("/llm/test")
 async def llm_test(request: Request, db: Session = Depends(get_db)):
-    """用当前已保存配置发一条最小请求验证连通性（同步短等待，photo 识别同款口径）。"""
+    """用当前主配置发一条最小文本请求验证连通性。"""
     from starlette.concurrency import run_in_threadpool
 
     try:
@@ -381,6 +410,38 @@ async def llm_test(request: Request, db: Session = Depends(get_db)):
         return _llm_fragment(request, db, test_error=str(e))
     except Exception as e:  # SDK 之外的意外（配置怪值等）也要给出可读提示
         return _llm_fragment(request, db, test_error=f"测试失败：{str(e)[:200]}")
+
+
+@router.post("/llm/vision-test")
+async def llm_vision_test(request: Request, db: Session = Depends(get_db)):
+    """发送一张 1×1 PNG，验证独立识图配置（或主配置回退）确实支持图片。"""
+    import base64
+
+    from starlette.concurrency import run_in_threadpool
+
+    pixel = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+    )
+    try:
+        reply = await run_in_threadpool(
+            llm._call,
+            db,
+            "你是识图连通性测试助手。",
+            "这是一张测试图片，请只回复两个字：正常",
+            [("image/png", base64.b64encode(pixel).decode())],
+            2000,
+        )
+        cfg = llm.get_vision_config(db)
+        source = "（回退主配置）" if cfg["fallback_to_main"] else ""
+        result = (
+            f"识图连接正常{source}：{llm.PROVIDER_LABELS[cfg['provider']]} · {cfg['model']}"
+            f" → 「{reply[:40]}」"
+        )
+        return _llm_fragment(request, db, test_result=result)
+    except llm.LLMError as e:
+        return _llm_fragment(request, db, test_error=str(e))
+    except Exception as e:
+        return _llm_fragment(request, db, test_error=f"识图测试失败：{str(e)[:200]}")
 
 
 # ---------- CSV 导出 ----------

@@ -5,7 +5,7 @@
       hx-target="this"
       hx-swap="outerHTML"
       hx-disabled-elt="find button"
-      x-data="{ p: '{{ llm_provider }}' }"
+      x-data="{ p: '{{ llm_provider }}', vp: '{{ llm_vision_provider }}' }"
       class="space-y-4">
 
   {% if llm_saved %}
@@ -30,7 +30,12 @@
   </div>
   {% endif %}
 
-  {# 供应商切换 #}
+  <div>
+    <p class="text-sm font-semibold text-slate-200">主模型</p>
+    <p class="mt-0.5 text-xs text-slate-500">用于健康分析和 AI 问答</p>
+  </div>
+
+  {# 主模型供应商切换 #}
   <input type="hidden" name="provider" :value="p">
   <div class="grid grid-cols-2 gap-1.5">
     <button type="button" @click="p = 'claude'"
@@ -82,17 +87,83 @@
   </div>
 
   <p class="text-xs text-slate-500">
-    当前生效：{{ llm_effective_label }} · {{ llm_effective.model }} ·
+    主模型当前生效：{{ llm_effective_label }} · {{ llm_effective.model }} ·
     {% if not llm_effective.configured %}<span class="text-amber-400">未配置 Key</span>
     {% elif llm_effective.key_from_env %}Key 来自 .env{% else %}Key 来自此页{% endif %}。
-    AI 分析、问答与餐照识别共用这套配置。
+  </p>
+
+  <div class="border-t border-slate-800 pt-4">
+    <p class="text-sm font-semibold text-slate-200">识图模型</p>
+    <p class="mt-0.5 text-xs text-slate-500">用于餐食照片和化验单识别；未单独启用时自动使用主模型</p>
+  </div>
+
+  <input type="hidden" name="vision_provider" :value="vp">
+  <div class="grid grid-cols-3 gap-1.5">
+    <button type="button" @click="vp = ''"
+            :class="vp === '' ? 'chip-active' : ''"
+            class="chip min-h-[44px]">跟随主模型</button>
+    <button type="button" @click="vp = 'claude'"
+            :class="vp === 'claude' ? 'chip-active' : ''"
+            class="chip min-h-[44px]">Claude</button>
+    <button type="button" @click="vp = 'openai'"
+            :class="vp === 'openai' ? 'chip-active' : ''"
+            class="chip min-h-[44px]">OpenAI</button>
+  </div>
+
+  <div x-show="vp === 'claude'" class="space-y-3">
+    <label class="block">
+      <span class="field-label">识图模型（留空 = {{ llm_defaults['claude'] }}）</span>
+      <input type="text" name="vision_claude_model" value="{{ llm_vision_forms['claude'].model }}"
+             placeholder="{{ llm_defaults['claude'] }}" autocomplete="off" class="field">
+    </label>
+    <label class="block">
+      <span class="field-label">识图 API Key</span>
+      <input type="password" name="vision_claude_api_key" value="" autocomplete="new-password"
+             placeholder="sk-ant-…" class="field">
+      <span class="mt-1 block text-xs text-slate-500">{{ llm_vision_key_hints['claude'] }}</span>
+    </label>
+    <label class="block">
+      <span class="field-label">识图 Base URL（可选）</span>
+      <input type="text" name="vision_claude_base_url" value="{{ llm_vision_forms['claude'].base_url }}"
+             placeholder="https://…" autocomplete="off" class="field">
+    </label>
+  </div>
+
+  <div x-show="vp === 'openai'" class="space-y-3">
+    <label class="block">
+      <span class="field-label">识图模型（留空 = {{ llm_defaults['openai'] }}）</span>
+      <input type="text" name="vision_openai_model" value="{{ llm_vision_forms['openai'].model }}"
+             placeholder="gpt-5.1 / gpt-4o…" autocomplete="off" class="field">
+    </label>
+    <label class="block">
+      <span class="field-label">识图 API Key</span>
+      <input type="password" name="vision_openai_api_key" value="" autocomplete="new-password"
+             placeholder="sk-…" class="field">
+      <span class="mt-1 block text-xs text-slate-500">{{ llm_vision_key_hints['openai'] }}</span>
+    </label>
+    <label class="block">
+      <span class="field-label">识图 Base URL（可选）</span>
+      <input type="text" name="vision_openai_base_url" value="{{ llm_vision_forms['openai'].base_url }}"
+             placeholder="https://…" autocomplete="off" class="field">
+    </label>
+  </div>
+
+  <p class="text-xs text-slate-500">
+    识图当前生效：{{ llm_vision_effective_label }} · {{ llm_vision_effective.model }}
+    {% if llm_vision_effective.fallback_to_main %}（跟随主模型）{% endif %} ·
+    {% if not llm_vision_effective.configured %}<span class="text-amber-400">未配置 Key</span>
+    {% elif llm_vision_effective.key_from_env %}Key 来自 .env{% else %}Key 来自此页{% endif %}。
   </p>
 
   <div class="grid grid-cols-2 gap-2">
     <button type="submit" class="btn-primary">保存</button>
     <button type="button" class="chip min-h-[44px]"
             hx-post="{{ u('/settings/llm/test') }}" hx-target="#settings-llm" hx-swap="outerHTML">
-      测试连接
+      测试主模型
+    </button>
+    <button type="button" class="chip col-span-2 min-h-[44px]"
+            hx-post="{{ u('/settings/llm/vision-test') }}" hx-target="#settings-llm" hx-swap="outerHTML">
+      测试识图模型
     </button>
   </div>
 </form>

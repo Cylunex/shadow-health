@@ -1,6 +1,6 @@
 """LLM 智能分析：健康数据聚合 → Claude / OpenAI 分析、问答与餐照识别。
 
-配置优先级：设置页（app_settings['llm_config']，运行时可改）→ .env 回退：
+主配置优先级：设置页（app_settings['llm_config']，运行时可改）→ .env 回退：
 - Claude：ANTHROPIC_API_KEY（或 ANTHROPIC_AUTH_TOKEN）、ANTHROPIC_BASE_URL、LLM_MODEL
 - OpenAI：OPENAI_API_KEY、OPENAI_BASE_URL（兼容端点如 DeepSeek/Ollama 也走这条）、
   OPENAI_MODEL
@@ -10,6 +10,9 @@ app_settings['llm_config'] 结构（设置页「AI 模型」表单维护）：
  "claude": {"model": "", "api_key": "", "base_url": ""},
  "openai": {"model": "", "api_key": "", "base_url": ""}}
 字段留空即回退 .env / 内置默认；两家配置各自保存，切换 provider 不丢。
+
+图片请求可另存 app_settings['vision_llm_config']（结构同上）；未选择独立供应商时
+完整回退主配置。餐照和化验单识别都自动走该配置，普通分析/问答仍走主配置。
 
 单用户自用尺度：同步客户端 + FastAPI 线程池路由，分析结果缓存进 app_settings。
 """
@@ -40,6 +43,7 @@ from app.models import (
 from app.timeutil import today_local
 
 CONFIG_KEY = "llm_config"
+VISION_CONFIG_KEY = "vision_llm_config"
 PROVIDERS = ("claude", "openai")
 PROVIDER_LABELS = {"claude": "Claude", "openai": "OpenAI"}
 DEFAULT_MODELS = {"claude": "claude-opus-4-8", "openai": "gpt-5.1"}
@@ -87,13 +91,34 @@ def resolve_config(raw: Any) -> dict[str, Any]:
     }
 
 
+def resolve_vision_config(raw: Any, main_raw: Any = None) -> dict[str, Any]:
+    """独立识图配置；未显式选择供应商时完整回退主配置。"""
+    cfg = raw if isinstance(raw, dict) else {}
+    fallback_to_main = cfg.get("provider") not in PROVIDERS
+    effective = resolve_config(main_raw if fallback_to_main else cfg)
+    return {**effective, "fallback_to_main": fallback_to_main}
+
+
 def get_config(db: Session) -> dict[str, Any]:
     row = db.get(AppSetting, CONFIG_KEY)
     return resolve_config(row.value if row is not None else None)
 
 
+def get_vision_config(db: Session) -> dict[str, Any]:
+    row = db.get(AppSetting, VISION_CONFIG_KEY)
+    main = db.get(AppSetting, CONFIG_KEY)
+    return resolve_vision_config(
+        row.value if row is not None else None,
+        main.value if main is not None else None,
+    )
+
+
 def is_configured(db: Session) -> bool:
     return get_config(db)["configured"]
+
+
+def is_vision_configured(db: Session) -> bool:
+    return get_vision_config(db)["configured"]
 
 
 def model_name(db: Session) -> str:
@@ -455,7 +480,8 @@ def _call(
     tools（Claude 原生 {name, description, input_schema} 形态，OpenAI 由适配器
     转换）+ tool_executor 一起给才启用工具调用循环；不传即与旧行为完全一致。
     """
-    cfg = get_config(db)
+    # 只要请求里有图片就走独立识图配置；未启用时 get_vision_config 完整回退主配置。
+    cfg = get_vision_config(db) if images else get_config(db)
     if not cfg["configured"]:
         raise LLMError(
             f"未配置 {PROVIDER_LABELS[cfg['provider']]} API Key——"

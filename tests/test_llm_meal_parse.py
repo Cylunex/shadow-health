@@ -95,3 +95,46 @@ def test_resolve_config_model_env_fallback_claude(monkeypatch):
     monkeypatch.setenv("LLM_MODEL", "claude-legacy")
     cfg = llm.resolve_config({"provider": "claude", "claude": {}})
     assert cfg["model"] == "claude-legacy"  # 兼容旧部署的 LLM_MODEL
+
+
+def test_vision_config_absent_falls_back_to_main():
+    cfg = llm.resolve_vision_config(None, {
+        "provider": "openai",
+        "openai": {"model": "main-model", "api_key": "sk-main"},
+    })
+    assert cfg["fallback_to_main"] is True
+    assert cfg["provider"] == "openai"
+    assert cfg["model"] == "main-model"
+    assert cfg["api_key"] == "sk-main"
+
+
+def test_dedicated_vision_config_overrides_main():
+    cfg = llm.resolve_vision_config(
+        {
+            "provider": "claude",
+            "claude": {"model": "vision-model", "api_key": "sk-vision"},
+        },
+        {
+            "provider": "openai",
+            "openai": {"model": "main-model", "api_key": "sk-main"},
+        },
+    )
+    assert cfg["fallback_to_main"] is False
+    assert cfg["provider"] == "claude"
+    assert cfg["model"] == "vision-model"
+    assert cfg["api_key"] == "sk-vision"
+
+
+def test_image_call_uses_vision_config():
+    vision = {
+        "provider": "openai", "model": "vision-model", "api_key": "sk-v",
+        "base_url": "", "configured": True, "key_from_env": False,
+        "fallback_to_main": False,
+    }
+    with (
+        patch.object(llm, "get_vision_config", return_value=vision),
+        patch.object(llm, "_call_openai", return_value="正常") as call,
+    ):
+        result = llm._call(None, "system", "user", [("image/png", "eA==")])
+    assert result == "正常"
+    assert call.call_args.args[0] == vision

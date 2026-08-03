@@ -82,7 +82,7 @@ def _page_ctx(db: Session, saved: bool = False, error: str | None = None,
         "groups": groups,
         "common_items": COMMON_ITEMS,
         "today": today_local().isoformat(),
-        "ai_on": llm.is_configured(db),
+        "ai_on": llm.is_vision_configured(db),
         "saved": saved,
         "error": error,
         "parsed": parsed,
@@ -177,7 +177,7 @@ def labs_delete(row_id: int, db: Session = Depends(get_db)):
 @router.post("/labs/photo")
 async def labs_photo(request: Request, file: UploadFile, db: Session = Depends(get_db)):
     """化验单照片 → AI 结构化 → 可编辑预览（不直接入库，确认后走 /labs/bulk）。"""
-    if not llm.is_configured(db):
+    if not llm.is_vision_configured(db):
         raise HTTPException(status_code=400, detail="未配置 AI 模型")
     data = await file.read()
     media_type = file.content_type or "image/jpeg"
