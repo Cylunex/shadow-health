@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}自律 / 释放 · shadow-health{% endblock %}
+{% block page_title %}自律 / 释放{% endblock %}
+{% block content %}
+<div class="space-y-5">
+  <section class="card overflow-hidden">
+    <div class="rounded-2xl border border-emerald-800/40 bg-emerald-950/30 px-4 py-5 text-center">
+      {% if summary.current_days is not none %}
+      <p class="text-xs tracking-wide text-emerald-400/80">当前连续自律</p>
+      <p class="mt-1 text-5xl font-bold tabular-nums text-emerald-300">
+        {{ summary.current_days }}<span class="ml-1 text-base font-normal text-emerald-500">天</span>
+      </p>
+      {% if summary.current_days == 0 %}
+      <p class="mt-2 text-xs text-slate-500">今天有释放记录，从现在重新开始</p>
+      {% else %}
+      <p class="mt-2 text-xs text-slate-500">上次释放 {{ summary.latest.log_date }}</p>
+      {% endif %}
+      {% else %}
+      <p class="text-lg font-semibold text-emerald-300">还没有释放记录</p>
+      <p class="mt-1 text-xs text-slate-500">三星健康记录“起飞”后会自动同步到这里</p>
+      {% endif %}
+    </div>
+
+    <div class="mt-4 grid grid-cols-3 gap-2 text-center">
+      <div class="rounded-xl border border-slate-800/70 bg-slate-900/45 px-2 py-3">
+        <p class="text-xl font-bold tabular-nums text-emerald-400">{{ summary.longest_days }}</p>
+        <p class="mt-0.5 text-[11px] text-slate-500">最长自律</p>
+      </div>
+      <div class="rounded-xl border border-slate-800/70 bg-slate-900/45 px-2 py-3">
+        <p class="text-xl font-bold tabular-nums text-rose-300">{{ summary.month_count }}</p>
+        <p class="mt-0.5 text-[11px] text-slate-500">本月释放</p>
+      </div>
+      <div class="rounded-xl border border-slate-800/70 bg-slate-900/45 px-2 py-3">
+        <p class="text-xl font-bold tabular-nums text-slate-300">{{ summary.total_count }}</p>
+        <p class="mt-0.5 text-[11px] text-slate-500">累计记录</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="mb-3 flex items-center justify-between">
+      <h2 class="card-title mb-0">最近 90 天</h2>
+      <div class="flex items-center gap-3 text-[10px] text-slate-500">
+        <span><i class="mr-1 inline-block h-2.5 w-2.5 rounded-sm bg-emerald-900/70"></i>自律</span>
+        <span><i class="mr-1 inline-block h-2.5 w-2.5 rounded-sm bg-rose-400"></i>释放</span>
+      </div>
+    </div>
+    <div class="overflow-x-auto pb-1">
+      <div class="flex min-w-max gap-1">
+        {% for week in weeks %}
+        <div class="grid grid-rows-7 gap-1">
+          {% for d in week.days %}
+          {% if d.future %}
+          <span class="block h-4 w-4 rounded-sm bg-transparent"></span>
+          {% elif d.count %}
+          <span title="{{ d.date }} · 释放 {{ d.count }} 次"
+                class="flex h-4 w-4 items-center justify-center rounded-sm bg-rose-400 text-[8px] font-bold text-rose-950">{% if d.count > 1 %}{{ d.count }}{% endif %}</span>
+          {% else %}
+          <span title="{{ d.date }} · 自律" class="block h-4 w-4 rounded-sm bg-emerald-900/70"></span>
+          {% endif %}
+          {% endfor %}
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2 class="card-title">释放记录</h2>
+    {% if recent %}
+    <div class="divide-y divide-slate-800/70">
+      {% for log in recent %}
+      <div class="flex items-center justify-between gap-3 py-3 first:pt-1 last:pb-0">
+        <div>
+          <p class="text-sm font-medium tabular-nums text-slate-200">{{ log.log_date }} · {{ local_hm(log.started_at) }}</p>
+          <p class="mt-0.5 text-xs text-slate-500">
+            三星健康{% if log.duration_min %} · {{ log.duration_min }} 分钟{% endif %}
+            {% if log.calories %} · {{ log.calories }} kcal{% endif %}
+          </p>
+        </div>
+        {% if log.avg_hr or log.max_hr %}
+        <div class="shrink-0 text-right text-xs tabular-nums text-rose-300/80">
+          {% if log.avg_hr %}<p>均 {{ log.avg_hr }}</p>{% endif %}
+          {% if log.max_hr %}<p class="text-slate-500">峰 {{ log.max_hr }}</p>{% endif %}
+        </div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="py-4 text-center text-sm text-slate-500">暂无记录</p>
+    {% endif %}
+  </section>
+
+  <p class="px-1 text-xs leading-relaxed text-slate-600">
+    这里只接收三星健康中名称精确为“起飞”的记录，不计入训练次数、训练分钟、负荷或准备度。
+  </p>
+</div>
+{% endblock %}

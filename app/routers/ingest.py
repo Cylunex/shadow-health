@@ -14,7 +14,7 @@ POST /api/ingest/health_connect
    （留档可审计，与三星 zip 历史导入一刀切去重）；
   * steps → daily_activity 按日增量累加（HC Steps 是区间记录，import_raw 去重
     保证重发不重复累计）；weight → body_metrics autofill；sleep → sleep_sessions
-    upsert + 按 wake_date 汇总回填 sleep_hours；exercise → workout_logs upsert；
+    upsert + 按 wake_date 汇总回填 sleep_hours；exercise 按类型分流并 upsert；
   * 单条失败置 parse_status='failed' 记 parse_error；整体失败只记
     sync_state.consecutive_failures，绝不 5xx（防手机端重发风暴）。
 - heart_rate / unknown 类型仅留档（parse_status 保持 pending，供后续解析器重放）。
@@ -30,15 +30,24 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
-from sqlalchemy import cast, func, literal_column, select, text, update
+from sqlalchemy import cast, delete, func, literal_column, select, text, update
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import get_db
-from app.models import AppSetting, DailyActivity, ImportRaw, SleepSession, SyncState, WorkoutLog
+from app.models import (
+    AppSetting,
+    DailyActivity,
+    ImportRaw,
+    ReleaseLog,
+    SleepSession,
+    SyncState,
+    WorkoutLog,
+)
 from app.services.autofill import autofill_fields
+from app.services.discipline import is_release_session
 from app.services.miscale import compute_body_metrics
 from app.services.sleep import total_sleep_min as sleep_total_min
 from app.timeutil import LOCAL_TZ, now_local
@@ -823,6 +832,59 @@ def _sd_num(v: Any, lo: float, hi: float, ndigits: int = 1) -> float | None:
     return round(n, ndigits) if n is not None and lo <= n <= hi else None
 
 
+def _upsert_samsung_exercise(db: Session, data: dict[str, Any]) -> None:
+    """三星“起飞”写 release_logs，其余仍写 workout_logs；支持上游改名后双向搬移。"""
+    start = datetime.fromisoformat(data["start"])
+    common = {
+        "log_date": start.astimezone(LOCAL_TZ).date(),
+        "started_at": start,
+        "duration_min": data["duration_min"],
+        "calories": data["calories"],
+        "avg_hr": data["avg_hr"],
+        "max_hr": data["max_hr"],
+        "source": SAMSUNG_DIRECT_SOURCE,
+        "external_id": data["sid"],
+    }
+    if is_release_session(data["type"]):
+        ins = pg_insert(ReleaseLog).values(**common)
+        db.execute(ins.on_conflict_do_update(
+            index_elements=["source", "external_id"],
+            index_where=text("external_id IS NOT NULL"),
+            set_={
+                **{c: getattr(ins.excluded, c) for c in (
+                    "log_date", "started_at", "duration_min", "calories", "avg_hr", "max_hr",
+                )},
+                "updated_at": text("now()"),
+            },
+        ))
+        db.execute(delete(WorkoutLog).where(
+            WorkoutLog.source == SAMSUNG_DIRECT_SOURCE,
+            WorkoutLog.external_id == data["sid"],
+        ))
+        return
+
+    ins = pg_insert(WorkoutLog).values(
+        **common,
+        session_type=data["type"],
+        distance_km=data["distance_km"],
+    )
+    db.execute(ins.on_conflict_do_update(
+        index_elements=["source", "external_id"],
+        index_where=text("external_id IS NOT NULL"),
+        set_={
+            **{c: getattr(ins.excluded, c) for c in (
+                "log_date", "started_at", "session_type", "duration_min",
+                "distance_km", "calories", "avg_hr", "max_hr",
+            )},
+            "updated_at": text("now()"),
+        },
+    ))
+    db.execute(delete(ReleaseLog).where(
+        ReleaseLog.source == SAMSUNG_DIRECT_SOURCE,
+        ReleaseLog.external_id == data["sid"],
+    ))
+
+
 @router.post("/samsung_direct")
 async def ingest_samsung_direct(request: Request, db: Session = Depends(get_db)) -> Response:
     reject = _bearer_reject(request)
@@ -893,7 +955,7 @@ async def ingest_samsung_direct(request: Request, db: Session = Depends(get_db))
         ).hexdigest()[:12]
         _collect("sleep", f"sd-{ext}-{digest}", end, data)
 
-    # -- exercises：按 (source, 稳定 id) upsert 进 workout_logs；raw 键同样掺内容哈希
+    # -- exercises：按 (source, 稳定 id) 分流 upsert；raw 键同样掺内容哈希
     for item in payload.get("exercises") or []:
         if not isinstance(item, dict):
             continue
@@ -1037,30 +1099,7 @@ async def ingest_samsung_direct(request: Request, db: Session = Depends(get_db))
                         ))
                         sleep_dates.add(wake_date)
                     elif rtype == "exercise":
-                        start = datetime.fromisoformat(data["start"])
-                        ins = pg_insert(WorkoutLog).values(
-                            log_date=start.astimezone(LOCAL_TZ).date(),
-                            started_at=start,
-                            session_type=data["type"],
-                            duration_min=data["duration_min"],
-                            distance_km=data["distance_km"],
-                            calories=data["calories"],
-                            avg_hr=data["avg_hr"],
-                            max_hr=data["max_hr"],
-                            source=SAMSUNG_DIRECT_SOURCE,
-                            external_id=data["sid"],
-                        )
-                        db.execute(ins.on_conflict_do_update(
-                            index_elements=["source", "external_id"],
-                            index_where=text("external_id IS NOT NULL"),
-                            set_={
-                                **{c: getattr(ins.excluded, c) for c in (
-                                    "log_date", "started_at", "session_type", "duration_min",
-                                    "distance_km", "calories", "avg_hr", "max_hr",
-                                )},
-                                "updated_at": text("now()"),
-                            },
-                        ))
+                        _upsert_samsung_exercise(db, data)
                     else:  # body
                         ts = datetime.fromisoformat(data["ts"])
                         d = ts.astimezone(LOCAL_TZ).date()

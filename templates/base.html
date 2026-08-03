@@ -48,7 +48,7 @@
       ] %}
       {% for href, label, icon in nav %}
       {# 「更多」也罩住从它进入的二级板块（报告/打卡/AI/设置/周报详情），否则这些页面五个 tab 全灰 #}
-      {% set active = p.startswith(('/more', '/report', '/habits', '/ai', '/settings', '/review'))
+      {% set active = p.startswith(('/more', '/report', '/habits', '/discipline', '/ai', '/settings', '/review'))
          if href == '/more' else (p == href or (href != '/' and p.startswith(href))) %}
       <a href="{{ u(href) }}"
          class="relative py-2 flex flex-col items-center gap-1 min-h-[52px] transition-colors {% if active %}text-emerald-400{% else %}text-slate-500 hover:text-slate-300{% endif %}">

@@ -4,7 +4,7 @@ CLI：python -m app.importers.samsung_zip <zip路径> [--dry-run]
 Web 上传（settings 模块）调用 import_zip(zip_path, db=..., job_id=..., progress_cb=...)。
 
 处理的表：
-  exercise → workout_logs；weight → body_metrics（autofill）；
+  exercise → workout_logs（“起飞”分流 release_logs）；weight → body_metrics（autofill）；
   sleep_stage → sleep_sessions → 回填 sleep_hours；step_daily_trend → daily_activity；
   heart_rate → 日聚合 daily_activity.hr_*（原始行不入 import_raw，5 万行仅流式聚合）；
   oxygen_saturation → body_metrics.spo2_pct（autofill）；user_profile/height → app_settings。
@@ -27,7 +27,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
-from sqlalchemy import literal_column, text
+from sqlalchemy import delete, literal_column, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -37,11 +37,13 @@ from app.models import (
     DailyActivity,
     ImportJob,
     ImportRaw,
+    ReleaseLog,
     SleepSession,
     SyncState,
     WorkoutLog,
 )
 from app.services.autofill import autofill_fields
+from app.services.discipline import is_release_session
 from app.services.sleep import total_sleep_min as dedup_total_sleep_min
 from app.timeutil import now_local, parse_day_time, parse_event_time, parse_time_offset
 
@@ -235,7 +237,7 @@ class _Importer:
             "last_seen_at": now_local(),
         }
 
-    # ---- 1. exercise → workout_logs ----
+    # ---- 1. exercise → workout_logs；标题“起飞”分流 release_logs ----
     def import_exercise(self) -> None:
         stats = {"rows": 0, "inserted": 0, "skipped": 0, "failed": 0}
         self.report["tables"]["exercise"] = stats
@@ -248,13 +250,15 @@ class _Importer:
         ranges: dict = {}
         raw_batch: list[dict] = []
         norm_batch: list[dict] = []
+        release_batch: list[dict] = []
         seen_ids: set[str] = set()
 
         def flush_norm() -> None:
             if not norm_batch or self.dry:
                 norm_batch.clear()
                 return
-            ins = pg_insert(WorkoutLog).values(list(norm_batch))
+            batch = list(norm_batch)
+            ins = pg_insert(WorkoutLog).values(batch)
             norm_batch.clear()
             stmt = ins.on_conflict_do_update(
                 index_elements=["source", "external_id"],
@@ -277,6 +281,41 @@ class _Importer:
             n = sum(1 for f in flags if f)
             stats["inserted"] += n
             stats["skipped"] += len(flags) - n
+            self.db.execute(delete(ReleaseLog).where(
+                ReleaseLog.source == SOURCE,
+                ReleaseLog.external_id.in_([r["external_id"] for r in batch]),
+            ))
+
+        def flush_release() -> None:
+            if not release_batch or self.dry:
+                release_batch.clear()
+                return
+            batch = list(release_batch)
+            ins = pg_insert(ReleaseLog).values(batch)
+            release_batch.clear()
+            stmt = ins.on_conflict_do_update(
+                index_elements=["source", "external_id"],
+                index_where=text("external_id IS NOT NULL"),
+                set_={
+                    "log_date": ins.excluded.log_date,
+                    "started_at": ins.excluded.started_at,
+                    "duration_min": ins.excluded.duration_min,
+                    "calories": ins.excluded.calories,
+                    "avg_hr": ins.excluded.avg_hr,
+                    "max_hr": ins.excluded.max_hr,
+                    "detail": ins.excluded.detail,
+                    "notes": ins.excluded.notes,
+                    "updated_at": text("now()"),
+                },
+            ).returning(literal_column("(xmax = 0)"))
+            flags = [r[0] for r in self.db.execute(stmt)]
+            n = sum(1 for f in flags if f)
+            stats["inserted"] += n
+            stats["skipped"] += len(flags) - n
+            self.db.execute(delete(WorkoutLog).where(
+                WorkoutLog.source == SOURCE,
+                WorkoutLog.external_id.in_([r["external_id"] for r in batch]),
+            ))
 
         for row in self.iter_csv(member):
             stats["rows"] += 1
@@ -316,7 +355,15 @@ class _Importer:
                     stats["skipped"] += 1
                 else:
                     seen_ids.add(item["external_id"])
-                    norm_batch.append(item)
+                    if is_release_session(session_type, detail.get("title")):
+                        release_batch.append({
+                            k: item[k] for k in (
+                                "log_date", "started_at", "duration_min", "calories",
+                                "avg_hr", "max_hr", "detail", "source", "external_id", "notes",
+                            )
+                        })
+                    else:
+                        norm_batch.append(item)
                 raw_batch.append(self.raw_item("exercise", row, ext_id))
             except Exception as e:
                 stats["failed"] += 1
@@ -325,10 +372,13 @@ class _Importer:
                 self.flush_raw("exercise", raw_batch, stats)
             if len(norm_batch) >= BATCH_SIZE:
                 flush_norm()
+            if len(release_batch) >= BATCH_SIZE:
+                flush_release()
             if stats["rows"] % 2000 == 0:
                 self.emit(table="exercise", done=stats["rows"])
         self.flush_raw("exercise", raw_batch, stats)
         flush_norm()
+        flush_release()
         stats["activity_type_counts"] = dict(type_counts)
         self.report["unmapped_activity_types"] = sorted(c for c in unmapped if c is not None)
         self.set_range("exercise", ranges)

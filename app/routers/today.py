@@ -24,6 +24,7 @@ from app.models import (
     SyncState,
     WorkoutLog,
 )
+from app.services.discipline import discipline_summary
 from app.services.sleep import total_sleep_min
 from app.timeutil import now_local, today_local
 
@@ -146,6 +147,7 @@ def _overview_ctx(db: Session, day: date | None = None) -> dict:
         "diet_count": int(diet_count),
         "diet_kcal": round(float(diet_kcal)),
         "diet_protein": round(float(diet_protein), 1),
+        "discipline": discipline_summary(db, day),
         "sync": sync,
     }
 

@@ -356,6 +356,39 @@ class WorkoutLog(TimestampMixin, Base):
     notes: Mapped[str | None] = mapped_column(Text)
 
 
+# ---------- 3.4a 自律 / 释放（由三星自定义“起飞”运动分流） ----------
+class ReleaseLog(TimestampMixin, Base):
+    __tablename__ = "release_logs"
+    __table_args__ = (
+        CheckConstraint(
+            "source IN ('manual','samsung_zip','samsung_direct')",
+            name="ck_release_source",
+        ),
+        CheckConstraint("source = 'manual' OR external_id IS NOT NULL", name="ck_release_ext_required"),
+        Index(
+            "ux_release_logs_ext",
+            "source",
+            "external_id",
+            unique=True,
+            postgresql_where=text("external_id IS NOT NULL"),
+        ),
+        Index("idx_release_logs_date", "log_date"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    log_date: Mapped[date] = mapped_column(Date, nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    duration_min: Mapped[int | None] = mapped_column(Integer)
+    calories: Mapped[int | None] = mapped_column(Integer)
+    avg_hr: Mapped[int | None] = mapped_column(Integer)
+    max_hr: Mapped[int | None] = mapped_column(Integer)
+    detail: Mapped[dict | list | None] = mapped_column(JSONB)
+    source: Mapped[str] = mapped_column(Text, nullable=False, server_default="manual")
+    external_id: Mapped[str | None] = mapped_column(Text)
+    notes: Mapped[str | None] = mapped_column(Text)
+
+
 # ---------- 3.5 养生任务打卡 ----------
 class Habit(Base):
     __tablename__ = "habits"

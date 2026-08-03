@@ -85,6 +85,24 @@
     </div>
   </a>
 
+  <a href="{{ u('/discipline') }}"
+     class="flex items-center justify-between gap-3 rounded-xl border border-emerald-900/40 bg-emerald-950/20 px-3.5 py-3">
+    <div>
+      <p class="text-sm font-medium text-slate-200">自律 / 释放</p>
+      <p class="mt-0.5 text-xs text-slate-500">
+        {% if discipline.latest %}上次释放 {{ discipline.latest.log_date }}{% else %}三星“起飞”自动同步{% endif %}
+      </p>
+    </div>
+    <div class="shrink-0 text-right tabular-nums">
+      {% if discipline.current_days is not none %}
+      <p class="text-lg font-bold text-emerald-300">{{ discipline.current_days }} 天</p>
+      <p class="text-[10px] text-slate-500">当前自律</p>
+      {% else %}
+      <p class="text-sm text-emerald-400">暂无释放</p>
+      {% endif %}
+    </div>
+  </a>
+
   <div>
     <div class="mb-1.5 flex items-center justify-between">
       <p class="text-xs text-slate-500">数据通道</p>
