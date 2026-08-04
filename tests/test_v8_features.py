@@ -332,6 +332,15 @@ def test_today_overview_fragment(db, page):
     assert "需要时补录" not in resp.text
 
 
+def test_today_has_prominent_scale_scan_action(db, page):
+    resp = page.get("/")
+    assert resp.status_code == 200
+    assert 'id="today-scale-scan-btn"' in resp.text
+    assert "window.ShellBridge.startScaleScan()" in resp.text
+    # 普通浏览器没有壳桥接时，仍可进入秤状态页，而不是点了没反应。
+    assert "window.location.href='/scale'" in resp.text
+
+
 # ---------- Bearer 备用头 X-Ingest-Token（V8.3：frp Basic 验证占用 Authorization） ----------
 
 @pytest.fixture()

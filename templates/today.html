@@ -12,7 +12,20 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3 h-3"><path d="m9 6 6 6-6 6"/></svg>
       </span>
     </a></div>
-    <button type="button" @click="quickOpen = true" class="btn-ghost hidden min-h-[42px] sm:inline-flex lg:hidden">快速记录</button>
+    <div class="flex shrink-0 items-center gap-2">
+      <button type="button" id="today-scale-scan-btn"
+              aria-label="开启体脂秤监听 3 分钟"
+              onclick="if(window.ShellBridge && window.ShellBridge.startScaleScan){window.ShellBridge.startScaleScan()}else{window.location.href='{{ u('/scale') }}'}"
+              class="btn-primary min-h-[42px] px-3 sm:px-4">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+             stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4">
+          <path d="M5 20h14M7 20l1-12h8l1 12M9 8a3 3 0 0 1 6 0"/>
+          <path d="m12 8 1.5-2"/>
+        </svg>
+        开秤
+      </button>
+      <button type="button" @click="quickOpen = true" class="btn-ghost hidden min-h-[42px] sm:inline-flex lg:hidden">快速记录</button>
+    </div>
   </section>
 
   <!-- 自动采集 + Agent 录入后的查看型概览：首屏直接给结论与通道状态。 -->
