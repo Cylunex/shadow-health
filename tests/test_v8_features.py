@@ -337,8 +337,65 @@ def test_today_has_prominent_scale_scan_action(db, page):
     assert resp.status_code == 200
     assert 'id="today-scale-scan-btn"' in resp.text
     assert "window.ShellBridge.startScaleScan()" in resp.text
+    assert 'id="home-scale-status"' in resp.text
+    assert "/fragments/today/scale-status" in resp.text
+    assert "load, metrics-changed from:body" in resp.text
     # 普通浏览器没有壳桥接时，仍可进入秤状态页，而不是点了没反应。
-    assert "window.location.href='/scale'" in resp.text
+    assert "window.location.href = '/scale'" in resp.text
+
+
+def test_today_scale_session_waits_then_stops_on_timeout(db, page):
+    from app.timeutil import now_local
+
+    waiting = page.get("/fragments/today/scale-status?start=1")
+    assert waiting.status_code == 200
+    assert "秤监听中" in waiting.text
+    assert "every 3s" in waiting.text
+
+    expired = now_local().timestamp() - 300
+    timeout = page.get(f"/fragments/today/scale-status?after={expired}")
+    assert timeout.status_code == 200
+    assert "暂未收到称重数据" in timeout.text
+    assert "hx-trigger=" not in timeout.text
+
+
+def test_today_scale_session_shows_received_measurement(db, page):
+    from app.models import ImportRaw
+    from app.timeutil import now_local
+
+    external_id = "test-home-scale-session"
+    db.query(ImportRaw).filter(
+        ImportRaw.source == "miscale", ImportRaw.external_id == external_id
+    ).delete(synchronize_session=False)
+    db.add(ImportRaw(
+        source="miscale",
+        record_type="measurement",
+        external_id=external_id,
+        raw={"ts": now_local().isoformat(), "weight_kg": 72.4, "impedance": 515.0},
+        parse_status="parsed",
+        parse_version=1,
+        last_seen_at=now_local(),
+    ))
+    db.commit()
+    try:
+        after = now_local().timestamp() - 10
+        resp = page.get(f"/fragments/today/scale-status?after={after}")
+        assert resp.status_code == 200
+        assert "称重已接收并入库" in resp.text
+        assert "72.4" in resp.text
+        assert "hx-trigger=" not in resp.text
+        assert resp.headers.get("HX-Trigger") == "metrics-changed"
+    finally:
+        db.query(ImportRaw).filter(
+            ImportRaw.source == "miscale", ImportRaw.external_id == external_id
+        ).delete(synchronize_session=False)
+        db.commit()
+
+
+def test_scale_status_pauses_polling_while_page_is_hidden(db, page):
+    resp = page.get("/scale")
+    assert resp.status_code == 200
+    assert "every 3s [document.visibilityState === 'visible']" in resp.text
 
 
 # ---------- Bearer 备用头 X-Ingest-Token（V8.3：frp Basic 验证占用 Authorization） ----------

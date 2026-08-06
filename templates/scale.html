@@ -15,7 +15,8 @@
     }
   </script>
 
-  <div hx-get="{{ u('/fragments/scale/status') }}" hx-trigger="every 3s" hx-swap="innerHTML">
+  <div hx-get="{{ u('/fragments/scale/status') }}"
+       hx-trigger="every 3s [document.visibilityState === 'visible']" hx-swap="innerHTML">
     {% include "fragments/scale_status.html" %}
   </div>
 

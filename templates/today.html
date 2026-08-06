@@ -15,7 +15,7 @@
     <div class="flex shrink-0 items-center gap-2">
       <button type="button" id="today-scale-scan-btn"
               aria-label="开启体脂秤监听 3 分钟"
-              onclick="if(window.ShellBridge && window.ShellBridge.startScaleScan){window.ShellBridge.startScaleScan()}else{window.location.href='{{ u('/scale') }}'}"
+              onclick="startHomeScaleScan()"
               class="btn-primary min-h-[42px] px-3 sm:px-4">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
              stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4">
@@ -28,9 +28,12 @@
     </div>
   </section>
 
+  {# 开秤后的当前会话状态：仅点击后出现，收到结果或超时即停止轮询。 #}
+  <div id="home-scale-status" class="hidden"></div>
+
   <!-- 自动采集 + Agent 录入后的查看型概览：首屏直接给结论与通道状态。 -->
   <div hx-get="{{ u('/fragments/today/overview') }}"
-       hx-trigger="load" hx-swap="outerHTML">
+       hx-trigger="load, metrics-changed from:body" hx-swap="outerHTML">
     <section class="card animate-pulse space-y-3">
       <div class="h-5 w-1/4 rounded-full bg-slate-800"></div>
       <div class="h-28 rounded-2xl bg-slate-800/60"></div>
@@ -186,4 +189,23 @@
   </details>
 
 </div>
+{% endblock %}
+{% block scripts %}
+<script>
+  window.startHomeScaleScan = function () {
+    if (!(window.ShellBridge && window.ShellBridge.startScaleScan)) {
+      window.location.href = '{{ u('/scale') }}';
+      return;
+    }
+    window.ShellBridge.startScaleScan();
+    var status = document.getElementById('home-scale-status');
+    if (status && window.htmx) {
+      status.classList.remove('hidden');
+      window.htmx.ajax('GET', '{{ u('/fragments/today/scale-status') }}?start=1', {
+        target: '#home-scale-status',
+        swap: 'outerHTML'
+      });
+    }
+  };
+</script>
 {% endblock %}

@@ -10,7 +10,7 @@ sync_state('miscale') 通道状态 + body_metrics 今日行。壳内（ShellBrid
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy import select
@@ -27,6 +27,7 @@ from app.timeutil import LOCAL_TZ, now_local, today_local
 router = APIRouter(dependencies=[Depends(require_login)])
 
 FRESH_SECONDS = 90  # last_seen_at 在此窗口内的测量标「新」
+HOME_SCAN_SECONDS = 195  # 壳监听 180s，额外留 15s 给上报与服务端处理
 
 # 今日体成分网格：(字段, 中文名, 单位)
 _BODY_FIELDS = [
@@ -66,6 +67,31 @@ def _scale_ts_label(raw_ts: object) -> str:
 def _fmt(v: object) -> str:
     s = f"{float(v):.2f}".rstrip("0").rstrip(".")
     return s if s else "0"
+
+
+def _home_measurement(db: Session, row: ImportRaw) -> dict:
+    """首页只展示这次开秤收到的 raw，避免同日聚合行掺入旧测量。"""
+    raw = row.raw if isinstance(row.raw, dict) else {}
+    weight = raw.get("weight_kg")
+    impedance = raw.get("impedance")
+    comp: list[dict[str, str]] = []
+    if isinstance(weight, (int, float)) and isinstance(impedance, (int, float)):
+        sex, age, height_cm = _miscale_profile(db)
+        values = compute_body_metrics(float(weight), float(impedance), sex, age, height_cm)
+        for key, label, unit in (
+            ("body_fat_pct", "体脂", "%"),
+            ("muscle_mass_kg", "肌肉", "kg"),
+            ("body_water_kg", "水分", "kg"),
+            ("bmr_kcal", "基代", "kcal"),
+        ):
+            value = values.get(key)
+            if value is not None:
+                comp.append({"label": label, "value": _fmt(value), "unit": unit})
+    return {
+        "weight": _fmt(weight) if isinstance(weight, (int, float)) else None,
+        "comp": comp,
+        "status": row.parse_status,
+    }
 
 
 def _status_ctx(db: Session) -> dict:
@@ -140,3 +166,62 @@ def scale_status_fragment(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse(
         request, "fragments/scale_status.html", _status_ctx(db)
     )
+
+
+@router.get("/fragments/today/scale-status")
+def today_scale_status_fragment(
+    request: Request,
+    start: bool = False,
+    after: float | None = None,
+    db: Session = Depends(get_db),
+):
+    """一次开秤会话的首页反馈；收到或超时后不再输出轮询属性。"""
+    now = now_local()
+    if start or after is None:
+        # 桥接启动到首个 HTTP 请求之间可能已经收到广播，向前容纳几秒。
+        scan_started = now - timedelta(seconds=5)
+    else:
+        try:
+            scan_started = datetime.fromtimestamp(after, tz=LOCAL_TZ)
+        except (OverflowError, OSError, ValueError):
+            scan_started = now
+        if scan_started > now:
+            scan_started = now
+
+    elapsed = (now - scan_started).total_seconds()
+    row = None
+    # 截止点附近已经到达、尚在处理的记录仍给 30 秒收尾时间；更老的会话不查库。
+    if elapsed <= HOME_SCAN_SECONDS + 30:
+        row = db.execute(
+            select(ImportRaw)
+            .where(
+                ImportRaw.source == "miscale",
+                ImportRaw.last_seen_at >= scan_started,
+            )
+            .order_by(ImportRaw.last_seen_at.desc(), ImportRaw.id.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+
+    if row is None and elapsed > HOME_SCAN_SECONDS:
+        state = "timeout"
+    elif row is None:
+        state = "waiting"
+    elif row.parse_status == "pending" and elapsed <= HOME_SCAN_SECONDS + 30:
+        state = "processing"
+    elif row.parse_status == "failed":
+        state = "failed"
+    else:
+        state = "success"
+
+    response = templates.TemplateResponse(
+        request,
+        "fragments/today_scale_status.html",
+        {
+            "state": state,
+            "after": f"{scan_started.timestamp():.3f}",
+            "measurement": _home_measurement(db, row) if row is not None else None,
+        },
+    )
+    if state == "success":
+        response.headers["HX-Trigger"] = "metrics-changed"
+    return response
