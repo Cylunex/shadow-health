@@ -12,7 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.deps import require_login, session_label, templates
+from app.deps import local_hm, require_login, session_label, templates
 from app.models import (
     AppSetting,
     BodyMetrics,
@@ -21,12 +21,11 @@ from app.models import (
     Habit,
     HabitLog,
     ImportRaw,
-    SleepSession,
     SyncState,
     WorkoutLog,
 )
 from app.services.discipline import discipline_summary
-from app.services.sleep import total_sleep_min
+from app.services.sleep import sessions_by_date
 from app.timeutil import now_local, today_local
 
 router = APIRouter(dependencies=[Depends(require_login)])
@@ -56,6 +55,22 @@ def _ago_label(dt) -> str:
     if seconds < 86400:
         return f"{seconds // 3600} 小时前"
     return f"{seconds // 86400} 天前"
+
+
+def _sleep_overview(sessions: list) -> tuple[int, str | None, str | None]:
+    """优先来源的一夜会话 → 总睡眠与本地入睡/起床时刻。
+
+    PostgreSQL timestamptz 通常以 UTC datetime 返回，展示前必须转上海时区；
+    同源存在分段睡眠时用最早开始、最晚结束，避免只展示最后一段。
+    """
+    if not sessions:
+        return 0, None, None
+    total = sum(s.total_sleep_min or 0 for s in sessions)
+    return (
+        total,
+        local_hm(min(s.start_at for s in sessions)),
+        local_hm(max(s.end_at for s in sessions)),
+    )
 
 
 def _overview_ctx(db: Session, day: date | None = None) -> dict:
@@ -118,13 +133,9 @@ def _overview_ctx(db: Session, day: date | None = None) -> dict:
             func.coalesce(func.sum(DietLog.protein_g), 0),
         ).where(DietLog.log_date == day)
     ).one()
-    sleep_min = total_sleep_min(db, day)
-    sleep_session = db.execute(
-        select(SleepSession)
-        .where(SleepSession.wake_date == day)
-        .order_by(SleepSession.end_at.desc())
-        .limit(1)
-    ).scalar_one_or_none()
+    # 时长与时间范围使用同一个跨源优先结果，避免直读/zip 并存时卡片自相矛盾。
+    sleep_sessions = sessions_by_date(db, day, day).get(day, [])
+    sleep_min, sleep_start, sleep_end = _sleep_overview(sleep_sessions)
     if not sleep_min:
         today_body = db.execute(
             select(BodyMetrics).where(BodyMetrics.log_date == day)
@@ -156,8 +167,8 @@ def _overview_ctx(db: Session, day: date | None = None) -> dict:
         "workout_min": int(workout_min),
         "workout_label": session_label(latest_workout.session_type) if latest_workout else "",
         "sleep_h": round(sleep_min / 60, 1) if sleep_min else None,
-        "sleep_start": sleep_session.start_at.strftime("%H:%M") if sleep_session else None,
-        "sleep_end": sleep_session.end_at.strftime("%H:%M") if sleep_session else None,
+        "sleep_start": sleep_start,
+        "sleep_end": sleep_end,
         "diet_count": int(diet_count),
         "diet_kcal": round(float(diet_kcal)),
         "diet_protein": round(float(diet_protein), 1),

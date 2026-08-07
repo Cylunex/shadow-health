@@ -59,6 +59,28 @@ def test_local_hm():
     assert local_hm(None) == ""
 
 
+def test_today_sleep_overview_uses_local_timezone_and_full_range():
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+
+    from app.routers.today import _sleep_overview
+
+    sessions = [
+        SimpleNamespace(
+            start_at=datetime(2026, 8, 6, 15, 15, tzinfo=timezone.utc),
+            end_at=datetime(2026, 8, 6, 20, 0, tzinfo=timezone.utc),
+            total_sleep_min=285,
+        ),
+        SimpleNamespace(
+            start_at=datetime(2026, 8, 6, 20, 20, tzinfo=timezone.utc),
+            end_at=datetime(2026, 8, 6, 23, 54, tzinfo=timezone.utc),
+            total_sleep_min=214,
+        ),
+    ]
+    assert _sleep_overview(sessions) == (499, "23:15", "07:54")
+    assert _sleep_overview([]) == (0, None, None)
+
+
 # ---------- 自定义显示：图表选项过滤（纯函数） ----------
 
 def test_visible_chart_options_default_all():
