@@ -145,3 +145,22 @@ def test_s400_gateway_merges_two_packets_before_flush():
     gw.on_adv(device, SimpleNamespace(service_data={listener.UUID_MIBEACON: final}))
     m = gw.s400_pending[S400_ADDRESS][1]
     assert m.impedance_high == 497.6
+
+
+def test_s400_reset_preserves_captured_weight_for_flush():
+    first = bytes.fromhex("4859d53b0abc078ff2348c844138e930220000009e538599")
+    # 未加密 MiBeacon v2：object 0x6E16 全零表示离秤/复位。
+    reset = bytes.fromhex("4020d93001166e09010000000000000000")
+    gw = listener.Gateway("http://example.invalid", "token", None, bindkey=S400_BINDKEY)
+    device = SimpleNamespace(address=S400_ADDRESS)
+    gw.on_adv(device, SimpleNamespace(service_data={listener.UUID_MIBEACON: first}))
+    assert len(gw.s400_pending) == 1
+
+    parsed = listener.parse_s400_adv(reset, S400_ADDRESS, S400_BINDKEY)
+    assert parsed is not None and parsed.reset
+    gw.on_adv(device, SimpleNamespace(service_data={listener.UUID_MIBEACON: reset}))
+
+    assert not gw.s400_pending
+    assert len(gw.pending) == 1
+    m = next(iter(gw.pending.values()))[1]
+    assert m.weight_kg == 69.9 and m.impedance == 543.2

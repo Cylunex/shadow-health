@@ -370,7 +370,13 @@ class Gateway:
             if frame is not None:
                 address = device.address.upper()
                 if frame.reset:
-                    self.s400_pending.pop(address, None)
+                    pending = self.s400_pending.pop(address, None)
+                    if pending is not None:
+                        # 稳定体重帧已是有效测量；高频末帧可能漏收。离秤复位时把
+                        # 已有数据交给通用队列立即提交，不能删除整次结果。
+                        m = pending[1]
+                        if m.key not in self.sent:
+                            self.pending[m.key] = (now - SETTLE_S, m)
                     return
                 if frame.weight_kg is not None:
                     # S400 不广播 RTC。两监听端统一取接收时间的分钟，服务端仍可去重。

@@ -4,11 +4,21 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 
+import android.bluetooth.le.ScanSettings;
+
 import org.junit.Test;
 
 public class XiaomiScaleParserTest {
     private static final String ADDRESS = "8C:D0:B2:F6:BE:EF";
     private static final String BINDKEY = "0728974d657a4b60964c1b1677f35f7c";
+
+    @Test
+    public void onDemandScaleScanUsesLowLatencyWhileAlwaysOnStaysLowPower() {
+        assertEquals(ScanSettings.SCAN_MODE_LOW_LATENCY,
+                ScaleScanService.scanModeFor(true));
+        assertEquals(ScanSettings.SCAN_MODE_LOW_POWER,
+                ScaleScanService.scanModeFor(false));
+    }
 
     @Test
     public void parsesEncryptedWeightPacket() {

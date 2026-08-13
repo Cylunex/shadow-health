@@ -63,13 +63,11 @@ public class ScaleScanService extends Service {
     private static final String TAG = "ScaleScan";
     private static final String CHANNEL_ID = "miscale";
     private static final int NOTIFICATION_ID = 1001;
-    /** 限时称重模式：boolean extra；常驻开关开着时忽略（本来就不停）。 */
+    /** 限时称重模式：boolean extra；常驻时临时提速，结束后降回低功耗扫描。 */
     static final String EXTRA_TIMED = "timed";
     static final long TIMED_SCAN_MS = 3 * 60_000;
-    private static final ParcelUuid UUID_BODY_COMPOSITION =
-            ParcelUuid.fromString("0000181b-0000-1000-8000-00805f9b34fb");
-    private static final ParcelUuid UUID_MIBEACON =
-            ParcelUuid.fromString("0000fe95-0000-1000-8000-00805f9b34fb");
+    private ParcelUuid uuidBodyComposition;
+    private ParcelUuid uuidMibeacon;
 
     /** 一次测量连播多帧：先纯体重、后带阻抗；等这个窗口再上报，避免丢阻抗。 */
     private static final long SETTLE_MS = 12_000;
@@ -83,6 +81,10 @@ public class ScaleScanService extends Service {
 
     private BluetoothLeScanner scanner;
     private ScanCallback scanCallback;
+    private int activeScanMode = -1;
+    /** true=用户刚点了开秤，短时高占空比；false=常驻后台低功耗。 */
+    private boolean measurementMode;
+    private boolean keepAlive;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     // pending/sent 只在主线程访问：BLE 回调与 IO 回调统一 handler.post 回主线程
@@ -118,6 +120,10 @@ public class ScaleScanService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
+        uuidBodyComposition =
+                ParcelUuid.fromString("0000181b-0000-1000-8000-00805f9b34fb");
+        uuidMibeacon =
+                ParcelUuid.fromString("0000fe95-0000-1000-8000-00805f9b34fb");
         NotificationManager nm = getSystemService(NotificationManager.class);
         if (nm.getNotificationChannel(CHANNEL_ID) == null) {
             NotificationChannel ch = new NotificationChannel(
@@ -131,7 +137,7 @@ public class ScaleScanService extends Service {
             public void onReceive(Context context, Intent intent) {
                 int state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, -1);
                 if (state == BluetoothAdapter.STATE_ON) {
-                    startScan();
+                    startScan(measurementMode);
                     updateNotification("等待上秤…");
                 } else if (state == BluetoothAdapter.STATE_TURNING_OFF
                         || state == BluetoothAdapter.STATE_OFF) {
@@ -143,26 +149,43 @@ public class ScaleScanService extends Service {
         registerReceiver(btStateReceiver, new IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED));
     }
 
-    private final Runnable timedStop = this::stopSelf;
+    private final Runnable finishMeasurementMode = () -> {
+        measurementMode = false;
+        if (keepAlive) {
+            // 常驻开关开启时只降回低功耗，不停止整个服务。
+            restartScan(false);
+            updateNotification("等待上秤…");
+        } else {
+            stopSelf();
+        }
+    };
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         SharedPreferences prefs = getSharedPreferences("shell", MODE_PRIVATE);
-        boolean alwaysOn = prefs.getBoolean("scale_scan_enabled", false);
-        boolean timed = !alwaysOn && intent != null && intent.getBooleanExtra(EXTRA_TIMED, false);
+        keepAlive = prefs.getBoolean("scale_scan_enabled", false);
+        boolean requestedMeasurement = intent != null
+                && intent.getBooleanExtra(EXTRA_TIMED, false);
+        measurementMode = requestedMeasurement;
 
         Notification n = buildNotification(
-                timed ? "称重模式：" + (TIMED_SCAN_MS / 60_000) + " 分钟内上秤即记" : "等待上秤…");
+                requestedMeasurement
+                        ? "称重模式：" + (TIMED_SCAN_MS / 60_000) + " 分钟内上秤即记"
+                        : "等待上秤…");
         if (Build.VERSION.SDK_INT >= 29) {
             startForeground(NOTIFICATION_ID, n,
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE);
         } else {
             startForeground(NOTIFICATION_ID, n);
         }
-        startScan();
-        handler.removeCallbacks(timedStop);
-        if (timed) {
-            handler.postDelayed(timedStop, TIMED_SCAN_MS);  // 到点自停，通知随服务消失
+        handler.removeCallbacks(finishMeasurementMode);
+        if (requestedMeasurement) {
+            // 每次点击都重建扫描。三星系统偶尔会留下“仍在运行但收不到广播”的会话，
+            // 原实现因 scanCallback != null 直接返回，用户重复点击实际没有重试。
+            restartScan(true);
+            handler.postDelayed(finishMeasurementMode, TIMED_SCAN_MS);
+        } else {
+            startScan(false);
         }
         // 上次失败积压的测量：服务启动即尝试补发（探测可达服务器在 IO 线程做）
         final String token = prefs.getString("ingest_token", "");
@@ -175,7 +198,7 @@ public class ScaleScanService extends Service {
             });
         }
         // 称重模式不复活：系统回收后自动拉起一个没人等的监听没有意义
-        return timed ? START_NOT_STICKY : START_STICKY;
+        return keepAlive ? START_STICKY : START_NOT_STICKY;
     }
 
     private Notification buildNotification(String text) {
@@ -201,9 +224,25 @@ public class ScaleScanService extends Service {
 
     // ---- BLE 扫描 ------------------------------------------------------------
 
-    private void startScan() {
+    /** 按需称重用最高占空比；常驻后台仍用低功耗，避免长期耗电。 */
+    static int scanModeFor(boolean measurementMode) {
+        return measurementMode
+                ? ScanSettings.SCAN_MODE_LOW_LATENCY
+                : ScanSettings.SCAN_MODE_LOW_POWER;
+    }
+
+    private void restartScan(boolean highDutyCycle) {
+        stopScan();
+        startScan(highDutyCycle);
+    }
+
+    private void startScan(boolean highDutyCycle) {
+        int requestedMode = scanModeFor(highDutyCycle);
         if (scanCallback != null) {
-            return; // 已在扫
+            if (activeScanMode == requestedMode) {
+                return; // 已按所需模式在扫
+            }
+            stopScan();
         }
         BluetoothManager bm = (BluetoothManager) getSystemService(Context.BLUETOOTH_SERVICE);
         BluetoothAdapter adapter = bm == null ? null : bm.getAdapter();
@@ -223,11 +262,11 @@ public class ScaleScanService extends Service {
                 if (result == null || result.getScanRecord() == null) {
                     return;
                 }
-                byte[] data = result.getScanRecord().getServiceData(UUID_BODY_COMPOSITION);
+                byte[] data = result.getScanRecord().getServiceData(uuidBodyComposition);
                 if (data != null) {
                     handler.post(() -> handleFrame(data));  // 状态统一主线程访问
                 }
-                byte[] s400 = result.getScanRecord().getServiceData(UUID_MIBEACON);
+                byte[] s400 = result.getScanRecord().getServiceData(uuidMibeacon);
                 if (s400 != null && result.getDevice() != null) {
                     String address = result.getDevice().getAddress();
                     handler.post(() -> handleS400Frame(address, s400));
@@ -237,32 +276,45 @@ public class ScaleScanService extends Service {
             @Override
             public void onScanFailed(int errorCode) {
                 Log.w(TAG, "scan failed: " + errorCode);
-                updateNotification("扫描失败（" + errorCode + "），重启应用重试");
+                updateNotification("扫描失败（" + errorCode + "），重试开秤");
+                // 系统已经终止本次扫描；清状态才能让再次点击真正重建会话。
+                if (ScaleScanService.this.scanCallback == this) {
+                    ScaleScanService.this.scanCallback = null;
+                    ScaleScanService.this.scanner = null;
+                    activeScanMode = -1;
+                }
             }
         };
 
-        // 按 0x181B Service Data 过滤（空数据 = 只要求存在该 UUID 的 service data），
-        // 低功耗模式常驻；个别 ROM 不支持空过滤时退回无过滤扫描。
+        // 按 0x181B/0xFE95 Service Data 过滤；按需称重是三分钟的前台服务，使用
+        // LOW_LATENCY + AGGRESSIVE 尽量收全 S400 的短时多帧。常驻监听仍 LOW_POWER。
         ScanSettings settings = new ScanSettings.Builder()
-                .setScanMode(ScanSettings.SCAN_MODE_LOW_POWER)
+                .setScanMode(requestedMode)
+                .setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES)
+                .setMatchMode(ScanSettings.MATCH_MODE_AGGRESSIVE)
+                .setReportDelay(0)
                 .build();
         try {
             List<ScanFilter> filters = new ArrayList<>();
             filters.add(new ScanFilter.Builder()
-                    .setServiceData(UUID_BODY_COMPOSITION, new byte[0])
+                    .setServiceData(uuidBodyComposition, new byte[0])
                     .build());
             filters.add(new ScanFilter.Builder()
-                    .setServiceData(UUID_MIBEACON, new byte[0])
+                    .setServiceData(uuidMibeacon, new byte[0])
                     .build());
             scanner.startScan(filters, settings, scanCallback);
+            activeScanMode = requestedMode;
         } catch (Exception e) {
             Log.w(TAG, "filtered scan failed, fallback to unfiltered", e);
             try {
                 scanner.startScan(null, settings, scanCallback);
+                activeScanMode = requestedMode;
             } catch (Exception e2) {
                 Log.e(TAG, "startScan failed", e2);
                 updateNotification("无扫描权限或蓝牙异常");
                 scanCallback = null;
+                scanner = null;
+                activeScanMode = -1;
             }
         }
     }
@@ -275,6 +327,8 @@ public class ScaleScanService extends Service {
             }
         }
         scanCallback = null;
+        scanner = null;
+        activeScanMode = -1;
     }
 
     // ---- 帧处理（与 NAS 网关同款去抖/去重） -----------------------------------
@@ -294,9 +348,12 @@ public class ScaleScanService extends Service {
         }
         String deviceKey = address.toUpperCase(Locale.US);
         if (frame.reset) {
-            Measurement old = s400Pending.remove(deviceKey);
+            Measurement old = s400Pending.get(deviceKey);
             if (old != null) {
                 handler.removeCallbacks(old.flush);
+                // 已拿到稳定体重/低频阻抗就是真实测量。高频末帧可能被低功耗扫描
+                // 漏掉，离秤复位时应提交已有数据，不能像旧实现一样整次删除。
+                flushS400(deviceKey);
             }
             return;
         }

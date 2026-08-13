@@ -54,7 +54,8 @@ JAVA_HOME=/opt/homebrew/opt/openjdk@17 ./gradlew --no-daemon assembleDebug   # m
 
 ## 体脂秤后台监听（小米体脂秤 2）
 
-低功耗扫描秤的 BLE 广播（Service Data 0x181B），测量稳定后 POST 服务端；
+常驻模式低功耗扫描秤的 BLE 广播；今日页“开秤”的 3 分钟按需模式会强制重建
+扫描会话并使用高占空比，测量稳定后 POST 服务端；
 与 NAS 网关同时在线不会重复记录（服务端按秤时间戳去重）。协议与去抖逻辑同
 `gateway/miscale_listener.py`，整体说明见 [gateway/README.md](../gateway/README.md)。
 
