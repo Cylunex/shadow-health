@@ -58,7 +58,7 @@ slim 镜像无系统 zoneinfo，`ZoneInfo("Asia/Shanghai")` 依赖它），无�
    并确认 PG 的 `listen_addresses`/`pg_hba.conf` 放行 Docker 网段（详见 docker-compose.yml 顶部注释）；
 4. 备份目录先建好：`sudo mkdir -p /srv/health-backups`；
 5. `docker compose up -d --build`；
-6. 部署前检查端口：`ss -tlnp | grep :8080`，冲突改 `.env` 的 `APP_PORT`；应用端口只绑定回环地址；
+6. 部署前检查端口：`ss -tlnp | grep :8080`，冲突改 `.env` 的 `APP_PORT`；应用端口只绑定回环地址，Supervisor 原生部署的 uvicorn 必须带 `--no-proxy-headers`；
 7. 验证：`/healthz` 返回 `ok`，`/readyz` 返回 `ready`；
 8. 公网域名按 [部署手册](docs/deploy.md) 接入 Authelia Forward Auth，内网旧 `/shealth/` 入口继续可用。
 

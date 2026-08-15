@@ -6,7 +6,14 @@ limit_req_zone $binary_remote_addr zone=shadow_health_service:10m rate=10r/s;
 server {
     listen 80;
     server_name health.cylunex.top;
-    return 301 https://$host$request_uri;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
 }
 
 server {

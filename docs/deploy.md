@@ -60,7 +60,17 @@ docker compose up -d --build
 docker compose exec app python -m app.seed
 ```
 
-现网 Supervisor 原生部署继续使用原有服务，但把 uvicorn 监听地址收紧到 `127.0.0.1:8080`。不要覆盖 NAS 仓库里未纳入 Git 的 `deploy/` 备份和 `scripts/deploy.sh`。
+现网 Supervisor 原生部署继续使用原有服务，并把 uvicorn 启动命令固定为：
+
+```bash
+uvicorn app.main:app --host 127.0.0.1 --port 8080 --no-proxy-headers
+```
+
+`--no-proxy-headers` 必须保留：ECS 经 frp 到 NAS 后仍由 NAS Nginx 从回环地址访问应用，
+应用只信任这个真实传输对端；若让 uvicorn 根据 `X-Forwarded-For` 改写客户端地址，SSO
+代理身份校验会误判。真实访客地址仍由两端 Nginx 记录，不需要扩大
+`SHADOW_TRUSTED_PROXIES`。不要覆盖 NAS 仓库里未纳入 Git 的 `deploy/` 备份和
+`scripts/deploy.sh`。
 
 ```bash
 curl -fsS http://127.0.0.1:8080/healthz   # ok：仅进程存活
@@ -131,6 +141,17 @@ https://health.cylunex.top
 - [ ] 手机同步、上秤、提醒和 Agent Bearer 通道不被 SSO 重定向
 - [ ] 餐照上传与 AI 识别正常
 - [ ] PostgreSQL 备份和 `uploads/photos/` 快照正常
+
+### 2026-08-15 现网基线
+
+- Identity：`https://auth.cylunex.top`，Authelia 监听 ECS `127.0.0.1:9091`。
+- Health：`https://health.cylunex.top`，公网浏览器访问由 Authelia 保护。
+- NAS：Health 监听 `127.0.0.1:8080`，内网 `http://192.168.0.21:55080/shealth/`
+  保留本地登录。
+- 首个账号为 `shadow-admin`，当前只加入 `health-users`；初始密码仅保存在 ECS
+  `/root/shadow-identity-initial-password`，首次登录后应立即修改。
+- `shadow-services` 证书覆盖 `auth.cylunex.top`、`health.cylunex.top`，Certbot 模拟
+  续期已通过。
 
 ## 8. 运维边界
 

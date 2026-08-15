@@ -7,9 +7,9 @@
 > 阶段一~三已落地，待真机回归）· docs/subpath-agent-plan.md（V3 批次计划，
 > 三段已完成）· mcp_server/README.md（MCP 16 工具 + 话术规则 + NAS 部署）。
 > **NAS 已上线、用户日常使用中**；2026-08-15 复核 `shadow-health` 与
-> `shealth-mcp` 均由 Supervisor 正常运行。当前进行 Shadow Platform 渐进迁移：
-> 第一阶段代码已完成，待 Identity 生产部署后切换 `health.cylunex.top`；餐照、LLM
-> 和 Agent 凭据继续分批迁移，不与认证首切同时进行。血压计 BLE 用户已明确**不做**。
+> `shealth-mcp` 均由 Supervisor 正常运行。Shadow Identity 与
+> `health.cylunex.top` 已完成生产首切并通过 SSO、Bearer 机器接口、证书续期演练；餐照、
+> LLM 和 Agent 凭据继续分批迁移，不与认证首切同时进行。血压计 BLE 用户已明确**不做**。
 
 ### 2026-08-15 Shadow SSO 第一阶段
 
@@ -21,8 +21,11 @@
   伪造头绕过登录；本地会话改为 HMAC 签名，重启与多 worker 后仍可验证。
 - `/healthz` 改为无状态存活检查，新增包含数据库检查的 `/readyz`；机器 Bearer 接口
   继续绕过浏览器 SSO，不改变 Android、体脂秤、MCP 与 Agent 协议。
-- 部署模板和验收步骤见 `docs/deploy.md` 与 `deploy/nginx/`。代码完成不等于现网已切换；
-  Authelia 当前尚未在 ECS 启动，切换前必须先完成 Identity 配置和证书验收。
+- 2026-08-15 已完成现网切换：ECS Authelia 监听 `127.0.0.1:9091`，公网域名启用有效
+  HTTPS 证书；首个 `shadow-admin` 账号当前只属于 `health-users`。
+- NAS uvicorn 固定监听 `127.0.0.1:8080` 并使用 `--no-proxy-headers`，保留真实回环
+  传输对端用于代理身份校验，不扩大可信代理网段。部署模板和验收步骤见
+  `docs/deploy.md` 与 `deploy/nginx/`。
 
 ### 2026-08-07 睡眠时间显示修正
 
