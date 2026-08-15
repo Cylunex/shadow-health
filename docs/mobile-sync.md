@@ -25,7 +25,9 @@
 - 三星健康 → 设置 → 关于 → 连点版本号 10 次 → **开发者模式（Samsung Health Data SDK）**，
   开 **Developer Mode for Data Read**（读自己数据不需要 access code；access code 仅"写入"需要）。
   注意：开发者模式属调试性质，三星健康更新后可能自动关，需偶尔重开。
-- 壳内连接设置：服务器地址 + INGEST_TOKEN（服务器 `.env`）。
+- 壳内连接设置：服务器地址清单（每行一个，优先
+  `http://192.168.0.21:55080/shealth`，备用 `https://health.cylunex.top`）+
+  INGEST_TOKEN（服务器 `.env`）。公网后台同步走 Bearer 精确放行路径，服务端仍校验 token。
 
 ## 集成技术要点（踩坑记录，改壳代码前必读）
 
@@ -50,9 +52,9 @@
 - Gradle wrapper 已入仓（国内镜像：`settings.gradle.kts` 阿里云 + `gradle-wrapper.properties` 腾讯）。
 - 需 JDK 17 + Android SDK（platform 35 由 AGP 自动补）。
 - `local.properties` 不入仓，换机器新建：`sdk.dir=<你的 Android SDK 路径>`。
-- 构建：`JAVA_HOME=<jdk17> ./gradlew.bat --no-daemon assembleDebug`。
+- Windows 使用 Git Bash 构建：`JAVA_HOME='/f/path/to/jdk-17' ./gradlew --no-daemon assembleDebug`。
 
 ## 待办关联
 
-子路径前缀适配（/shealth）会影响壳的 base URL 与各 URL 拼接点，见
-[docs/subpath-agent-plan.md](subpath-agent-plan.md) Phase 1.5。
+子路径前缀适配（`/shealth`）已经落地：NAS 直连地址保留此前缀，公网域名使用根路径。
+架构说明见 [docs/subpath-agent-plan.md](subpath-agent-plan.md)。

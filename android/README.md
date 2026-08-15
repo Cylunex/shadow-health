@@ -25,7 +25,7 @@
 ```bash
 cd android
 JAVA_HOME=/opt/homebrew/opt/openjdk@17 ./gradlew --no-daemon assembleDebug   # macOS
-# Windows: 设好 JAVA_HOME 后 .\gradlew.bat --no-daemon assembleDebug
+# Windows Git Bash：JAVA_HOME='/f/path/to/jdk-17' ./gradlew --no-daemon assembleDebug
 ```
 
 产物：`app/build/outputs/apk/debug/app-debug.apk`。
@@ -36,19 +36,23 @@ JAVA_HOME=/opt/homebrew/opt/openjdk@17 ./gradlew --no-daemon assembleDebug   # m
 ## 安装到手机
 
 - **局域网下载**：apk 拷进服务器 `static/` 目录，手机浏览器访问
-  `http://<服务器IP>:8080/static/app-debug.apk` 下载安装（需允许安装未知来源应用）；
+  `http://192.168.0.21:55080/shealth/static/app-debug.apk` 下载安装（需允许安装未知来源应用）；
 - **adb**：`adb install -r app/build/outputs/apk/debug/app-debug.apk`；
 - 或微信/网盘任意方式传文件安装。
 
 ## 连接设置
 
-默认地址 `http://192.168.1.100:8080`。三种方式打开设置框：**首次启动**自动弹出；
+默认地址按顺序为 `http://192.168.0.21:55080/shealth`（同一局域网直连）和
+`https://health.cylunex.top`（公网备用）。三种方式打开设置框：**首次启动**自动弹出；
 任意页面**三指按住约 0.7 秒**；实体/虚拟**菜单键**。
 
 设置项：服务器地址 · `INGEST_TOKEN`（同服务器 .env，各通道共用）·
 体脂秤监听开关 · 三星健康同步开关 · 每日提醒开关（20:30 拉服务端
 `/api/reminders/digest`，有打卡/蛋白/步数/周有氧缺口才弹通知，全达成不打扰）。
 地址等存 SharedPreferences，重装后需重设。
+
+公网网页访问由统一 SSO 保护；体脂秤、三星同步、离线队列和提醒等后台 Bearer 接口
+使用精确路径放行，不依赖 WebView 登录 Cookie。服务器端仍会校验 `INGEST_TOKEN`。
 
 其他行为：返回键 = 网页后退（无历史则退出）；登录 Cookie 持久化，重启不掉登录态。
 

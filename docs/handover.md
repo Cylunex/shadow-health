@@ -1,15 +1,28 @@
 # 会话交接（自包含，新会话从这里继续）
 
-> 最后更新：2026-08-03（V14 趋势页与页面联动优化）。配套阅读：
+> 最后更新：2026-08-15（Shadow SSO 第一阶段）。配套阅读：
 > README（功能全貌）· docs/deploy.md（NAS 部署照单）· docs/mobile-sync.md
 >（三星直读背景）· gateway/README.md（体脂秤双端）· docs/audit-2026-07-10.md
 >（全面审查清单，已全清、归档备忘）· docs/offline-plan.md（手机离线记录方案，
 > 阶段一~三已落地，待真机回归）· docs/subpath-agent-plan.md（V3 批次计划，
 > 三段已完成）· mcp_server/README.md（MCP 16 工具 + 话术规则 + NAS 部署）。
-> **NAS 已上线、用户日常使用中**；2026-08-03 复核 `shadow-health` 与
-> `shealth-mcp` 均由 supervisor 正常运行。当前无进行中批次：剩余事项 = 真机回归
->（V3/V4/V8 壳与 APK 改动，V8 重点是多服务器切换）+ offline-plan 阶段四
->（视真机手感决定）。血压计 BLE 用户已明确**不做**。
+> **NAS 已上线、用户日常使用中**；2026-08-15 复核 `shadow-health` 与
+> `shealth-mcp` 均由 Supervisor 正常运行。当前进行 Shadow Platform 渐进迁移：
+> 第一阶段代码已完成，待 Identity 生产部署后切换 `health.cylunex.top`；餐照、LLM
+> 和 Agent 凭据继续分批迁移，不与认证首切同时进行。血压计 BLE 用户已明确**不做**。
+
+### 2026-08-15 Shadow SSO 第一阶段
+
+- 正式公网入口调整为 `https://health.cylunex.top/`，沿用 ECS `20001` 到 NAS
+  `55080/shealth/` 的 frp 链路；内网 `/shealth/` 本地登录保留为恢复入口。
+- 新增 `local`、`hybrid`、`forward-auth` 三种认证模式。现网目标为 `hybrid`：
+  Authelia 负责公网身份和 `health-users`/`shadow-admins` 组准入，内网继续本地密码。
+- `Remote-*` 身份头同时校验 NAS Nginx 回环来源与独立代理密钥，局域网客户端无法只靠
+  伪造头绕过登录；本地会话改为 HMAC 签名，重启与多 worker 后仍可验证。
+- `/healthz` 改为无状态存活检查，新增包含数据库检查的 `/readyz`；机器 Bearer 接口
+  继续绕过浏览器 SSO，不改变 Android、体脂秤、MCP 与 Agent 协议。
+- 部署模板和验收步骤见 `docs/deploy.md` 与 `deploy/nginx/`。代码完成不等于现网已切换；
+  Authelia 当前尚未在 ECS 启动，切换前必须先完成 Identity 配置和证书验收。
 
 ### 2026-08-07 睡眠时间显示修正
 

@@ -1,10 +1,11 @@
 """shadow-health 主应用：路由注册、认证/CSRF 中间件、健康检查。"""
+
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
@@ -43,9 +44,11 @@ async def csrf_same_origin(request: Request, call_next):
     """最小 CSRF：非 GET 请求校验同源（§7.2）；/api/ingest/* 与 /api/agent/*
     走 Bearer 豁免（Authorization 头跨站伪造不了——此前 agent POST 靠非浏览器
     客户端不带 Origin 隐性放行，V5 显式化）。"""
-    if request.method not in ("GET", "HEAD", "OPTIONS") and not request.url.path.startswith(
-        ("/api/ingest/", "/api/agent/")
-    ):
+    if request.method not in (
+        "GET",
+        "HEAD",
+        "OPTIONS",
+    ) and not request.url.path.startswith(("/api/ingest/", "/api/agent/")):
         sec_fetch_site = request.headers.get("Sec-Fetch-Site")
         if sec_fetch_site is not None:
             if sec_fetch_site not in ("same-origin", "none"):
@@ -60,14 +63,24 @@ async def csrf_same_origin(request: Request, call_next):
 
 @app.exception_handler(LoginRequired)
 async def login_required_handler(request: Request, exc: LoginRequired):
+    if exc.sso_only:
+        return PlainTextResponse("Shadow SSO authentication required", status_code=401)
     return login_redirect(request)
 
 
 @app.get("/healthz")
 def healthz() -> PlainTextResponse:
-    with engine.connect() as conn:
-        conn.execute(text("SELECT 1"))
     return PlainTextResponse("ok")
+
+
+@app.get("/readyz")
+def readyz() -> PlainTextResponse:
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="database unavailable") from exc
+    return PlainTextResponse("ready")
 
 
 @app.get("/sw.js", include_in_schema=False)
@@ -80,6 +93,14 @@ def service_worker() -> FileResponse:
 
 @app.get("/login")
 def login_page(request: Request):
+    settings = get_settings()
+    client_host = request.client.host if request.client else ""
+    if auth.forward_identity(request.headers, client_host, settings) is not None:
+        return redirect(request, "/")
+    if settings.auth_mode == "forward-auth":
+        raise HTTPException(
+            status_code=401, detail="Shadow SSO authentication required"
+        )
     token = request.cookies.get(auth.SESSION_COOKIE)
     if auth.session_valid(token):
         return redirect(request, "/")
@@ -88,14 +109,20 @@ def login_page(request: Request):
 
 @app.post("/login")
 async def login_submit(request: Request):
+    settings = get_settings()
+    if settings.auth_mode == "forward-auth":
+        raise HTTPException(status_code=403, detail="local login is disabled")
     ip = request.client.host if request.client else "?"
     if auth.is_locked(ip):
         return templates.TemplateResponse(
-            request, "login.html", {"error": "尝试次数过多，请 1 分钟后再试"}, status_code=429
+            request,
+            "login.html",
+            {"error": "尝试次数过多，请 1 分钟后再试"},
+            status_code=429,
         )
     form = await request.form()
     password = str(form.get("password", ""))
-    stored = get_settings().auth_password_hash
+    stored = settings.auth_password_hash
     if not stored or not auth.verify_password(password, stored):
         auth.record_failure(ip)
         return templates.TemplateResponse(
@@ -110,6 +137,7 @@ async def login_submit(request: Request):
         max_age=auth.SESSION_MAX_AGE,
         httponly=True,
         samesite="lax",
+        secure=settings.cookie_secure,
         # 收窄到部署前缀：同域名下 /stock/ 等其他应用收不到本站会话
         path=prefixed(request, "") or "/",
     )
@@ -166,16 +194,39 @@ def more_page(request: Request):
 
 @app.post("/logout")
 def logout(request: Request):
+    settings = get_settings()
+    client_host = request.client.host if request.client else ""
+    identity = auth.forward_identity(request.headers, client_host, settings)
     auth.destroy_session(request.cookies.get(auth.SESSION_COOKIE))
-    resp = redirect(request, "/login")
+    if identity is not None and settings.sso_logout_url:
+        resp = RedirectResponse(settings.sso_logout_url, status_code=303)
+    else:
+        resp = redirect(request, "/login")
     resp.delete_cookie(auth.SESSION_COOKIE, path=prefixed(request, "") or "/")
     return resp
 
 
 def _register_routers() -> None:
     from app.routers import (
-        agent, agent_log, ai, awards, diet, discipline, fitness, habits, ingest, labs,
-        metrics, offline, reminders, report, review, scale, settings, today, workout,
+        agent,
+        agent_log,
+        ai,
+        awards,
+        diet,
+        discipline,
+        fitness,
+        habits,
+        ingest,
+        labs,
+        metrics,
+        offline,
+        reminders,
+        report,
+        review,
+        scale,
+        settings,
+        today,
+        workout,
     )
 
     app.include_router(today.router)

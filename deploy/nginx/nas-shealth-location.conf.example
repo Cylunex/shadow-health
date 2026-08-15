@@ -1,0 +1,34 @@
+# 合并到 NAS 当前监听 55080 的 nginx http/server 配置。
+# map 必须放在 http 上下文（conf.d 文件顶层），两个 location 放在 server 内。
+
+map $http_x_shadow_external_root $shadow_health_prefix {
+    default /shealth;
+    "1"     "";
+}
+
+# server { ...
+location = /shealth {
+    return 301 /shealth/;
+}
+
+location /shealth/ {
+    proxy_pass http://127.0.0.1:8080/;
+    proxy_http_version 1.1;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Prefix $shadow_health_prefix;
+
+    # 显式传递 ECS 注入的身份。应用仍会校验来源地址和独立代理密钥；
+    # 内网浏览器没有密钥，只能继续走 Health 本地登录。
+    proxy_set_header Remote-User $http_remote_user;
+    proxy_set_header Remote-Groups $http_remote_groups;
+    proxy_set_header Remote-Name $http_remote_name;
+    proxy_set_header Remote-Email $http_remote_email;
+    proxy_set_header X-Shadow-Proxy-Secret $http_x_shadow_proxy_secret;
+
+    proxy_read_timeout 300;
+    proxy_send_timeout 300;
+    client_max_body_size 20m;
+}
+# }

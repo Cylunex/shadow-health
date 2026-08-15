@@ -1,6 +1,6 @@
 # shadow-health
 
-单用户、局域网自用的健康/饮食/运动管理 Web 应用。（详细设计文档在本地维护，不随仓库分发。）
+单用户数据模型、局域网优先的健康/饮食/运动管理 Web 应用。内网保留本地登录，公网入口 `https://health.cylunex.top/` 通过 Shadow Identity SSO 访问；应用端口本身不直接暴露公网。（详细设计文档在本地维护，不随仓库分发。）
 
 四大模块：**饮食记录+营养分析 · 运动训练管理 · 身体指标追踪 · 养生任务打卡**，外加三星健康历史数据一次性导入、Health Connect 增量同步、小米体脂秤 2 / S400 蓝牙直连（上秤即记录，见 [S400 适配说明](docs/miscale-s400.md)）。
 
@@ -17,7 +17,7 @@ Python 3.12（uv 锁定）· FastAPI · SQLAlchemy 2.x · Alembic · PostgreSQL�
 
 ## 本地开发
 
-```powershell
+```bash
 # 1. 依赖（uv 自动使用 .python-version 指定的 3.12）
 python -m uv sync
 
@@ -39,7 +39,7 @@ python -m uv run python -m app.importers.samsung_zip <路径>\SamsungHealth.zip
 python -m uv run uvicorn app.main:app --reload --port 8801
 ```
 
-前端样式改动后重建 CSS：`.\tools\tailwindcss.exe -c tailwind.config.js -i static\src\input.css -o static\app.css --minify`
+前端样式改动后在 Git Bash 重建 CSS：`./tools/tailwindcss.exe -c tailwind.config.js -i static/src/input.css -o static/app.css --minify`
 （`tools/` 不进 git，CLI 从 [tailwindcss releases](https://github.com/tailwindlabs/tailwindcss/releases/tag/v3.4.17) 下载；
 macOS/Linux 可直接 `npx -y tailwindcss@3.4.17 -c tailwind.config.js -i static/src/input.css -o static/app.css --minify`）。
 注意：`static/*` 变更后要同步升级 `static/sw.js` 的 `SW_VERSION`，否则老客户端 Service Worker cache-first 会一直用旧资源。
@@ -58,10 +58,11 @@ slim 镜像无系统 zoneinfo，`ZoneInfo("Asia/Shanghai")` 依赖它），无�
    并确认 PG 的 `listen_addresses`/`pg_hba.conf` 放行 Docker 网段（详见 docker-compose.yml 顶部注释）；
 4. 备份目录先建好：`sudo mkdir -p /srv/health-backups`；
 5. `docker compose up -d --build`；
-6. 部署前检查端口：`ss -tlnp | grep :8080`，冲突改 `.env` 的 `APP_PORT`；
-7. 验证：`curl http://127.0.0.1:8080/healthz` 返回 `ok`。
+6. 部署前检查端口：`ss -tlnp | grep :8080`，冲突改 `.env` 的 `APP_PORT`；应用端口只绑定回环地址；
+7. 验证：`/healthz` 返回 `ok`，`/readyz` 返回 `ready`；
+8. 公网域名按 [部署手册](docs/deploy.md) 接入 Authelia Forward Auth，内网旧 `/shealth/` 入口继续可用。
 
-**硬性约定**：禁止对本应用做公网端口转发（设计文档 §7.6）；外网访问走 WireGuard/Tailscale。
+**硬性约定**：禁止把应用 `8080` 或 NAS `55080` 裸端口直接暴露公网。公网访问只允许走 ECS HTTPS + Authelia SSO + frp 现有受限上游。
 
 **备份注意**：backup 容器只备份 PostgreSQL；餐次照片存在 `./uploads/photos/`（文件系统），
 不在 PG 备份里——需随 NAS 快照/RAID 保护，或另加 cron rsync 到备份目录。

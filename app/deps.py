@@ -1,7 +1,7 @@
 """共享依赖：模板环境（含全局函数）、登录守卫。"""
+
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from fastapi import Request
@@ -156,8 +156,21 @@ templates.env.globals["u"] = _u
 class LoginRequired(Exception):
     """未登录访问页面/片段时抛出，由全局 handler 转跳登录页。"""
 
+    def __init__(self, *, sso_only: bool = False) -> None:
+        self.sso_only = sso_only
+
 
 def require_login(request: Request) -> None:
+    from app.config import get_settings
+
+    settings = get_settings()
+    client_host = request.client.host if request.client else ""
+    identity = auth.forward_identity(request.headers, client_host, settings)
+    if identity is not None:
+        request.scope["shadow_identity"] = identity
+        return
+    if settings.auth_mode == "forward-auth":
+        raise LoginRequired(sso_only=True)
     token = request.cookies.get(auth.SESSION_COOKIE)
     if not auth.session_valid(token):
         raise LoginRequired()

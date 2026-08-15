@@ -42,6 +42,7 @@ import org.json.JSONObject;
 
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
@@ -69,6 +70,8 @@ public class MainActivity extends Activity {
     private static final String KEY_SCALE_SCAN = "scale_scan_enabled";
     static final String KEY_SCALE_BINDKEY = "scale_bindkey";
     private static final String DEFAULT_SERVER_URL = ServerConfig.DEFAULT_SERVER_URL;
+    private static final String DEFAULT_SERVER_URLS = DEFAULT_SERVER_URL + "\n"
+            + ServerConfig.PUBLIC_SERVER_URL;
     private static final String LOCAL_PAGE_URL = "file:///android_asset/offline.html";
     private static final int DARK_BG = Color.parseColor("#0f172a");
     private static final long LONG_PRESS_MS = 700;
@@ -373,7 +376,7 @@ public class MainActivity extends Activity {
         input.setHint("服务器地址（每行一个，靠前优先：内网在上、frp 外网在下）");
         List<String> configured = ServerConfig.urls(this);
         input.setText(configured.isEmpty()
-                ? DEFAULT_SERVER_URL : String.join("\n", configured));
+                ? DEFAULT_SERVER_URLS : String.join("\n", configured));
         input.setSelection(input.getText().length());
 
         final EditText tokenInput = new EditText(this);
@@ -431,7 +434,8 @@ public class MainActivity extends Activity {
                         }
                     }
                     if (urls.isEmpty()) {
-                        urls.add(DEFAULT_SERVER_URL);
+                        urls.addAll(Arrays.asList(
+                                DEFAULT_SERVER_URL, ServerConfig.PUBLIC_SERVER_URL));
                     }
                     boolean scanOn = scanBox.isChecked();
                     String scaleBindkey = bindkeyInput.getText().toString().trim().toLowerCase(Locale.US);
@@ -468,7 +472,8 @@ public class MainActivity extends Activity {
                     }
                 })
                 .setNeutralButton("恢复默认", (d, w) -> {
-                    ServerConfig.save(this, java.util.Collections.singletonList(DEFAULT_SERVER_URL));
+                    ServerConfig.save(this, Arrays.asList(
+                            DEFAULT_SERVER_URL, ServerConfig.PUBLIC_SERVER_URL));
                     loadServer();
                 });
         if (firstRun) {
