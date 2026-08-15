@@ -1,6 +1,9 @@
 # NAS + Shadow SSO 部署手册（照单执行版）
 
 > 目标机：局域网 Debian NAS，生产 PostgreSQL 在 `192.0.2.10:15432`。Health 数据仍留在 NAS；公网只通过 ECS HTTPS、Authelia 和现有 frp 隧道访问。
+>
+> 设计、安全边界、验收原理和回滚说明见 `docs/sso-migration.md`。本方案仅维护 Health
+> 已上线链路；新项目统一使用原生 OIDC，不照搬 Hybrid。
 
 ## 0. 前置确认
 

@@ -11,6 +11,9 @@
 
 ### 2026-08-15 Shadow SSO 第一阶段
 
+> 完整改造记录、请求分类、安全边界和回滚见 `docs/sso-migration.md`。该 Hybrid 方案只
+> 维护 Health 既有部署，后续项目统一原生 OIDC。
+
 - 公网入口通过 ECS、frp 与 NAS 子路径连接；内网本地登录保留为恢复入口。仓库中的域名、
   地址和端口均为示例值。
 - 新增 `local`、`hybrid`、`forward-auth` 三种认证模式。现网目标为 `hybrid`：
