@@ -26,7 +26,7 @@
   开 **Developer Mode for Data Read**（读自己数据不需要 access code；access code 仅"写入"需要）。
   注意：开发者模式属调试性质，三星健康更新后可能自动关，需偶尔重开。
 - 壳内连接设置：服务器地址清单（每行一个，优先
-  `http://192.168.0.21:55080/shealth`，备用 `https://health.cylunex.top`）+
+  `http://192.0.2.10:18080/shealth`，备用 `https://health.example.com`）+
   INGEST_TOKEN（服务器 `.env`）。公网后台同步走 Bearer 精确放行路径，服务端仍校验 token。
 
 ## 集成技术要点（踩坑记录，改壳代码前必读）

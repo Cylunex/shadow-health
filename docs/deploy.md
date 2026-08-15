@@ -1,14 +1,14 @@
 # NAS + Shadow SSO 部署手册（照单执行版）
 
-> 目标机：局域网 Debian NAS，生产 PostgreSQL 在 `192.168.0.21:55432`。Health 数据仍留在 NAS；公网只通过 ECS HTTPS、Authelia 和现有 frp 隧道访问。
+> 目标机：局域网 Debian NAS，生产 PostgreSQL 在 `192.0.2.10:15432`。Health 数据仍留在 NAS；公网只通过 ECS HTTPS、Authelia 和现有 frp 隧道访问。
 
 ## 0. 前置确认
 
 - [ ] NAS 已装 Docker + Compose，或已按现网方式配置 Supervisor
-- [ ] `psql -h 192.168.0.21 -p 55432 -U postgres -d postgres` 可连接
-- [ ] `health.cylunex.top`、`auth.cylunex.top` 已解析到 ECS
+- [ ] `psql -h 192.0.2.10 -p 15432 -U postgres -d postgres` 可连接
+- [ ] `health.example.com`、`auth.example.com` 已解析到 ECS
 - [ ] ECS 上 Shadow Identity 可用，NAS 上 `127.0.0.1:8080` 为 Health
-- [ ] 现有 frp `ECS 127.0.0.1:20001 → NAS 55080` 正常
+- [ ] 现有 frp `ECS 127.0.0.1:18081 → NAS 18080` 正常
 
 ## 1. 生产库初始化（仅首次）
 
@@ -23,7 +23,7 @@ CREATE DATABASE shadow_health OWNER health_app;
 ## 2. 应用配置
 
 ```bash
-git clone https://github.com/Cylunex/shadow-health.git
+git clone https://github.com/Example/shadow-health.git
 cd shadow-health
 cp .env.example .env
 chmod 600 .env
@@ -33,7 +33,7 @@ chmod 600 .env
 
 | 键 | 生产值 |
 |---|---|
-| `DATABASE_URL` | `postgresql+psycopg://health_app:<密码>@192.168.0.21:55432/shadow_health` |
+| `DATABASE_URL` | `postgresql+psycopg://health_app:<密码>@192.0.2.10:15432/shadow_health` |
 | `AUTH_PASSWORD_HASH` | 内网本地登录密码的 scrypt 哈希 |
 | `SESSION_SECRET` / `INGEST_TOKEN` | 分别生成的高熵随机值 |
 | `SHADOW_AUTH_MODE` | `hybrid`：公网 SSO、内网继续本地登录 |
@@ -97,11 +97,11 @@ sudo chmod 0600 /etc/shadow-health/secrets/proxy-auth-secret
 同一密钥只存在于 NAS 文件和 ECS Nginx 私密 snippet，不写入 Git：
 
 1. 将 `deploy/env/sso.env.example` 合并到 NAS `.env`。
-2. 将 `deploy/nginx/nas-shealth-location.conf.example` 合并到 NAS `55080` 站点。内网 `/shealth/` 继续生成带前缀 URL，公网域名生成根路径 URL。
+2. 将 `deploy/nginx/nas-shealth-location.conf.example` 合并到 NAS `18080` 站点。内网 `/shealth/` 继续生成带前缀 URL，公网域名生成根路径 URL。
 3. 在 ECS 安装 Shadow Platform 的 `authelia-location.conf`、`authelia-authrequest.conf`。
 4. 安装本仓库 `shadow-health-upstream.conf.example` 和 `shadow-health-service-upstream.conf.example` 两个 snippet。
 5. 从 `shadow-health-proxy-secret.conf.example` 创建 ECS 私密 snippet，替换占位值并设为 `root:root 0600`。
-6. 安装 `health.cylunex.top.conf.example`，配置覆盖该域名的证书。
+6. 安装 `health.example.com.conf.example`，配置覆盖该域名的证书。
 7. 两端执行 `nginx -t` 后再 reload，不直接覆盖无备份的线上配置。
 
 公网浏览器页面由 Authelia 的 `health-users` 或 `shadow-admins` 组保护。机器接口只精确放行以下前缀，并继续由 Health Bearer Token 鉴权：
@@ -125,37 +125,26 @@ sudo chmod 0600 /etc/shadow-health/secrets/proxy-auth-secret
 服务器地址按顺序填写：
 
 ```text
-http://192.168.0.21:55080/shealth
-https://health.cylunex.top
+http://192.0.2.10:18080/shealth
+https://health.example.com
 ```
 
 第一条用于局域网直连，第二条用于外网。后台同步继续填写 `INGEST_TOKEN`；网页访问公网地址时由 WebView 跟随 Authelia 登录。APK 可从内网 `/shealth/static/shadow-health.apk` 下载。
 
 ## 7. 验收清单
 
-- [ ] `https://health.cylunex.top/` 跳转 Shadow Identity，登录后回到今日页
+- [ ] `https://health.example.com/` 跳转 Shadow Identity，登录后回到今日页
 - [ ] 无 `health-users`/`shadow-admins` 组的账号无法进入
-- [ ] `http://192.168.0.21:55080/shealth/` 仍可使用本地密码
+- [ ] `http://192.0.2.10:18080/shealth/` 仍可使用本地密码
 - [ ] 缺少代理密钥的伪造身份头不能绕过登录
 - [ ] `/healthz` 返回 200；数据库不可用时 `/readyz` 返回 503
 - [ ] 手机同步、上秤、提醒和 Agent Bearer 通道不被 SSO 重定向
 - [ ] 餐照上传与 AI 识别正常
 - [ ] PostgreSQL 备份和 `uploads/photos/` 快照正常
 
-### 2026-08-15 现网基线
-
-- Identity：`https://auth.cylunex.top`，Authelia 监听 ECS `127.0.0.1:9091`。
-- Health：`https://health.cylunex.top`，公网浏览器访问由 Authelia 保护。
-- NAS：Health 监听 `127.0.0.1:8080`，内网 `http://192.168.0.21:55080/shealth/`
-  保留本地登录。
-- 首个账号为 `shadow-admin`，当前只加入 `health-users`；初始密码仅保存在 ECS
-  `/root/shadow-identity-initial-password`，首次登录后应立即修改。
-- `shadow-services` 证书覆盖 `auth.cylunex.top`、`health.cylunex.top`，Certbot 模拟
-  续期已通过。
-
 ## 8. 运维边界
 
-- 禁止公开应用 `8080` 或 NAS `55080`；公网只走 ECS HTTPS + SSO。
+- 禁止公开应用 `8080` 或 NAS `18080`；公网只走 ECS HTTPS + SSO。
 - PostgreSQL 备份不包含餐照，`uploads/photos/` 必须进入 NAS 快照或异机备份。
 - 升级前运行全量测试，部署后同时检查 `/healthz`、`/readyz` 和四类机器接口。
 - SSO 故障时保留内网本地登录作为恢复入口，不临时公开应用端口。

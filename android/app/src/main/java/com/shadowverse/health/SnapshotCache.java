@@ -103,7 +103,7 @@ final class SnapshotCache {
         if (path == null || path.isEmpty()) {
             path = "/";
         }
-        // 子路径部署：serverUrl 可能带 path 前缀（如 http://NAS:55080/shealth）。
+        // 子路径部署：serverUrl 可能带 path 前缀（如 http://NAS:18080/shealth）。
         // 下面的 cacheable/排除名单全按应用内路径写，必须先剥前缀再比；
         // 同域但不在前缀下的请求（服务面板、/stock/ 等其他应用）一律不代理。
         String prefix = pathPrefix(serverUrl);

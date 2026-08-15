@@ -2,7 +2,7 @@
 
 > 2026-07-12 定稿。**本文档是跨机器开发的执行计划**：在另一台机器 pull 后据此开发，无需本机记忆。
 > 决策已由用户拍板，不要重新讨论：
-> 1. NAS 入口前缀用 **`/shealth`**；nginx 只允许 `/stock/` 同款配置（路径前缀 + `X-Forwarded-Prefix`），**不占 NAS 根路径、不占独立端口**。2026-08-15 新增的公网 `health.cylunex.top` 由 ECS 把域名根路径映射到此 NAS 子路径，不改变本约定。
+> 1. NAS 入口前缀用 **`/shealth`**；nginx 只允许 `/stock/` 同款配置（路径前缀 + `X-Forwarded-Prefix`），**不占 NAS 根路径、不占独立端口**。2026-08-15 新增的公网 `health.example.com` 由 ECS 把域名根路径映射到此 NAS 子路径，不改变本约定。
 > 2. **mood_score（心情分）加列**，随迁移一起进快记表单
 > 3. **全部弄完再切**：生产暂维持临时态（见 §0），本批验收通过后一次性切换
 > 4. **数据迁移放本批最后**（Phase 3）
@@ -15,7 +15,7 @@
   代码 `/data/project/shadow-health`，`uv sync` 独立 Python 3.12 venv，
   `[program:shadow-health]` 起 `uvicorn app.main:app --host 0.0.0.0 --port 8080`（容器内）。
   supervisor/nginx 配置在**容器可写层**（容器重建会重置），整份备份在 `/data/project/shadow-health/deploy/`。
-- **端口约束**：容器只发布 `55080→80`、`55443→443`（闲置）、`55022→22`、（PG 另容器 `55432`）。
+- **端口约束**：容器只发布 `18080→80`、`18443→443`（闲置）、`2222→22`、（PG 另容器 `15432`）。
   8080 无宿主机映射，一切入口都走 nginx :80。
 - **临时态（本批上线时回滚）**：nginx 当前让 shadow-health 占了根路径、服务面板挪到了 `/panel`。
   切换时恢复：面板回根 `location = /`，shadow-health 挂 `/shealth/`（§1.8 有完整 nginx 段）。
@@ -25,7 +25,7 @@
 
 ## Phase 1 ｜ 子路径前缀适配（`/shealth`）✅ 已落地（2026-07-12）
 
-**目标**：应用在 `http://<NAS_IP>:55080/shealth/` 完整可用；开发环境（无前缀）行为零变化。
+**目标**：应用在 `http://<NAS_IP>:18080/shealth/` 完整可用；开发环境（无前缀）行为零变化。
 
 > 实施与验收记录（代码为准）：
 > - **中间件**（main.forwarded_prefix）：读 `X-Forwarded-Prefix` → 存
@@ -81,7 +81,7 @@ grep 全部 `RedirectResponse(` 与 `HX-Redirect` / `HX-Location` 响应头，�
 
 ### 1.5 安卓壳 URL 拼接点核对
 
-壳约定：**base URL 含前缀**（`http://<NAS_IP>:55080/shealth`），所有拼接必须是字符串
+壳约定：**base URL 含前缀**（`http://<NAS_IP>:18080/shealth`），所有拼接必须是字符串
 `baseUrl + "/api/..."`，**不许用 Uri.Builder.path()（会覆盖前缀）**。逐点核对：
 - `MainActivity`（WebView 加载、错误页改地址、cookie 域）
 - `SamsungSyncWorker`（`/api/ingest/samsung_direct`）
@@ -124,7 +124,7 @@ grep 全部 `RedirectResponse(` 与 `HX-Redirect` / `HX-Location` 响应头，�
      ```
    - 保留 `location = /health`（容器健康检查，精确匹配）
 3. `nginx -t && nginx -s reload`
-4. 手机端 base URL 改为 `http://<NAS_IP>:55080/shealth`
+4. 手机端 base URL 改为 `http://<NAS_IP>:18080/shealth`
 5. 验收：`/shealth/healthz`=ok、登录走查、`/stock/`、`/openclaw/`、面板均正常
 
 ## Phase 2 ｜ 多 Agent 接入（REST 通道 + MCP server）✅ 已落地（2026-07-12）

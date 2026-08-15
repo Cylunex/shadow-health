@@ -1,4 +1,4 @@
-# 合并到 NAS 当前监听 55080 的 nginx http/server 配置。
+# 合并到 NAS 当前监听 18080 的 nginx http/server 配置。
 # map 必须放在 http 上下文（conf.d 文件顶层），两个 location 放在 server 内。
 
 map $http_x_shadow_external_root $shadow_health_prefix {

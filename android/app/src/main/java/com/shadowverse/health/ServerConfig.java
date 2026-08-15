@@ -27,8 +27,8 @@ final class ServerConfig {
     private static final String PREFS_NAME = "shell";
     static final String KEY_ACTIVE = "server_url";
     static final String KEY_URLS = "server_urls";
-    static final String DEFAULT_SERVER_URL = "http://192.168.0.21:55080/shealth";
-    static final String PUBLIC_SERVER_URL = "https://health.cylunex.top";
+    static final String DEFAULT_SERVER_URL = "http://192.0.2.10:18080/shealth";
+    static final String PUBLIC_SERVER_URL = "https://health.example.com";
 
     private ServerConfig() {
     }

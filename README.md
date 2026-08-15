@@ -1,6 +1,6 @@
 # shadow-health
 
-单用户数据模型、局域网优先的健康/饮食/运动管理 Web 应用。内网保留本地登录，公网入口 `https://health.cylunex.top/` 通过 Shadow Identity SSO 访问；应用端口本身不直接暴露公网。（详细设计文档在本地维护，不随仓库分发。）
+单用户数据模型、局域网优先的健康、饮食和运动管理 Web 应用，支持本地登录及统一身份认证。
 
 四大模块：**饮食记录+营养分析 · 运动训练管理 · 身体指标追踪 · 养生任务打卡**，外加三星健康历史数据一次性导入、Health Connect 增量同步、小米体脂秤 2 / S400 蓝牙直连（上秤即记录，见 [S400 适配说明](docs/miscale-s400.md)）。
 
@@ -46,26 +46,8 @@ macOS/Linux 可直接 `npx -y tailwindcss@3.4.17 -c tailwind.config.js -i static
 
 ## 部署（局域网 Debian 主机）
 
-> **照单执行版部署手册见 [docs/deploy.md](docs/deploy.md)**（含生产库初始化 SQL、.env 清单、验收清单）。以下为背景说明。
-
-镜像基于 `python:3.12-slim`（Debian bookworm），全部依赖走 `uv.lock` 锁定的 pip 包（含 `tzdata`，
-slim 镜像无系统 zoneinfo，`ZoneInfo("Asia/Shanghai")` 依赖它），无平台特定二进制，Debian x86_64 直接可用。
-
-1. 装 Docker 与 compose 插件（Debian 12：`sudo apt install docker.io docker-compose-v2`，或按官方源装 `docker-ce` + `docker-compose-plugin`）；
-2. 在 PG 里建 schema 与最小权限角色（设计文档附录 A）；
-3. 服务器上放好 `.env`（`DATABASE_URL` 指向 `health_app` 角色、`BACKUP_PG_PASSWORD` 等，chmod 600）。
-   注意 Linux 容器内没有 `host.docker.internal`：宿主机 PG 的地址直接写局域网 IP（如 `192.168.1.100:55432`），
-   并确认 PG 的 `listen_addresses`/`pg_hba.conf` 放行 Docker 网段（详见 docker-compose.yml 顶部注释）；
-4. 备份目录先建好：`sudo mkdir -p /srv/health-backups`；
-5. `docker compose up -d --build`；
-6. 部署前检查端口：`ss -tlnp | grep :8080`，冲突改 `.env` 的 `APP_PORT`；应用端口只绑定回环地址，Supervisor 原生部署的 uvicorn 必须带 `--no-proxy-headers`；
-7. 验证：`/healthz` 返回 `ok`，`/readyz` 返回 `ready`；
-8. 公网域名按 [部署手册](docs/deploy.md) 接入 Authelia Forward Auth，内网旧 `/shealth/` 入口继续可用。
-
-**硬性约定**：禁止把应用 `8080` 或 NAS `55080` 裸端口直接暴露公网。公网访问只允许走 ECS HTTPS + Authelia SSO + frp 现有受限上游。
-
-**备份注意**：backup 容器只备份 PostgreSQL；餐次照片存在 `./uploads/photos/`（文件系统），
-不在 PG 备份里——需随 NAS 快照/RAID 保护，或另加 cron rsync 到备份目录。
+生产配置、网络地址和凭据不进入仓库。部署时从示例生成本地配置，并按
+[部署手册](docs/deploy.md) 完成数据库、反向代理、备份和验收。
 
 ## 外部数据
 

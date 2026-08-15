@@ -60,7 +60,7 @@ class Settings:
         )
         self.sso_logout_url: str = os.environ.get(
             "SHADOW_SSO_LOGOUT_URL",
-            "https://auth.cylunex.top/logout?rd=https://health.cylunex.top/",
+            "https://auth.example.com/logout?rd=https://health.example.com/",
         ).strip()
         self.trusted_proxy_cidrs: tuple[str, ...] = _csv(
             "SHADOW_TRUSTED_PROXIES", "127.0.0.1/32,::1/128"

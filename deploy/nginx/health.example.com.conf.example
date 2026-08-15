@@ -1,11 +1,11 @@
-# ECS 入口：health.cylunex.top -> 本机 frps 20001 -> NAS 55080 /shealth/。
+# ECS 入口：health.example.com -> 本机 frps 18081 -> NAS 18080 /shealth/。
 # 依赖 Shadow Platform 的 authelia-location.conf 与 authelia-authrequest.conf。
 limit_req_zone $binary_remote_addr zone=shadow_health_web:10m rate=20r/s;
 limit_req_zone $binary_remote_addr zone=shadow_health_service:10m rate=10r/s;
 
 server {
     listen 80;
-    server_name health.cylunex.top;
+    server_name health.example.com;
 
     location /.well-known/acme-challenge/ {
         root /var/www/html;
@@ -19,17 +19,17 @@ server {
 server {
     listen 443 ssl;
     http2 on;
-    server_name health.cylunex.top;
+    server_name health.example.com;
 
-    # ssl_certificate /etc/letsencrypt/live/cylunex.top/fullchain.pem;
-    # ssl_certificate_key /etc/letsencrypt/live/cylunex.top/privkey.pem;
+    # ssl_certificate /etc/letsencrypt/live/example.com/fullchain.pem;
+    # ssl_certificate_key /etc/letsencrypt/live/example.com/privkey.pem;
 
     client_max_body_size 20m;
     include /etc/nginx/snippets/authelia-location.conf;
 
     # 无状态探活不建立登录会话，也不检查数据库。
     location = /healthz {
-        proxy_pass http://127.0.0.1:20001/shealth/healthz;
+        proxy_pass http://127.0.0.1:18081/shealth/healthz;
         include /etc/nginx/snippets/shadow-health-upstream.conf;
         proxy_set_header Remote-User "";
         proxy_set_header Remote-Groups "";
@@ -43,22 +43,22 @@ server {
     # 不对整个 /api/ 放行，避免未来新增的浏览器 API 意外绕过 SSO。
     location /api/ingest/ {
         limit_req zone=shadow_health_service burst=30 nodelay;
-        proxy_pass http://127.0.0.1:20001/shealth/api/ingest/;
+        proxy_pass http://127.0.0.1:18081/shealth/api/ingest/;
         include /etc/nginx/snippets/shadow-health-service-upstream.conf;
     }
     location /api/agent/ {
         limit_req zone=shadow_health_service burst=30 nodelay;
-        proxy_pass http://127.0.0.1:20001/shealth/api/agent/;
+        proxy_pass http://127.0.0.1:18081/shealth/api/agent/;
         include /etc/nginx/snippets/shadow-health-service-upstream.conf;
     }
     location /api/offline/ {
         limit_req zone=shadow_health_service burst=30 nodelay;
-        proxy_pass http://127.0.0.1:20001/shealth/api/offline/;
+        proxy_pass http://127.0.0.1:18081/shealth/api/offline/;
         include /etc/nginx/snippets/shadow-health-service-upstream.conf;
     }
     location /api/reminders/ {
         limit_req zone=shadow_health_service burst=30 nodelay;
-        proxy_pass http://127.0.0.1:20001/shealth/api/reminders/;
+        proxy_pass http://127.0.0.1:18081/shealth/api/reminders/;
         include /etc/nginx/snippets/shadow-health-service-upstream.conf;
     }
 
@@ -69,6 +69,6 @@ server {
         limit_req zone=shadow_health_web burst=40 nodelay;
 
         proxy_set_header X-Shadow-External-Root 1;
-        proxy_pass http://127.0.0.1:20001/shealth/;
+        proxy_pass http://127.0.0.1:18081/shealth/;
     }
 }

@@ -19,7 +19,7 @@ def settings(**overrides):
 def forward_headers(**overrides):
     values = {
         "X-Shadow-Proxy-Secret": "proxy-secret-with-at-least-32-characters",
-        "Remote-User": "shadow-admin",
+        "Remote-User": "demo-user",
         "Remote-Groups": "health-users,shadow-admins",
         "Remote-Name": "Shadow Admin",
         "Remote-Email": "admin@example.test",
@@ -42,9 +42,9 @@ def test_forward_identity_requires_proxy_network_secret_and_group():
     identity = auth.forward_identity(forward_headers(), "127.0.0.1", settings())
 
     assert identity is not None
-    assert identity.username == "shadow-admin"
+    assert identity.username == "demo-user"
     assert identity.groups == ("health-users", "shadow-admins")
-    assert auth.forward_identity(forward_headers(), "192.168.0.10", settings()) is None
+    assert auth.forward_identity(forward_headers(), "192.0.2.11", settings()) is None
     assert (
         auth.forward_identity(
             forward_headers(**{"X-Shadow-Proxy-Secret": "wrong"}),

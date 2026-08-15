@@ -6,26 +6,21 @@
 >（全面审查清单，已全清、归档备忘）· docs/offline-plan.md（手机离线记录方案，
 > 阶段一~三已落地，待真机回归）· docs/subpath-agent-plan.md（V3 批次计划，
 > 三段已完成）· mcp_server/README.md（MCP 16 工具 + 话术规则 + NAS 部署）。
-> **NAS 已上线、用户日常使用中**；2026-08-15 复核 `shadow-health` 与
-> `shealth-mcp` 均由 Supervisor 正常运行。Shadow Identity 与
-> `health.cylunex.top` 已完成生产首切并通过 SSO、Bearer 机器接口、证书续期演练；餐照、
-> LLM 和 Agent 凭据继续分批迁移，不与认证首切同时进行。血压计 BLE 用户已明确**不做**。
+> 当前版本已具备 Shadow Identity SSO、Bearer 机器接口和局域网本地登录能力。真实域名、
+> 地址、账号及部署状态只保存在仓库外的本地运维记录中。
 
 ### 2026-08-15 Shadow SSO 第一阶段
 
-- 正式公网入口调整为 `https://health.cylunex.top/`，沿用 ECS `20001` 到 NAS
-  `55080/shealth/` 的 frp 链路；内网 `/shealth/` 本地登录保留为恢复入口。
+- 公网入口通过 ECS、frp 与 NAS 子路径连接；内网本地登录保留为恢复入口。仓库中的域名、
+  地址和端口均为示例值。
 - 新增 `local`、`hybrid`、`forward-auth` 三种认证模式。现网目标为 `hybrid`：
   Authelia 负责公网身份和 `health-users`/`shadow-admins` 组准入，内网继续本地密码。
 - `Remote-*` 身份头同时校验 NAS Nginx 回环来源与独立代理密钥，局域网客户端无法只靠
   伪造头绕过登录；本地会话改为 HMAC 签名，重启与多 worker 后仍可验证。
 - `/healthz` 改为无状态存活检查，新增包含数据库检查的 `/readyz`；机器 Bearer 接口
   继续绕过浏览器 SSO，不改变 Android、体脂秤、MCP 与 Agent 协议。
-- 2026-08-15 已完成现网切换：ECS Authelia 监听 `127.0.0.1:9091`，公网域名启用有效
-  HTTPS 证书；首个 `shadow-admin` 账号当前只属于 `health-users`。
-- NAS uvicorn 固定监听 `127.0.0.1:8080` 并使用 `--no-proxy-headers`，保留真实回环
-  传输对端用于代理身份校验，不扩大可信代理网段。部署模板和验收步骤见
-  `docs/deploy.md` 与 `deploy/nginx/`。
+- 原生部署的 uvicorn 使用回环监听并禁用代理头改写，以保留真实传输对端用于代理身份
+  校验。部署模板和验收步骤见 `docs/deploy.md` 与 `deploy/nginx/`。
 
 ### 2026-08-07 睡眠时间显示修正
 
@@ -567,7 +562,7 @@ NAS 真实日志/生产数据审计结论：应用已进入「自动采集 + Age
 - 三代理全面审查完成，18 处修复（睡眠跨源翻倍、水位线、修订传播、双端舍入等），
   关键数据逻辑有 28 个 pytest 回归锁（`uv run pytest`）
 - 开发环境：Mac 临时 PG(55433) + `uv run uvicorn`（launch.json）；真实数据在生产 PG
-  （172.22.169.180:55432，**角色未建**，见 deploy.md §1）
+  （192.0.2.10:15432，**角色未建**，见 deploy.md §1）
 
 ## ✅ 已完成：日报 + 月报 + 报告中心（2026-07-10）
 
@@ -654,4 +649,4 @@ base.html 全局错误 toast + 「更多」导航高亮扩展；SW v9（cache:re
   /opt/homebrew/share/android-commandlinetools（local.properties 已配），
   默认 JDK 是 11，要用 `JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home
   ./gradlew assembleDebug` 构建；真机回归仍不可省（构建通过 ≠ 运行验证）
-- 提交身份：仓库 local 配置已设 Cylunex
+- 提交身份：仓库 local 配置已设 Example

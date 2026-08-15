@@ -3,7 +3,7 @@
 #
 # Debian 部署注意：
 # - PG 跑在宿主机（非容器）时，容器内没有 host.docker.internal（Linux 不自带），
-#   .env 的 DATABASE_URL 直接写宿主机局域网 IP（如 192.168.1.100:55432）；
+#   .env 的 DATABASE_URL 直接写宿主机局域网 IP（如 192.0.2.10:15432）；
 #   若想用 host.docker.internal，需给 app 服务加：
 #     extra_hosts: ["host.docker.internal:host-gateway"]
 #   并确保宿主机 PG 的 listen_addresses / pg_hba.conf 放行 Docker 网段（172.17.0.0/16 等）。
@@ -44,7 +44,7 @@ services:
     environment:
       # 连接串各项在部署机 .env 中提供
       POSTGRES_HOST: ${BACKUP_PG_HOST}
-      POSTGRES_PORT: ${BACKUP_PG_PORT:-55432}
+      POSTGRES_PORT: ${BACKUP_PG_PORT:-15432}
       POSTGRES_DB: ${BACKUP_PG_DB:-shadow_health}
       POSTGRES_USER: ${BACKUP_PG_USER:-health_app}
       POSTGRES_PASSWORD: ${BACKUP_PG_PASSWORD}

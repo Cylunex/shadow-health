@@ -1,4 +1,6 @@
 .env
+.env.*
+!.env.example
 __pycache__/
 # 私人内容素材不入仓（seed 会自动跳过，见 app/seed/data/README.md）
 app/seed/data/*.md
@@ -19,3 +21,10 @@ android/app/libs/*.aar
 .DS_Store
 # 手机安装包（构建产物，放 static/ 供局域网下载）
 static/*.apk
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+docs/private/
+deploy/local/
