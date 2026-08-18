@@ -6,6 +6,7 @@ import ipaddress
 import os
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlsplit
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -34,11 +35,12 @@ def _csv(name: str, default: str = "") -> tuple[str, ...]:
     )
 
 
-def _bool(name: str, default: bool = False) -> bool:
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() not in {"0", "false", "no", "off"}
+def _https_url(name: str) -> str:
+    value = os.environ.get(name, "").strip().rstrip("/")
+    parsed = urlsplit(value)
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise ValueError(f"{name} must be an absolute HTTPS URL")
+    return value
 
 
 class Settings:
@@ -48,20 +50,11 @@ class Settings:
             "DATABASE_URL",
             "postgresql+psycopg://health_app:health_dev@127.0.0.1:55433/health_dev",
         )
-        self.auth_password_hash: str = os.environ.get("AUTH_PASSWORD_HASH", "")
-        self.session_secret: str = os.environ.get("SESSION_SECRET", "")
-        self.auth_mode: str = (
-            os.environ.get("SHADOW_AUTH_MODE", "local").strip().lower()
-        )
-        if self.auth_mode not in {"local", "hybrid", "forward-auth"}:
-            raise ValueError("SHADOW_AUTH_MODE must be local, hybrid or forward-auth")
         self.sso_allowed_groups: tuple[str, ...] = _csv(
             "SHADOW_SSO_ALLOWED_GROUPS", "health-users,shadow-admins"
         )
-        self.sso_logout_url: str = os.environ.get(
-            "SHADOW_SSO_LOGOUT_URL",
-            "https://auth.example.com/logout?rd=https://health.example.com/",
-        ).strip()
+        self.sso_entry_url: str = _https_url("SHADOW_SSO_ENTRY_URL")
+        self.sso_logout_url: str = _https_url("SHADOW_SSO_LOGOUT_URL")
         self.trusted_proxy_cidrs: tuple[str, ...] = _csv(
             "SHADOW_TRUSTED_PROXIES", "127.0.0.1/32,::1/128"
         )
@@ -72,24 +65,10 @@ class Settings:
             _secret_from_file(proxy_secret_file)
             or os.environ.get("SHADOW_PROXY_AUTH_SECRET", "").strip()
         )
-        if (
-            self.auth_mode in {"hybrid", "forward-auth"}
-            and len(self.proxy_auth_secret) < 32
-        ):
-            raise ValueError(
-                "SSO modes require a proxy auth secret of at least 32 characters"
-            )
-        if self.auth_mode in {"hybrid", "forward-auth"} and not self.sso_allowed_groups:
-            raise ValueError("SSO modes require at least one allowed group")
-        if self.auth_mode == "hybrid" and len(self.session_secret) < 32:
-            raise ValueError(
-                "hybrid auth requires SESSION_SECRET of at least 32 characters"
-            )
-        if self.auth_mode == "hybrid" and not self.auth_password_hash:
-            raise ValueError(
-                "hybrid auth requires AUTH_PASSWORD_HASH for the local fallback"
-            )
-        self.cookie_secure: bool = _bool("SHADOW_COOKIE_SECURE", False)
+        if len(self.proxy_auth_secret) < 32:
+            raise ValueError("SSO requires a proxy auth secret of at least 32 characters")
+        if not self.sso_allowed_groups:
+            raise ValueError("SSO requires at least one allowed group")
         self.ingest_token: str = os.environ.get("INGEST_TOKEN", "")
         self.keep_mobile: str = os.environ.get("KEEP_MOBILE", "")
         self.keep_password: str = os.environ.get("KEEP_PASSWORD", "")

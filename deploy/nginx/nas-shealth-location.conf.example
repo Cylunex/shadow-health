@@ -20,7 +20,7 @@ location /shealth/ {
     proxy_set_header X-Forwarded-Prefix $shadow_health_prefix;
 
     # 显式传递 ECS 注入的身份。应用仍会校验来源地址和独立代理密钥；
-    # 内网浏览器没有密钥，只能继续走 Health 本地登录。
+    # 内网浏览器没有身份时由应用 /login 交接到公网 Platform SSO。
     proxy_set_header Remote-User $http_remote_user;
     proxy_set_header Remote-Groups $http_remote_groups;
     proxy_set_header Remote-Name $http_remote_name;

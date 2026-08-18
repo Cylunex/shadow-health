@@ -8,9 +8,8 @@
 55433），数据库不可达或 INGEST_TOKEN 未配置自动跳过。测试日期用 today-340
 （错开 offline 的 -300、agent_channel 的 -320、其它批次的 -350 与 2020-01/02）。
 
-登录：/agent-log 挂 require_login（session cookie），仓库没有现成 login
-fixture——auth 的 session 表在进程内存（app.auth._sessions），测试同进程直接
-auth.create_session() 签发合法 token 塞进 TestClient cookie，不依赖明文密码。
+登录：/agent-log 挂 require_login，页面测试注入可信代理来源、代理密钥与 Platform
+身份头；不再保留本地密码或应用自己的 session cookie。
 清理铁律：留档只按本轮写入的 external_id 精确删，绝不整删 source='agent'。
 """
 from __future__ import annotations
@@ -112,19 +111,16 @@ def client():
 
 
 @pytest.fixture(scope="module")
-def web():
-    """带 session cookie 的页面客户端：进程内签发 token（require_login 放行）。"""
+def web(sso_headers):
+    """带可信 Platform 身份头的页面客户端。"""
     if not _db_ready():
         pytest.skip("临时 PG 不可达（uv run docker/pg 未启动）")
     from fastapi.testclient import TestClient
 
-    from app import auth
     from app.main import app
-    token = auth.create_session()
-    with TestClient(app) as c:
-        c.cookies.set(auth.SESSION_COOKIE, token)
+    with TestClient(app, client=("127.0.0.1", 50000)) as c:
+        c.headers.update(sso_headers)
         yield c
-    auth.destroy_session(token)
 
 
 @pytest.fixture()
@@ -376,7 +372,7 @@ def test_status_ctx_has_more_probe(client, db, agent_env):
 # ---- 登录守卫 ----
 
 def test_agent_log_requires_login(web):
-    """匿名 303 去 /login；带 session cookie 能打开页面与轮询片段。"""
+    """匿名交给 SSO 接口；可信 Platform 身份可打开页面与轮询片段。"""
     from fastapi.testclient import TestClient
 
     from app.main import app

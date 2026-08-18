@@ -1,6 +1,6 @@
 # shadow-health
 
-单用户数据模型、局域网优先的健康、饮食和运动管理 Web 应用，支持本地登录及统一身份认证。
+单用户数据模型、局域网优先的健康、饮食和运动管理 Web 应用，浏览器统一使用 Shadow Platform SSO。
 
 四大模块：**饮食记录+营养分析 · 运动训练管理 · 身体指标追踪 · 养生任务打卡**，外加三星健康历史数据一次性导入、Health Connect 增量同步、小米体脂秤 2 / S400 蓝牙直连（上秤即记录，见 [S400 适配说明](docs/miscale-s400.md)）。
 
@@ -24,8 +24,9 @@ python -m uv sync
 # 2. 开发数据库
 docker compose -f docker-compose.dev.yml up -d
 
-# 3. 配置：复制 .env.example 为 .env，生成密码哈希与密钥
-python -m uv run python -m app.auth hash <你的密码>   # 填 AUTH_PASSWORD_HASH
+# 3. 配置：复制 .env.example 为 .env，填写 Platform SSO、数据库和机器接口密钥
+# 本地页面调试也需用代理注入 Remote-* 与 X-Shadow-Proxy-Secret；
+# SHADOW_PROXY_AUTH_SECRET 可供本地测试，生产只能使用受限密钥文件。
 
 # 4. 迁移 + seed
 python -m uv run alembic upgrade head

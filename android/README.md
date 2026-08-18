@@ -53,8 +53,9 @@ JAVA_HOME=/opt/homebrew/opt/openjdk@17 ./gradlew --no-daemon assembleDebug   # m
 
 公网网页访问由统一 SSO 保护；体脂秤、三星同步、离线队列和提醒等后台 Bearer 接口
 使用精确路径放行，不依赖 WebView 登录 Cookie。服务器端仍会校验 `INGEST_TOKEN`。
+内网地址仍可优先用于后台数据通道；WebView 页面访问内网入口时由服务端自动交接到公网 SSO。
 
-其他行为：返回键 = 网页后退（无历史则退出）；登录 Cookie 持久化，重启不掉登录态。
+其他行为：返回键 = 网页后退（无历史则退出）；Platform 登录 Cookie 持久化，重启不掉登录态。
 
 ## 体脂秤后台监听（小米体脂秤 2）
 

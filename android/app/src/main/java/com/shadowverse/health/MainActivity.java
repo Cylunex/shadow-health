@@ -59,7 +59,7 @@ import java.util.concurrent.Executors;
  * - 启动先秒开内置本地页（assets/offline.html），后台探测 /healthz：在线自动切
  *   服务器页面，离线停留本地页直接记录（队列见 OfflineStore，30s 自动重试）；
  *   加载失败也回落到同一本地页（docs/offline-plan.md 阶段二）。
- * - Cookies persist (flushed on pause) so the login session survives restarts.
+ * - Cookies persist (flushed on pause) so the Platform SSO session survives restarts.
  *   注意 cookie 按 origin 隔离：每个服务器地址首次使用需各自登录一次。
  */
 public class MainActivity extends Activity {

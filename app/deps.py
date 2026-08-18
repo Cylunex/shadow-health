@@ -154,10 +154,7 @@ templates.env.globals["u"] = _u
 
 
 class LoginRequired(Exception):
-    """未登录访问页面/片段时抛出，由全局 handler 转跳登录页。"""
-
-    def __init__(self, *, sso_only: bool = False) -> None:
-        self.sso_only = sso_only
+    """缺少可信 Platform 身份时抛出，由全局 handler 转到 SSO 入口。"""
 
 
 def require_login(request: Request) -> None:
@@ -166,18 +163,14 @@ def require_login(request: Request) -> None:
     settings = get_settings()
     client_host = request.client.host if request.client else ""
     identity = auth.forward_identity(request.headers, client_host, settings)
-    if identity is not None:
-        request.scope["shadow_identity"] = identity
-        return
-    if settings.auth_mode == "forward-auth":
-        raise LoginRequired(sso_only=True)
-    token = request.cookies.get(auth.SESSION_COOKIE)
-    if not auth.session_valid(token):
+    if identity is None:
         raise LoginRequired()
+    request.scope["shadow_identity"] = identity
 
 
 def login_redirect(request: Request) -> RedirectResponse:
-    # HTMX 片段请求返回 HX-Redirect，整页请求 302
+    # /login 现在只是 SSO 交接路由；保留应用内前缀以兼容旧书签和 Android 内网地址。
+    # HTMX 片段请求返回 HX-Redirect，整页请求 303。
     login_url = prefixed(request, "/login")
     if request.headers.get("HX-Request"):
         resp = RedirectResponse(login_url, status_code=303)

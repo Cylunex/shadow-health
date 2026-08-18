@@ -3,7 +3,7 @@
 > 目标机：局域网 Debian NAS，生产 PostgreSQL 在 `192.0.2.10:15432`。Health 数据仍留在 NAS；公网只通过 ECS HTTPS、Authelia 和现有 frp 隧道访问。
 >
 > 设计、安全边界、验收原理和回滚说明见 `docs/sso-migration.md`。本方案仅维护 Health
-> 已上线链路；新项目统一使用原生 OIDC，不照搬 Hybrid。
+> 已上线链路；Health 已移除旧密码入口，新项目仍统一使用原生 OIDC，不照搬 Forward Auth。
 
 ## 0. 前置确认
 
@@ -37,19 +37,12 @@ chmod 600 .env
 | 键 | 生产值 |
 |---|---|
 | `DATABASE_URL` | `postgresql+psycopg://health_app:<密码>@192.0.2.10:15432/shadow_health` |
-| `AUTH_PASSWORD_HASH` | 内网本地登录密码的 scrypt 哈希 |
-| `SESSION_SECRET` / `INGEST_TOKEN` | 分别生成的高熵随机值 |
-| `SHADOW_AUTH_MODE` | `hybrid`：公网 SSO、内网继续本地登录 |
+| `INGEST_TOKEN` | Android、体脂秤与机器接口使用的高熵随机值 |
+| `SHADOW_SSO_ENTRY_URL` | Health 的公网 HTTPS 规范入口；旧内网页面由此交接到 SSO |
 | `SHADOW_SSO_ALLOWED_GROUPS` | `health-users,shadow-admins` |
 | `SHADOW_PROXY_AUTH_SECRET_FILE` | `/etc/shadow-health/secrets/proxy-auth-secret` |
 | `SHADOW_TRUSTED_PROXIES` | 原生部署为 `127.0.0.1/32,::1/128` |
 | `BACKUP_PG_*` | 指向同一生产库 |
-
-创建本地密码哈希：
-
-```bash
-python3 -m app.auth hash '<本地登录密码>'
-```
 
 ## 3. 启动与探活
 
@@ -116,7 +109,9 @@ sudo chmod 0600 /etc/shadow-health/secrets/proxy-auth-secret
 /api/reminders/
 ```
 
-没有代理密钥时，即便伪造 `Remote-User` 也不会建立 SSO 身份。`forward-auth` 模式会直接返回 401；当前 `hybrid` 模式会回退到本地登录。
+没有代理密钥时，即便伪造 `Remote-User` 也不会建立 SSO 身份。Health 不再接受本地密码
+或旧 `sh_session` Cookie；NAS 内网页面访问会经 `/login` 交接到
+`SHADOW_SSO_ENTRY_URL`，机器接口仍只认 Bearer。
 
 ## 5. 数据迁入（可选）
 
@@ -132,13 +127,15 @@ http://192.0.2.10:18080/shealth
 https://health.example.com
 ```
 
-第一条用于局域网直连，第二条用于外网。后台同步继续填写 `INGEST_TOKEN`；网页访问公网地址时由 WebView 跟随 Authelia 登录。APK 可从内网 `/shealth/static/shadow-health.apk` 下载。
+第一条仍供后台同步和体脂秤优先走局域网；WebView 页面访问到内网入口时会自动跳转
+第二条并跟随 Platform 登录。后台同步继续填写 `INGEST_TOKEN`。APK 可从内网
+`/shealth/static/shadow-health.apk` 下载。
 
 ## 7. 验收清单
 
 - [ ] `https://health.example.com/` 跳转 Shadow Identity，登录后回到今日页
 - [ ] 无 `health-users`/`shadow-admins` 组的账号无法进入
-- [ ] `http://192.0.2.10:18080/shealth/` 仍可使用本地密码
+- [ ] `http://192.0.2.10:18080/shealth/` 不再显示密码页，并跳转公网 SSO
 - [ ] 缺少代理密钥的伪造身份头不能绕过登录
 - [ ] `/healthz` 返回 200；数据库不可用时 `/readyz` 返回 503
 - [ ] 手机同步、上秤、提醒和 Agent Bearer 通道不被 SSO 重定向
@@ -150,4 +147,4 @@ https://health.example.com
 - 禁止公开应用 `8080` 或 NAS `18080`；公网只走 ECS HTTPS + SSO。
 - PostgreSQL 备份不包含餐照，`uploads/photos/` 必须进入 NAS 快照或异机备份。
 - 升级前运行全量测试，部署后同时检查 `/healthz`、`/readyz` 和四类机器接口。
-- SSO 故障时保留内网本地登录作为恢复入口，不临时公开应用端口。
+- SSO 故障时修复 Identity/代理或整体回滚上一发布，不恢复旧密码入口，也不临时公开应用端口。

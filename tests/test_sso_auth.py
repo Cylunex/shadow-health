@@ -7,10 +7,11 @@ from app import auth
 
 def settings(**overrides):
     values = {
-        "auth_mode": "hybrid",
         "trusted_proxy_cidrs": ("127.0.0.1/32",),
         "proxy_auth_secret": "proxy-secret-with-at-least-32-characters",
         "sso_allowed_groups": ("health-users", "shadow-admins"),
+        "sso_entry_url": "https://health.example.test",
+        "sso_logout_url": "https://auth.example.test/logout",
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -26,16 +27,6 @@ def forward_headers(**overrides):
     }
     values.update(overrides)
     return values
-
-
-def test_signed_session_survives_without_process_state_and_rejects_tampering():
-    secret = "session-secret-with-at-least-32-characters"
-    token = auth.create_session(secret, now=1_000)
-
-    assert auth.session_valid(token, secret, now=1_001)
-    assert not auth.session_valid(f"{token}x", secret, now=1_001)
-    assert not auth.session_valid(token, "different-secret", now=1_001)
-    assert not auth.session_valid(token, secret, now=1_000 + auth.SESSION_MAX_AGE + 1)
 
 
 def test_forward_identity_requires_proxy_network_secret_and_group():
@@ -63,23 +54,10 @@ def test_forward_identity_requires_proxy_network_secret_and_group():
     )
 
 
-def test_local_mode_ignores_forwarded_identity_headers():
-    assert (
-        auth.forward_identity(
-            forward_headers(),
-            "127.0.0.1",
-            settings(auth_mode="local"),
-        )
-        is None
-    )
-
-
 def test_login_endpoint_accepts_verified_forward_identity(monkeypatch):
     from app import main
 
-    configured = settings(
-        sso_logout_url="https://auth.example/logout", cookie_secure=False
-    )
+    configured = settings()
     monkeypatch.setattr(main, "get_settings", lambda: configured)
     client = TestClient(
         main.app,
@@ -93,14 +71,10 @@ def test_login_endpoint_accepts_verified_forward_identity(monkeypatch):
     assert response.headers["location"] == "/"
 
 
-def test_forward_auth_mode_rejects_direct_local_login(monkeypatch):
+def test_login_endpoint_hands_direct_clients_to_platform(monkeypatch):
     from app import main
 
-    configured = settings(
-        auth_mode="forward-auth",
-        sso_logout_url="https://auth.example/logout",
-        cookie_secure=True,
-    )
+    configured = settings()
     monkeypatch.setattr(main, "get_settings", lambda: configured)
     client = TestClient(
         main.app,
@@ -110,7 +84,36 @@ def test_forward_auth_mode_rejects_direct_local_login(monkeypatch):
     response = client.get("/login")
     client.close()
 
-    assert response.status_code == 401
+    assert response.status_code == 303
+    assert response.headers["location"] == "https://health.example.test"
+
+
+def test_legacy_session_cookie_no_longer_authenticates():
+    from app import main
+
+    client = TestClient(main.app, follow_redirects=False)
+    client.cookies.set("sh_session", "v1.legacy.invalid")
+    response = client.get("/metrics")
+    client.close()
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/login"
+
+
+def test_logout_uses_platform_global_logout(monkeypatch):
+    from app import main
+
+    monkeypatch.setattr(main, "get_settings", lambda: settings())
+    client = TestClient(
+        main.app,
+        client=("127.0.0.1", 50000),
+        follow_redirects=False,
+    )
+    response = client.post("/logout", headers=forward_headers())
+    client.close()
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "https://auth.example.test/logout"
 
 
 def test_healthz_does_not_require_database(monkeypatch):

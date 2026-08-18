@@ -12,7 +12,7 @@ from sqlalchemy import text
 from app import auth
 from app.config import BASE_DIR, get_settings
 from app.db import engine, wait_for_db
-from app.deps import LoginRequired, login_redirect, prefixed, redirect, templates
+from app.deps import LoginRequired, login_redirect, redirect, templates
 
 
 @asynccontextmanager
@@ -63,8 +63,6 @@ async def csrf_same_origin(request: Request, call_next):
 
 @app.exception_handler(LoginRequired)
 async def login_required_handler(request: Request, exc: LoginRequired):
-    if exc.sso_only:
-        return PlainTextResponse("Shadow SSO authentication required", status_code=401)
     return login_redirect(request)
 
 
@@ -97,51 +95,9 @@ def login_page(request: Request):
     client_host = request.client.host if request.client else ""
     if auth.forward_identity(request.headers, client_host, settings) is not None:
         return redirect(request, "/")
-    if settings.auth_mode == "forward-auth":
-        raise HTTPException(
-            status_code=401, detail="Shadow SSO authentication required"
-        )
-    token = request.cookies.get(auth.SESSION_COOKIE)
-    if auth.session_valid(token):
-        return redirect(request, "/")
-    return templates.TemplateResponse(request, "login.html", {"error": None})
-
-
-@app.post("/login")
-async def login_submit(request: Request):
-    settings = get_settings()
-    if settings.auth_mode == "forward-auth":
-        raise HTTPException(status_code=403, detail="local login is disabled")
-    ip = request.client.host if request.client else "?"
-    if auth.is_locked(ip):
-        return templates.TemplateResponse(
-            request,
-            "login.html",
-            {"error": "尝试次数过多，请 1 分钟后再试"},
-            status_code=429,
-        )
-    form = await request.form()
-    password = str(form.get("password", ""))
-    stored = settings.auth_password_hash
-    if not stored or not auth.verify_password(password, stored):
-        auth.record_failure(ip)
-        return templates.TemplateResponse(
-            request, "login.html", {"error": "密码不正确"}, status_code=401
-        )
-    auth.clear_failures(ip)
-    token = auth.create_session()
-    resp = redirect(request, "/")
-    resp.set_cookie(
-        auth.SESSION_COOKIE,
-        token,
-        max_age=auth.SESSION_MAX_AGE,
-        httponly=True,
-        samesite="lax",
-        secure=settings.cookie_secure,
-        # 收窄到部署前缀：同域名下 /stock/ 等其他应用收不到本站会话
-        path=prefixed(request, "") or "/",
-    )
-    return resp
+    # 旧内网入口和 Android 既有地址仍会访问 /shealth/*。缺少代理身份时经
+    # 这个交接路由跳到公网 Platform 入口，避免下掉密码登录后只得到 401。
+    return RedirectResponse(settings.sso_entry_url, status_code=303)
 
 
 @app.get("/more")
@@ -197,13 +153,8 @@ def logout(request: Request):
     settings = get_settings()
     client_host = request.client.host if request.client else ""
     identity = auth.forward_identity(request.headers, client_host, settings)
-    auth.destroy_session(request.cookies.get(auth.SESSION_COOKIE))
-    if identity is not None and settings.sso_logout_url:
-        resp = RedirectResponse(settings.sso_logout_url, status_code=303)
-    else:
-        resp = redirect(request, "/login")
-    resp.delete_cookie(auth.SESSION_COOKIE, path=prefixed(request, "") or "/")
-    return resp
+    target = settings.sso_logout_url if identity is not None else settings.sso_entry_url
+    return RedirectResponse(target, status_code=303)
 
 
 def _register_routers() -> None:

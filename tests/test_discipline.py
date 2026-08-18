@@ -107,15 +107,13 @@ def test_samsung_takeoff_moves_between_release_and_workout(db):
     assert workout.session_type == "running"
 
 
-def test_discipline_page_renders(db):
+def test_discipline_page_renders(db, sso_headers):
     from fastapi.testclient import TestClient
 
-    from app import auth
     from app.main import app
 
-    token = auth.create_session()
-    with TestClient(app) as client:
-        client.cookies.set(auth.SESSION_COOKIE, token)
+    with TestClient(app, client=("127.0.0.1", 50000)) as client:
+        client.headers.update(sso_headers)
         response = client.get("/discipline")
     assert response.status_code == 200
     assert "当前连续自律" in response.text or "还没有释放记录" in response.text

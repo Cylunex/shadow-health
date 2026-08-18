@@ -1,23 +1,32 @@
 # 会话交接（自包含，新会话从这里继续）
 
-> 最后更新：2026-08-15（Shadow SSO 第一阶段）。配套阅读：
+> 最后更新：2026-08-18（移除旧认证）。配套阅读：
 > README（功能全貌）· docs/deploy.md（NAS 部署照单）· docs/mobile-sync.md
 >（三星直读背景）· gateway/README.md（体脂秤双端）· docs/audit-2026-07-10.md
 >（全面审查清单，已全清、归档备忘）· docs/offline-plan.md（手机离线记录方案，
 > 阶段一~三已落地，待真机回归）· docs/subpath-agent-plan.md（V3 批次计划，
 > 三段已完成）· mcp_server/README.md（MCP 16 工具 + 话术规则 + NAS 部署）。
-> 当前版本已具备 Shadow Identity SSO、Bearer 机器接口和局域网本地登录能力。真实域名、
+> 当前版本浏览器只接受 Shadow Identity SSO，机器接口继续使用 Bearer。真实域名、
 > 地址、账号及部署状态只保存在仓库外的本地运维记录中。
+
+### 2026-08-18 移除旧认证
+
+- 删除本地密码校验、HMAC `sh_session`、`local/hybrid/forward-auth` 三态兼容层与登录表单；
+  浏览器只接受可信 Platform 代理身份。
+- `/login` 保留为无表单的 SSO 交接路由：NAS 内网旧书签和现有 Android 局域网地址会
+  303 到 `SHADOW_SSO_ENTRY_URL`，不因移除本地登录卡在 401。
+- 删除 `AUTH_PASSWORD_HASH`、`SESSION_SECRET`、`SHADOW_AUTH_MODE`、
+  `SHADOW_COOKIE_SECURE` 配置；部署前必须配置公网 SSO 入口和代理密钥。
+- Android、BLE、Agent、MCP 与提醒 Bearer 协议不变；测试页面统一用可信代理身份头。
 
 ### 2026-08-15 Shadow SSO 第一阶段
 
-> 完整改造记录、请求分类、安全边界和回滚见 `docs/sso-migration.md`。该 Hybrid 方案只
-> 维护 Health 既有部署，后续项目统一原生 OIDC。
+> 本节保留第一阶段历史。当前状态以上方 2026-08-18 为准；后续项目统一原生 OIDC。
 
-- 公网入口通过 ECS、frp 与 NAS 子路径连接；内网本地登录保留为恢复入口。仓库中的域名、
+- 第一阶段公网入口通过 ECS、frp 与 NAS 子路径连接，并曾保留内网登录。仓库中的域名、
   地址和端口均为示例值。
-- 新增 `local`、`hybrid`、`forward-auth` 三种认证模式。现网目标为 `hybrid`：
-  Authelia 负责公网身份和 `health-users`/`shadow-admins` 组准入，内网继续本地密码。
+- 第一阶段新增 `local`、`hybrid`、`forward-auth` 三种模式并以 `hybrid` 上线；这些兼容
+  模式已在 2026-08-18 删除。
 - `Remote-*` 身份头同时校验 NAS Nginx 回环来源与独立代理密钥，局域网客户端无法只靠
   伪造头绕过登录；本地会话改为 HMAC 签名，重启与多 worker 后仍可验证。
 - `/healthz` 改为无状态存活检查，新增包含数据库检查的 `/readyz`；机器 Bearer 接口
@@ -419,8 +428,8 @@ NAS 真实日志/生产数据审计结论：应用已进入「自动采集 + Age
 5. **P5 测试文档**：tests/test_mcp_tools.py 33 个（MockTransport 全 mock：
    record_habit 三态匹配、_ingest 503 同 client_id 重试、20 字段白名单锁、
    update_record 去重）+ tests/test_agent_log.py 27 个（blob.row_id 优先/内容
-   匹配兜底/revoke 幂等与 blob 合并/筛选分页；登录用 auth.create_session 直发
-   token）+ tests/test_agent_v5.py 22 个（新端点口径/food_id 重算/increment/
+   匹配兜底/revoke 幂等与 blob 合并/筛选分页；页面认证现改为可信 Platform
+   身份头）+ tests/test_agent_v5.py 22 个（新端点口径/food_id 重算/increment/
    update 边界/agent_name 落 blob/ai_tools 直测；错峰日期 today-360，agent_log
    用 today-340）；/api/agent/ 加入 CSRF Bearer 豁免前缀（main.py，显式化）；
    mcp_server/README 工具表 9→16 + 话术规则补 update/food_id；README 补多 Agent

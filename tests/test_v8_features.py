@@ -241,16 +241,14 @@ def test_default_metric_falls_back_when_weight_hidden(db, restore_display_settin
 
 
 @pytest.fixture()
-def page(db):
-    """带 session cookie 的页面客户端（照 test_agent_log 模式，进程内签发 token）。"""
+def page(db, sso_headers):
+    """带可信 Platform 身份头的页面客户端。"""
     from fastapi.testclient import TestClient
 
-    from app import auth
     from app.main import app
 
-    token = auth.create_session()
-    with TestClient(app) as c:
-        c.cookies.set(auth.SESSION_COOKIE, token)
+    with TestClient(app, client=("127.0.0.1", 50000)) as c:
+        c.headers.update(sso_headers)
         yield c
 
 

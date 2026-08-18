@@ -124,15 +124,13 @@ def test_catalog_rejects_sentence_names(db, cleanup):
 # ---------- 通道接线 ----------
 
 @pytest.fixture()
-def page(db):
+def page(db, sso_headers):
     from fastapi.testclient import TestClient
 
-    from app import auth
     from app.main import app
 
-    token = auth.create_session()
-    with TestClient(app) as c:
-        c.cookies.set(auth.SESSION_COOKIE, token)
+    with TestClient(app, client=("127.0.0.1", 50000)) as c:
+        c.headers.update(sso_headers)
         yield c
 
 
