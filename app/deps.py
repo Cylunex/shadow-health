@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import quote
 
 from fastapi import Request
 from fastapi.responses import RedirectResponse
@@ -161,8 +162,7 @@ def require_login(request: Request) -> None:
     from app.config import get_settings
 
     settings = get_settings()
-    client_host = request.client.host if request.client else ""
-    identity = auth.forward_identity(request.headers, client_host, settings)
+    identity = auth.browser_identity(request, settings)
     if identity is None:
         raise LoginRequired()
     request.scope["shadow_identity"] = identity
@@ -171,7 +171,10 @@ def require_login(request: Request) -> None:
 def login_redirect(request: Request) -> RedirectResponse:
     # /login 现在只是 SSO 交接路由；保留应用内前缀以兼容旧书签和 Android 内网地址。
     # HTMX 片段请求返回 HX-Redirect，整页请求 303。
-    login_url = prefixed(request, "/login")
+    return_to = request.url.path
+    if request.url.query:
+        return_to += "?" + request.url.query
+    login_url = prefixed(request, "/login") + "?return_to=" + quote(return_to, safe="")
     if request.headers.get("HX-Request"):
         resp = RedirectResponse(login_url, status_code=303)
         resp.headers["HX-Redirect"] = login_url

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import secrets
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
@@ -13,6 +15,17 @@ from app import auth
 from app.config import BASE_DIR, get_settings
 from app.db import engine, wait_for_db
 from app.deps import LoginRequired, login_redirect, redirect, templates
+from app.oidc import (
+    SESSION_COOKIE,
+    TRANSACTION_COOKIE,
+    OIDCError,
+    clear_session_cookie,
+    clear_transaction_cookie,
+    get_oidc_service,
+    sanitize_return_to,
+    set_session_cookie,
+    set_transaction_cookie,
+)
 
 
 @asynccontextmanager
@@ -22,6 +35,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="shadow-health", lifespan=lifespan)
+logger = logging.getLogger("shadow_health.auth")
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 
 
@@ -90,14 +104,71 @@ def service_worker() -> FileResponse:
 
 
 @app.get("/login")
-def login_page(request: Request):
+def login_page(request: Request, return_to: str = "/"):
     settings = get_settings()
-    client_host = request.client.host if request.client else ""
-    if auth.forward_identity(request.headers, client_host, settings) is not None:
+    if auth.browser_identity(request, settings) is not None:
         return redirect(request, "/")
-    # 旧内网入口和 Android 既有地址仍会访问 /shealth/*。缺少代理身份时经
-    # 这个交接路由跳到公网 Platform 入口，避免下掉密码登录后只得到 401。
-    return RedirectResponse(settings.sso_entry_url, status_code=303)
+    if settings.auth_mode == "legacy-forward":
+        return RedirectResponse(settings.sso_entry_url, status_code=303)
+    try:
+        service = get_oidc_service()
+        state, nonce, challenge = service.store.create_login_transaction(
+            return_to=sanitize_return_to(return_to),
+            ttl_seconds=service.config.transaction_ttl_seconds,
+        )
+        target = service.client.authorization_url(
+            state=state, nonce=nonce, challenge=challenge
+        )
+        response = RedirectResponse(target, status_code=302)
+        set_transaction_cookie(
+            response, state, service.config.transaction_ttl_seconds
+        )
+        response.headers["Cache-Control"] = "no-store"
+        return response
+    except OIDCError:
+        return PlainTextResponse("browser authentication unavailable", status_code=503)
+
+
+@app.get("/auth/callback")
+def auth_callback(request: Request, state: str = "", code: str = "", error: str = ""):
+    stage = "consume_state"
+    try:
+        cookie_state = request.cookies.get(TRANSACTION_COOKIE, "")
+        if not state or not secrets.compare_digest(state, cookie_state):
+            raise OIDCError("login transaction is not bound to this browser", reason="state")
+        service = get_oidc_service()
+        transaction = service.store.consume_login_transaction(state)
+        stage = "provider_response"
+        if error:
+            raise OIDCError("identity provider rejected login", reason="provider")
+        stage = "exchange_code"
+        tokens = service.client.exchange_code(
+            code=code, verifier=transaction["code_verifier"]
+        )
+        stage = "verify_id_token"
+        claims = service.client.verify_id_token(
+            tokens["id_token"], nonce=transaction["nonce"]
+        )
+        claims = service.client.complete_profile_claims(claims, tokens)
+        if service.config.required_group not in claims.get("groups", ()):
+            return PlainTextResponse("application access is not permitted", status_code=403)
+        identity = service.store.upsert_identity(claims)
+        session = service.store.create_session(
+            identity, service.config.session_ttl_seconds
+        )
+        response = RedirectResponse(
+            sanitize_return_to(transaction["return_to"]), status_code=303
+        )
+        set_session_cookie(response, session)
+        clear_transaction_cookie(response)
+        response.headers["Cache-Control"] = "no-store"
+        return response
+    except OIDCError as exc:
+        logger.warning("oidc_callback_rejected stage=%s reason=%s", stage, exc.reason)
+        response = PlainTextResponse("OIDC callback validation failed", status_code=400)
+        clear_transaction_cookie(response)
+        response.headers["Cache-Control"] = "no-store"
+        return response
 
 
 @app.get("/more")
@@ -151,10 +222,19 @@ def more_page(request: Request):
 @app.post("/logout")
 def logout(request: Request):
     settings = get_settings()
-    client_host = request.client.host if request.client else ""
-    identity = auth.forward_identity(request.headers, client_host, settings)
-    target = settings.sso_logout_url if identity is not None else settings.sso_entry_url
-    return RedirectResponse(target, status_code=303)
+    if settings.auth_mode == "legacy-forward":
+        client_host = request.client.host if request.client else ""
+        identity = auth.forward_identity(request.headers, client_host, settings)
+        target = settings.sso_logout_url if identity is not None else settings.sso_entry_url
+        return RedirectResponse(target, status_code=303)
+    try:
+        service = get_oidc_service()
+        service.store.revoke_session(request.cookies.get(SESSION_COOKIE, ""))
+        response = RedirectResponse(service.client.global_logout_url(), status_code=303)
+    except OIDCError:
+        response = RedirectResponse(settings.oidc_post_logout_redirect_uri, status_code=303)
+    clear_session_cookie(response)
+    return response
 
 
 def _register_routers() -> None:

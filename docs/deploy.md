@@ -3,7 +3,7 @@
 > 目标机：局域网 Debian NAS，生产 PostgreSQL 在 `192.0.2.10:15432`。Health 数据仍留在 NAS；公网只通过 ECS HTTPS、Authelia 和现有 frp 隧道访问。
 >
 > 设计、安全边界、验收原理和回滚说明见 `docs/sso-migration.md`。本方案仅维护 Health
-> 已上线链路；Health 已移除旧密码入口，新项目仍统一使用原生 OIDC，不照搬 Forward Auth。
+> Health 浏览器链路使用原生 OIDC Authorization Code + PKCE；Nginx 不注入身份头。
 
 ## 0. 前置确认
 
@@ -38,10 +38,13 @@ chmod 600 .env
 |---|---|
 | `DATABASE_URL` | `postgresql+psycopg://health_app:<密码>@192.0.2.10:15432/shadow_health` |
 | `INGEST_TOKEN` | Android、体脂秤与机器接口使用的高熵随机值 |
-| `SHADOW_SSO_ENTRY_URL` | Health 的公网 HTTPS 规范入口；旧内网页面由此交接到 SSO |
-| `SHADOW_SSO_ALLOWED_GROUPS` | `health-users,shadow-admins` |
-| `SHADOW_PROXY_AUTH_SECRET_FILE` | `/etc/shadow-health/secrets/proxy-auth-secret` |
-| `SHADOW_TRUSTED_PROXIES` | 原生部署为 `127.0.0.1/32,::1/128` |
+| `SHADOW_AUTH_MODE` | `oidc` |
+| `SHADOW_OIDC_ISSUER` | Shadow Identity 的唯一 HTTPS issuer |
+| `SHADOW_OIDC_CLIENT_ID` | `shadow-health` |
+| `SHADOW_OIDC_CLIENT_SECRET_FILE` | `/etc/shadow-health/secrets/oidc-client-secret` |
+| `SHADOW_OIDC_REDIRECT_URI` | Health 规范入口的精确 `/auth/callback` |
+| `SHADOW_OIDC_REQUIRED_GROUP` | `health-users` |
+| `SHADOW_OIDC_SESSION_DB` | NAS 持久目录下的本地浏览器 Session 库 |
 | `BACKUP_PG_*` | 指向同一生产库 |
 
 ## 3. 启动与探活
@@ -62,11 +65,8 @@ docker compose exec app python -m app.seed
 uvicorn app.main:app --host 127.0.0.1 --port 8080 --no-proxy-headers
 ```
 
-`--no-proxy-headers` 必须保留：ECS 经 frp 到 NAS 后仍由 NAS Nginx 从回环地址访问应用，
-应用只信任这个真实传输对端；若让 uvicorn 根据 `X-Forwarded-For` 改写客户端地址，SSO
-代理身份校验会误判。真实访客地址仍由两端 Nginx 记录，不需要扩大
-`SHADOW_TRUSTED_PROXIES`。不要覆盖 NAS 仓库里未纳入 Git 的 `deploy/` 备份和
-`scripts/deploy.sh`。
+`--no-proxy-headers` 继续保留，外部 Origin、Host 和前缀只由受控 Nginx 配置传入。
+不要覆盖 NAS 仓库里未纳入 Git 的 `deploy/` 备份和 `scripts/deploy.sh`。
 
 ```bash
 curl -fsS http://127.0.0.1:8080/healthz   # ok：仅进程存活
@@ -82,25 +82,25 @@ docker logs -f shadow-health-miscale
 
 ## 4. Shadow SSO 与独立域名
 
-首次生成代理身份密钥：
+首次生成 OIDC client secret：
 
 ```bash
 sudo install -d -m 0700 /etc/shadow-health/secrets
-openssl rand -base64 48 | sudo tee /etc/shadow-health/secrets/proxy-auth-secret >/dev/null
-sudo chmod 0600 /etc/shadow-health/secrets/proxy-auth-secret
+openssl rand -base64 48 | sudo tee /etc/shadow-health/secrets/oidc-client-secret >/dev/null
+sudo chmod 0640 /etc/shadow-health/secrets/oidc-client-secret
 ```
 
-同一密钥只存在于 NAS 文件和 ECS Nginx 私密 snippet，不写入 Git：
+原始 secret 只存在于 NAS 文件；Authelia 只登记其密码哈希，不写入 Git：
 
 1. 将 `deploy/env/sso.env.example` 合并到 NAS `.env`。
 2. 将 `deploy/nginx/nas-shealth-location.conf.example` 合并到 NAS `18080` 站点。内网 `/shealth/` 继续生成带前缀 URL，公网域名生成根路径 URL。
-3. 在 ECS 安装 Shadow Platform 的 `authelia-location.conf`、`authelia-authrequest.conf`。
-4. 安装本仓库 `shadow-health-upstream.conf.example` 和 `shadow-health-service-upstream.conf.example` 两个 snippet。
-5. 从 `shadow-health-proxy-secret.conf.example` 创建 ECS 私密 snippet，替换占位值并设为 `root:root 0600`。
-6. 安装 `health.example.com.conf.example`，配置覆盖该域名的证书。
-7. 两端执行 `nginx -t` 后再 reload，不直接覆盖无备份的线上配置。
+3. 在 Authelia 登记 `shadow-health`、精确 callback、PKCE S256 和 `health-users` 准入策略。
+4. 安装本仓库两个 upstream snippet；浏览器 location 不使用 `auth_request`。
+5. 安装 `health.example.com.conf.example`，配置覆盖该域名的证书。
+6. 两端执行 `nginx -t` 后再 reload，不直接覆盖无备份的线上配置。
 
-公网浏览器页面由 Authelia 的 `health-users` 或 `shadow-admins` 组保护。机器接口只精确放行以下前缀，并继续由 Health Bearer Token 鉴权：
+Health 应用在 OIDC callback 中校验 issuer、audience、签名、state、nonce、PKCE 和
+`health-users`。机器接口继续由 Health Bearer Token 鉴权：
 
 ```text
 /api/ingest/
@@ -109,9 +109,8 @@ sudo chmod 0600 /etc/shadow-health/secrets/proxy-auth-secret
 /api/reminders/
 ```
 
-没有代理密钥时，即便伪造 `Remote-User` 也不会建立 SSO 身份。Health 不再接受本地密码
-或旧 `sh_session` Cookie；NAS 内网页面访问会经 `/login` 交接到
-`SHADOW_SSO_ENTRY_URL`，机器接口仍只认 Bearer。
+Health 不接受客户端提交的 `Remote-*` 身份头、本地密码或旧 `sh_session` Cookie。
+NAS 内网页面访问会经 `/login` 进入同一个云端 issuer；机器接口仍只认 Bearer。
 
 ## 5. 数据迁入（可选）
 
@@ -136,7 +135,7 @@ https://health.example.com
 - [ ] `https://health.example.com/` 跳转 Shadow Identity，登录后回到今日页
 - [ ] 无 `health-users`/`shadow-admins` 组的账号无法进入
 - [ ] `http://192.0.2.10:18080/shealth/` 不再显示密码页，并跳转公网 SSO
-- [ ] 缺少代理密钥的伪造身份头不能绕过登录
+- [ ] 伪造 `Remote-*` 身份头不能绕过登录
 - [ ] `/healthz` 返回 200；数据库不可用时 `/readyz` 返回 503
 - [ ] 手机同步、上秤、提醒和 Agent Bearer 通道不被 SSO 重定向
 - [ ] 餐照上传与 AI 识别正常

@@ -43,6 +43,16 @@ def _https_url(name: str) -> str:
     return value
 
 
+def _optional_https_url(name: str) -> str:
+    value = os.environ.get(name, "").strip().rstrip("/")
+    if not value:
+        return ""
+    parsed = urlsplit(value)
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise ValueError(f"{name} must be an absolute HTTPS URL")
+    return value
+
+
 class Settings:
     def __init__(self) -> None:
         _load_dotenv()
@@ -50,11 +60,39 @@ class Settings:
             "DATABASE_URL",
             "postgresql+psycopg://health_app:health_dev@127.0.0.1:55433/health_dev",
         )
+        self.auth_mode: str = os.environ.get("SHADOW_AUTH_MODE", "oidc").strip().lower()
+        if self.auth_mode not in {"oidc", "legacy-forward"}:
+            raise ValueError("SHADOW_AUTH_MODE must be oidc or legacy-forward")
         self.sso_allowed_groups: tuple[str, ...] = _csv(
             "SHADOW_SSO_ALLOWED_GROUPS", "health-users,shadow-admins"
         )
-        self.sso_entry_url: str = _https_url("SHADOW_SSO_ENTRY_URL")
-        self.sso_logout_url: str = _https_url("SHADOW_SSO_LOGOUT_URL")
+        self.sso_entry_url: str = _optional_https_url("SHADOW_SSO_ENTRY_URL")
+        self.sso_logout_url: str = _optional_https_url("SHADOW_SSO_LOGOUT_URL")
+        if self.auth_mode == "legacy-forward":
+            self.sso_entry_url = _https_url("SHADOW_SSO_ENTRY_URL")
+            self.sso_logout_url = _https_url("SHADOW_SSO_LOGOUT_URL")
+        self.oidc_issuer: str = os.environ.get("SHADOW_OIDC_ISSUER", "").strip().rstrip("/")
+        self.oidc_client_id: str = os.environ.get(
+            "SHADOW_OIDC_CLIENT_ID", "shadow-health"
+        ).strip()
+        self.oidc_client_secret_file: str = os.environ.get(
+            "SHADOW_OIDC_CLIENT_SECRET_FILE", ""
+        ).strip()
+        self.oidc_redirect_uri: str = os.environ.get(
+            "SHADOW_OIDC_REDIRECT_URI", ""
+        ).strip()
+        self.oidc_post_logout_redirect_uri: str = os.environ.get(
+            "SHADOW_OIDC_POST_LOGOUT_REDIRECT_URI", ""
+        ).strip()
+        self.oidc_required_group: str = os.environ.get(
+            "SHADOW_OIDC_REQUIRED_GROUP", "health-users"
+        ).strip()
+        self.oidc_session_db: str = os.environ.get(
+            "SHADOW_OIDC_SESSION_DB", str(BASE_DIR / "data" / "web_auth.db")
+        ).strip()
+        self.oidc_session_ttl_seconds: int = int(
+            os.environ.get("SHADOW_OIDC_SESSION_TTL_SECONDS", "43200")
+        )
         self.trusted_proxy_cidrs: tuple[str, ...] = _csv(
             "SHADOW_TRUSTED_PROXIES", "127.0.0.1/32,::1/128"
         )
@@ -65,7 +103,7 @@ class Settings:
             _secret_from_file(proxy_secret_file)
             or os.environ.get("SHADOW_PROXY_AUTH_SECRET", "").strip()
         )
-        if len(self.proxy_auth_secret) < 32:
+        if self.auth_mode == "legacy-forward" and len(self.proxy_auth_secret) < 32:
             raise ValueError("SSO requires a proxy auth secret of at least 32 characters")
         if not self.sso_allowed_groups:
             raise ValueError("SSO requires at least one allowed group")

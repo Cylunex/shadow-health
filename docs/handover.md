@@ -1,13 +1,23 @@
 # 会话交接（自包含，新会话从这里继续）
 
-> 最后更新：2026-08-18（移除旧认证）。配套阅读：
+> 最后更新：2026-08-19（浏览器认证迁移到原生 OIDC）。配套阅读：
 > README（功能全貌）· docs/deploy.md（NAS 部署照单）· docs/mobile-sync.md
 >（三星直读背景）· gateway/README.md（体脂秤双端）· docs/audit-2026-07-10.md
 >（全面审查清单，已全清、归档备忘）· docs/offline-plan.md（手机离线记录方案，
 > 阶段一~三已落地，待真机回归）· docs/subpath-agent-plan.md（V3 批次计划，
 > 三段已完成）· mcp_server/README.md（MCP 16 工具 + 话术规则 + NAS 部署）。
-> 当前版本浏览器只接受 Shadow Identity SSO，机器接口继续使用 Bearer。真实域名、
+> 当前版本浏览器通过原生 OIDC 连接 Shadow Identity，机器接口继续使用 Bearer。真实域名、
 > 地址、账号及部署状态只保存在仓库外的本地运维记录中。
+
+### 2026-08-19 原生 OIDC
+
+- Health 自己完成 Authorization Code + PKCE 登录，严格校验签名、issuer、audience、
+  nonce、iat 与 exp；Nginx 不再通过 Forward Auth 注入用户身份头。
+- 浏览器只保存 Secure、HttpOnly 的不透明会话标识；身份与会话在 Health 本地 SQLite
+  中维护，稳定用户键来自 `(iss, sub)`，不复制 Authelia 的 PostgreSQL 数据。
+- 云端 Authelia 是唯一 OIDC issuer；NAS 直连入口会进入同一登录流程。登出先撤销 Health
+  本地会话，再跳转统一登出。旧 Forward Auth 仅保留为显式回滚模式。
+- Android、BLE、Agent、MCP、提醒及数据同步等机器 Bearer 协议不变。
 
 ### 2026-08-18 移除旧认证
 

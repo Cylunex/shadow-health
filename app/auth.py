@@ -1,6 +1,5 @@
-"""Shadow Platform Forward Auth 身份校验。
+"""浏览器身份入口；默认使用原生 OIDC，保留显式 Forward Auth 回滚模式。
 
-浏览器身份只接受可信反向代理注入的 ``Remote-*`` 头，并要求应用独立代理密钥；
 Android、BLE、Agent 和 MCP 的 Bearer 鉴权由各自路由处理，不经过这里。
 """
 
@@ -13,6 +12,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from fastapi import Request
+
     from app.config import Settings
 
 
@@ -59,6 +60,23 @@ def forward_identity(
         email=_safe_header(headers.get("Remote-Email", ""), 320),
         groups=groups,
     )
+
+
+def browser_identity(request: Request, settings: Settings):
+    if settings.auth_mode == "legacy-forward":
+        client_host = request.client.host if request.client else ""
+        return forward_identity(request.headers, client_host, settings)
+    from app.oidc import SESSION_COOKIE, OIDCError, get_oidc_service
+
+    try:
+        service = get_oidc_service()
+    except OIDCError:
+        return None
+    record = service.store.authenticate_session(request.cookies.get(SESSION_COOKIE, ""))
+    if record is None or not record.identity.in_group(service.config.required_group):
+        return None
+    request.state.browser_identity = record.identity
+    return record.identity
 
 
 def _safe_header(value: str, limit: int) -> str:

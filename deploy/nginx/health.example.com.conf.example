@@ -1,5 +1,5 @@
 # ECS 入口：health.example.com -> 本机 frps 18081 -> NAS 18080 /shealth/。
-# 依赖 Shadow Platform 的 authelia-location.conf 与 authelia-authrequest.conf。
+# 浏览器认证由 Health 自己完成原生 OIDC；Nginx 不注入代理身份。
 limit_req_zone $binary_remote_addr zone=shadow_health_web:10m rate=20r/s;
 limit_req_zone $binary_remote_addr zone=shadow_health_service:10m rate=10r/s;
 
@@ -25,7 +25,6 @@ server {
     # ssl_certificate_key /etc/letsencrypt/live/example.com/privkey.pem;
 
     client_max_body_size 20m;
-    include /etc/nginx/snippets/authelia-location.conf;
 
     # 无状态探活不建立登录会话，也不检查数据库。
     location = /healthz {
@@ -63,12 +62,15 @@ server {
     }
 
     location / {
-        include /etc/nginx/snippets/authelia-authrequest.conf;
-        include /etc/nginx/snippets/shadow-health-proxy-secret.conf;
         include /etc/nginx/snippets/shadow-health-upstream.conf;
         limit_req zone=shadow_health_web burst=40 nodelay;
 
         proxy_set_header X-Shadow-External-Root 1;
+        proxy_set_header Remote-User "";
+        proxy_set_header Remote-Groups "";
+        proxy_set_header Remote-Name "";
+        proxy_set_header Remote-Email "";
+        proxy_set_header X-Shadow-Proxy-Secret "";
         proxy_pass http://127.0.0.1:18081/shealth/;
     }
 }

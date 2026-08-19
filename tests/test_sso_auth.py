@@ -12,6 +12,7 @@ def settings(**overrides):
         "sso_allowed_groups": ("health-users", "shadow-admins"),
         "sso_entry_url": "https://health.example.test",
         "sso_logout_url": "https://auth.example.test/logout",
+        "auth_mode": "legacy-forward",
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -97,7 +98,7 @@ def test_legacy_session_cookie_no_longer_authenticates():
     client.close()
 
     assert response.status_code == 303
-    assert response.headers["location"] == "/login"
+    assert response.headers["location"] == "/login?return_to=%2Fmetrics"
 
 
 def test_logout_uses_platform_global_logout(monkeypatch):

@@ -19,13 +19,12 @@ location /shealth/ {
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Prefix $shadow_health_prefix;
 
-    # 显式传递 ECS 注入的身份。应用仍会校验来源地址和独立代理密钥；
-    # 内网浏览器没有身份时由应用 /login 交接到公网 Platform SSO。
-    proxy_set_header Remote-User $http_remote_user;
-    proxy_set_header Remote-Groups $http_remote_groups;
-    proxy_set_header Remote-Name $http_remote_name;
-    proxy_set_header Remote-Email $http_remote_email;
-    proxy_set_header X-Shadow-Proxy-Secret $http_x_shadow_proxy_secret;
+    # 原生 OIDC 在应用内完成；明确清空历史代理身份头。
+    proxy_set_header Remote-User "";
+    proxy_set_header Remote-Groups "";
+    proxy_set_header Remote-Name "";
+    proxy_set_header Remote-Email "";
+    proxy_set_header X-Shadow-Proxy-Secret "";
 
     proxy_read_timeout 300;
     proxy_send_timeout 300;

@@ -24,9 +24,8 @@ python -m uv sync
 # 2. 开发数据库
 docker compose -f docker-compose.dev.yml up -d
 
-# 3. 配置：复制 .env.example 为 .env，填写 Platform SSO、数据库和机器接口密钥
-# 本地页面调试也需用代理注入 Remote-* 与 X-Shadow-Proxy-Secret；
-# SHADOW_PROXY_AUTH_SECRET 可供本地测试，生产只能使用受限密钥文件。
+# 3. 配置：复制 .env.example 为 .env，填写 Platform OIDC、数据库和机器接口密钥
+# 浏览器使用 Authorization Code + PKCE；OIDC client secret 只从受限文件读取。
 
 # 4. 迁移 + seed
 python -m uv run alembic upgrade head

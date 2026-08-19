@@ -8,7 +8,6 @@ hx-put/hx-delete/hx-push-url）不允许再出现裸绝对路径值。
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 import pytest
 from starlette.testclient import TestClient
@@ -73,21 +72,23 @@ def test_login_route_is_sso_handoff(client):
 def test_unauth_redirect_carries_prefix(client):
     r = client.get("/metrics", headers=PREFIX)
     assert r.status_code == 303
-    assert r.headers["location"] == "/shealth/login"
+    assert r.headers["location"] == "/shealth/login?return_to=%2Fmetrics"
     # htmx 片段走 HX-Redirect
     r = client.get("/fragments/today/rings", headers={**PREFIX, "HX-Request": "true"})
-    assert r.headers["HX-Redirect"] == "/shealth/login"
+    assert r.headers["HX-Redirect"] == (
+        "/shealth/login?return_to=%2Ffragments%2Ftoday%2Frings"
+    )
 
 
 def test_unauth_redirect_bare_without_header(client):
     r = client.get("/metrics")
     assert r.status_code == 303
-    assert r.headers["location"] == "/login"
+    assert r.headers["location"] == "/login?return_to=%2Fmetrics"
 
 
 def test_prefix_header_sanitized(client):
     # 非 / 开头的脏头不生效；尾斜杠会被剥掉
     r = client.get("/metrics", headers={"X-Forwarded-Prefix": "shealth"})
-    assert r.headers["location"] == "/login"
+    assert r.headers["location"] == "/login?return_to=%2Fmetrics"
     r = client.get("/metrics", headers={"X-Forwarded-Prefix": "/shealth/"})
-    assert r.headers["location"] == "/shealth/login"
+    assert r.headers["location"] == "/shealth/login?return_to=%2Fmetrics"
