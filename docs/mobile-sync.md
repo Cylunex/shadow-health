@@ -57,4 +57,4 @@
 ## 待办关联
 
 子路径前缀适配（`/shealth`）已经落地：NAS 直连地址保留此前缀，公网域名使用根路径。
-架构说明见 [docs/subpath-agent-plan.md](subpath-agent-plan.md)。
+Agent 接入说明见 [MCP server](../mcp_server/README.md)。

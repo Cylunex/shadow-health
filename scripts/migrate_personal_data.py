@@ -1,4 +1,4 @@
-"""personal_data 旧库 → shadow-health 一次性迁移（V3 批次 P3，docs/subpath-agent-plan.md §3）。
+"""personal_data 旧库 → shadow-health 一次性迁移。
 
 幂等可重跑：全部源行先落 import_raw source='legacy'（external_id='legacy-{表}-{id}'，
 (source,record_type,external_id) 唯一，重跑只刷 last_seen_at），归一化按 parse_status
@@ -11,7 +11,7 @@ workout 部分唯一索引 / habit_logs ON CONFLICT），双保险。
   body_measurements / personal_info 迁；exercise_summary / monthly_activity /
   life_memories 不迁（派生数据 / 无明细支撑 / 非健康数据）。
 
-用法（NAS 执行手册见 docs/legacy-migration-runbook.md）：
+用法：
   uv run python scripts/migrate_personal_data.py \
       --source-dsn postgresql://USER:PASS@HOST:PORT/personal_data [--dry-run]
   源连接串也可用环境变量 LEGACY_SOURCE_DSN 传（避免进 shell history）。

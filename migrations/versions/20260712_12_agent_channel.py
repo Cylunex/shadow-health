@@ -1,4 +1,4 @@
-"""来源词表加 'agent'/'legacy' + body_metrics.mood_score（V3 批次 P2，docs/subpath-agent-plan.md §2）
+"""来源词表加 'agent'/'legacy' + body_metrics.mood_score。
 
 - 'agent'：多 Agent 写通道（/api/ingest/agent，Hermes/OpenClaw 经 MCP 统一写入）
 - 'legacy'：P3 personal_data 旧库迁移的留档来源（脚本本批只交付不执行，词表先备好）

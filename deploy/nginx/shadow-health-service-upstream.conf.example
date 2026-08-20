@@ -1,9 +1,0 @@
-# 安装为 ECS /etc/nginx/snippets/shadow-health-service-upstream.conf。
-# 机器接口只接受应用自己的 Bearer Token，不接受浏览器 SSO 身份头。
-include /etc/nginx/snippets/shadow-health-upstream.conf;
-proxy_set_header Remote-User "";
-proxy_set_header Remote-Groups "";
-proxy_set_header Remote-Name "";
-proxy_set_header Remote-Email "";
-proxy_set_header X-Shadow-Proxy-Secret "";
-proxy_set_header X-Shadow-External-Root 1;

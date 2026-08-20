@@ -1,4 +1,4 @@
-"""shadow-health MCP server（V3 批次 P2，docs/subpath-agent-plan.md §2.3）。
+"""shadow-health MCP server：供多个 Agent 统一读写健康数据。
 
 形态：官方 mcp SDK（FastMCP），双模式——streamable HTTP 常驻（缺省，
 127.0.0.1:8180，容器内回环、不经 nginx 不对外）+ `--stdio`（本地 spawn 场景）。

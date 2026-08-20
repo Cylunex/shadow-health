@@ -27,4 +27,8 @@ static/*.apk
 *.pfx
 secrets/
 docs/private/
-deploy/local/
+
+# Real deployment and operations material is maintained outside the repository.
+deploy/
+ops/
+operations/

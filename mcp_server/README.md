@@ -1,7 +1,6 @@
 # shadow-health MCP server
 
-多 Agent（Hermes / OpenClaw / 未来其他）统一记录/查询入口（V3 批次 P2，
-docs/subpath-agent-plan.md §2.3）。工具内部全部调本机 REST
+多 Agent（Hermes / OpenClaw / 未来其他）统一记录/查询入口。工具内部全部调本机 REST
 （`/api/ingest/agent` 等，Bearer=INGEST_TOKEN），**不直连数据库**——校验、
 归一化、幂等、import_raw 审计与手机离线通道完全一致。
 
@@ -24,32 +23,16 @@ uv run python -m mcp_server --stdio # stdio 模式（客户端 spawn 子进程�
 鉴权：**仅回环监听是主防线**（容器内 127.0.0.1，不经 nginx 不对外），
 MCP 层未再加 Bearer。不要把监听改成 0.0.0.0。
 
-## NAS 部署（supervisor，与 shadow-health 同容器）
-
-```ini
-[program:shealth-mcp]
-directory=/data/project/shadow-health
-command=/data/project/shadow-health/.venv/bin/python -m mcp_server
-autostart=true
-autorestart=true
-stopasgroup=true
-```
-
-（`uv sync --group mcp` 先在 `/data/project/shadow-health` 跑一次；
-supervisor/nginx 配置在容器可写层，改完备份到 `deploy/`。）
-
 ## Agent 注册
 
 - **Hermes（native-mcp）与 OpenClaw**：注册 `http://127.0.0.1:8180/mcp`
   （streamable HTTP，两边共用同一实例、同一套审计）。
-- stdio 场景（本地 spawn）：命令
-  `/data/project/shadow-health/.venv/bin/python -m mcp_server --stdio`，
-  workdir 仓库根（读 .env 用）。
+- stdio 场景（本地 spawn）：使用当前虚拟环境执行 `python -m mcp_server --stdio`，
+  workdir 设为仓库根（读 `.env` 用）。
 - Hermes 旧 skill（直写 personal_data 裸 SQL）由 **skills/ 目录的四个技能文档**
   替换（记录员/晨间简报/周月复盘/数据分析，见 skills/README.md）：数据一律经
   MCP 工具；**禁止直连 PG**；「先和用户确认日期」「确认话术引用 new 计数」
-  铁律已写进每个 skill。cron 迁移（每日提醒播报 / 每周周报）在 NAS 侧做：
-  cron 只发触发语（「播报晨间简报」/「播报上周周报」），流程由对应 skill 承担。
+  铁律已写进每个 skill。定时触发只发送任务语义，具体流程由对应 skill 承担。
 
 ## 工具集（16 个，V5 批次扩至）
 

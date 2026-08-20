@@ -1,4 +1,4 @@
--- personal_data 健康表冻结（V3 P3 收尾，docs/subpath-agent-plan.md §3.4）
+-- personal_data 健康表冻结（旧库迁移收尾）
 -- 迁移核对通过后在 personal_data 库执行，防旧链路（Hermes 直写 SQL）复活双写。
 -- life_memories 非健康数据，留在 personal_data 继续可写，不冻结。
 --

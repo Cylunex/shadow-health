@@ -1,4 +1,4 @@
-"""多 Agent 统一接入通道（V3 批次 P2，docs/subpath-agent-plan.md §2）。
+"""多 Agent 统一接入通道。
 
 背景：Hermes 等 agent 此前直写旧库 personal_data 裸 SQL，假确认（说记了没记）与
 日期错记反复发生。本模块给所有 agent（Hermes/OpenClaw/未来其他）一个带审计、
