@@ -1,0 +1,84 @@
+version: 2
+app_id: health
+package_version: 0.1.0
+skills:
+  - id: health-companion
+    path: skills/health-companion/SKILL.md
+    summary: 读取独立 Health Profile 的最小健康摘要与聚合趋势，并创建待用户审核的记录草案
+    capabilities:
+      - health.summary.read
+      - health.trends.read
+      - health.records.draft
+    invocation:
+      model: true
+      user: true
+capabilities:
+  - id: health.summary.read
+    summary: 读取一个已授权 Health Profile 在指定日期的最小聚合摘要
+    audience: health
+    scopes: [health.summary.read]
+    tools:
+      - name: health.summary.read
+        transport: http
+        contract_ref: contracts/agent.openapi.yaml
+        operation_id: get_health_profile_summary
+        exposure: always
+        result_mode: summary
+        max_result_bytes: 8192
+        max_model_chars: 1600
+        timeout_ms: 10000
+        concurrency_safe: true
+        retry_policy: idempotent
+    effect: read
+    data_classification: sensitive
+    risk_level: L0
+    confirmation: none
+    reversible: true
+    resource_grant_required: true
+    idempotency_required: false
+  - id: health.trends.read
+    summary: 读取已授权 Health Profile 的非原始聚合趋势，不返回逐点敏感序列
+    audience: health
+    scopes: [health.trends.read]
+    tools:
+      - name: health.trends.read
+        transport: http
+        contract_ref: contracts/agent.openapi.yaml
+        operation_id: get_health_profile_trend
+        exposure: on-demand
+        result_mode: summary
+        max_result_bytes: 8192
+        max_model_chars: 1600
+        timeout_ms: 10000
+        concurrency_safe: true
+        retry_policy: idempotent
+    effect: analyze
+    data_classification: sensitive
+    risk_level: L0
+    confirmation: none
+    reversible: true
+    resource_grant_required: true
+    idempotency_required: false
+  - id: health.records.draft
+    summary: 为已授权 Health Profile 创建可撤销且不会直接写入正式记录的草案
+    audience: health
+    scopes: [health.records.draft]
+    tools:
+      - name: health.records.draft
+        transport: http
+        contract_ref: contracts/agent.openapi.yaml
+        operation_id: create_health_record_draft
+        exposure: on-demand
+        result_mode: reference
+        max_result_bytes: 4096
+        max_model_chars: 1000
+        timeout_ms: 10000
+        concurrency_safe: false
+        retry_policy: idempotent
+    effect: draft
+    data_classification: sensitive
+    risk_level: L1
+    confirmation: notify
+    reversible: true
+    resource_grant_required: true
+    idempotency_required: true

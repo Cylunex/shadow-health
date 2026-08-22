@@ -1,0 +1,11 @@
+version: 1
+confirmations:
+  - capability: health.summary.read
+    mode: none
+    receipt_required: false
+  - capability: health.trends.read
+    mode: none
+    receipt_required: false
+  - capability: health.records.draft
+    mode: notify
+    receipt_required: false

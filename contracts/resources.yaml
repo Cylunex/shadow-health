@@ -1,0 +1,10 @@
+version: 1
+resources:
+  - type: health-profile
+    uri_template: shadow://health/profiles/{profile_id}
+    owner: health
+    resource_grant_required: true
+  - type: health-record-draft
+    uri_template: shadow://health/drafts/{draft_id}
+    owner: health
+    resource_grant_required: true

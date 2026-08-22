@@ -1,7 +1,7 @@
 """health schema 全量模型（设计文档 §3，M1 一次建全）。"""
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 
 from sqlalchemy import (
     BigInteger,
@@ -12,6 +12,7 @@ from sqlalchemy import (
     Identity,
     Index,
     Integer,
+    JSON,
     Numeric,
     SmallInteger,
     Text,
@@ -539,3 +540,55 @@ class ImportJob(Base):
     error: Mapped[str | None] = mapped_column(Text)
     started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+class AgentRecordDraft(Base):
+    """Pending Agent proposal; it never mutates canonical health records."""
+
+    __tablename__ = "agent_record_drafts"
+    __table_args__ = (
+        UniqueConstraint("agent_id", "idempotency_key", name="ux_agent_draft_idempotency"),
+        Index("ix_agent_record_drafts_profile_created", "profile_id", "created_at"),
+        {"schema": SCHEMA},
+    )
+
+    draft_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    agent_id: Mapped[str] = mapped_column(Text, nullable=False)
+    profile_id: Mapped[str] = mapped_column(Text, nullable=False)
+    record_type: Mapped[str] = mapped_column(Text, nullable=False)
+    effective_date: Mapped[date] = mapped_column(Date, nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    payload_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="pending")
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, default=_utc_now
+    )
+
+
+class AgentMachineAudit(Base):
+    """Metadata-only audit trail for machine reads, denials, and draft proposals."""
+
+    __tablename__ = "agent_machine_audit"
+    __table_args__ = (
+        Index("ix_agent_machine_audit_created", "created_at"),
+        Index("ix_agent_machine_audit_agent", "agent_id", "created_at"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    request_id: Mapped[str] = mapped_column(Text, nullable=False)
+    agent_id: Mapped[str] = mapped_column(Text, nullable=False)
+    capability: Mapped[str] = mapped_column(Text, nullable=False)
+    profile_id: Mapped[str] = mapped_column(Text, nullable=False)
+    outcome: Mapped[str] = mapped_column(Text, nullable=False)
+    status_code: Mapped[int] = mapped_column(Integer, nullable=False)
+    resource_uri: Mapped[str | None] = mapped_column(Text)
+    detail_code: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, default=_utc_now
+    )

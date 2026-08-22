@@ -1,0 +1,14 @@
+version: 1
+permissions:
+  - capability: health.summary.read
+    audience: health
+    scopes: [health.summary.read]
+    resource_grant: health-profile.summary
+  - capability: health.trends.read
+    audience: health
+    scopes: [health.trends.read]
+    resource_grant: health-profile.trends
+  - capability: health.records.draft
+    audience: health
+    scopes: [health.records.draft]
+    resource_grant: health-profile.drafts

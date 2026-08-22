@@ -1,0 +1,198 @@
+openapi: 3.1.0
+info:
+  title: Shadow Health Agent API
+  version: 0.1.0
+servers:
+  - url: https://health.example.com
+security:
+  - machineBearer: []
+paths:
+  /api/machine/v1/agent/profiles/{profile_id}/summary:
+    get:
+      operationId: get_health_profile_summary
+      summary: Get the minimum daily summary for a granted Health Profile
+      parameters:
+        - $ref: "#/components/parameters/ProfileId"
+        - name: date
+          in: query
+          required: false
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: Bounded health summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthSummaryResult"
+  /api/machine/v1/agent/profiles/{profile_id}/trends:
+    get:
+      operationId: get_health_profile_trend
+      summary: Get aggregate trend statistics without raw daily points
+      parameters:
+        - $ref: "#/components/parameters/ProfileId"
+        - name: metric
+          in: query
+          required: true
+          schema:
+            enum: [weight_kg, sleep_hours, steps]
+        - name: days
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 7
+            maximum: 90
+            default: 30
+      responses:
+        "200":
+          description: Aggregate trend summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthTrendResult"
+  /api/machine/v1/agent/profiles/{profile_id}/drafts:
+    post:
+      operationId: create_health_record_draft
+      summary: Create a pending and reversible health record draft
+      parameters:
+        - $ref: "#/components/parameters/ProfileId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/HealthRecordDraftInput"
+      responses:
+        "201":
+          description: Pending draft reference
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthRecordDraftCreated"
+components:
+  securitySchemes:
+    machineBearer:
+      type: http
+      scheme: bearer
+  parameters:
+    ProfileId:
+      name: profile_id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: "^[a-z][a-z0-9-]{0,63}$"
+  schemas:
+    NullableNumber:
+      anyOf:
+        - { type: number }
+        - { type: "null" }
+    NullableInteger:
+      anyOf:
+        - { type: integer }
+        - { type: "null" }
+    HealthIndicators:
+      type: object
+      additionalProperties: false
+      required:
+        - diet_kcal
+        - protein_g
+        - steps
+        - workout_sessions
+        - workout_min
+        - weight_kg
+        - sleep_hours
+        - mood_score
+      properties:
+        diet_kcal: { type: number }
+        protein_g: { type: number }
+        steps: { $ref: "#/components/schemas/NullableInteger" }
+        workout_sessions: { type: integer }
+        workout_min: { type: integer }
+        weight_kg: { $ref: "#/components/schemas/NullableNumber" }
+        sleep_hours: { $ref: "#/components/schemas/NullableNumber" }
+        mood_score: { $ref: "#/components/schemas/NullableInteger" }
+    HealthSummaryResult:
+      type: object
+      additionalProperties: false
+      required: [summary, resource_uri, date, indicators]
+      properties:
+        summary: { type: string, maxLength: 1200 }
+        resource_uri: { type: string }
+        date: { type: string, format: date }
+        indicators:
+          $ref: "#/components/schemas/HealthIndicators"
+    HealthTrendStatistics:
+      type: object
+      additionalProperties: false
+      required: [first, last, average, change, unit]
+      properties:
+        first: { $ref: "#/components/schemas/NullableNumber" }
+        last: { $ref: "#/components/schemas/NullableNumber" }
+        average: { $ref: "#/components/schemas/NullableNumber" }
+        change: { $ref: "#/components/schemas/NullableNumber" }
+        unit: { type: string }
+    HealthTrendResult:
+      type: object
+      additionalProperties: false
+      required: [summary, resource_uri, metric, days, data_points, statistics]
+      properties:
+        summary: { type: string, maxLength: 1200 }
+        resource_uri: { type: string }
+        metric:
+          enum: [weight_kg, sleep_hours, steps]
+        days: { type: integer }
+        data_points: { type: integer }
+        statistics:
+          $ref: "#/components/schemas/HealthTrendStatistics"
+    HealthDraftFields:
+      type: object
+      additionalProperties: false
+      properties:
+        weight_kg: { type: number, minimum: 20, maximum: 400 }
+        sleep_hours: { type: number, minimum: 0, maximum: 24 }
+        mood_score: { type: integer, minimum: 1, maximum: 10 }
+        meal: { enum: [早餐, 午餐, 晚餐, 加餐] }
+        name: { type: string, minLength: 1, maxLength: 120 }
+        amount_g: { type: number, minimum: 0, maximum: 5000 }
+        kcal: { type: number, minimum: 0, maximum: 20000 }
+        protein_g: { type: number, minimum: 0, maximum: 1000 }
+        session_type: { type: string, minLength: 1, maxLength: 120 }
+        duration_min: { type: integer, minimum: 1, maximum: 1440 }
+        distance_km: { type: number, minimum: 0, maximum: 1000 }
+        rpe: { type: integer, minimum: 1, maximum: 10 }
+        notes: { type: string, maxLength: 500 }
+    HealthRecordDraftInput:
+      type: object
+      additionalProperties: false
+      required: [record_type, effective_date, fields]
+      properties:
+        record_type:
+          enum: [metric, meal, workout]
+        effective_date:
+          type: string
+          format: date
+        fields:
+          $ref: "#/components/schemas/HealthDraftFields"
+        note:
+          type: string
+          maxLength: 500
+    HealthRecordDraftCreated:
+      type: object
+      additionalProperties: false
+      required:
+        - resource_uri
+        - summary
+        - draft_id
+        - profile_id
+        - status
+        - direct_domain_write
+        - replayed
+      properties:
+        resource_uri: { type: string }
+        summary: { type: string }
+        draft_id: { type: string }
+        profile_id: { type: string }
+        status: { const: pending }
+        direct_domain_write: { const: false }
+        replayed: { type: boolean }

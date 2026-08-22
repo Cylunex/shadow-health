@@ -7,7 +7,7 @@ import secrets
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
@@ -15,6 +15,7 @@ from app import auth
 from app.config import BASE_DIR, get_settings
 from app.db import engine, wait_for_db
 from app.deps import LoginRequired, login_redirect, redirect, templates
+from app.machine_auth import MachineAPIError
 from app.oidc import (
     SESSION_COOKIE,
     TRANSACTION_COOKIE,
@@ -37,6 +38,21 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="shadow-health", lifespan=lifespan)
 logger = logging.getLogger("shadow_health.auth")
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+
+
+@app.exception_handler(MachineAPIError)
+async def machine_api_error_handler(request: Request, exc: MachineAPIError):
+    logger.warning(
+        "machine_api_rejected path=%s status=%s code=%s",
+        request.url.path,
+        exc.status_code,
+        exc.code,
+    )
+    return JSONResponse(
+        {"error": {"code": exc.code, "message": exc.message}},
+        status_code=exc.status_code,
+        headers=exc.headers,
+    )
 
 
 @app.middleware("http")
@@ -62,7 +78,9 @@ async def csrf_same_origin(request: Request, call_next):
         "GET",
         "HEAD",
         "OPTIONS",
-    ) and not request.url.path.startswith(("/api/ingest/", "/api/agent/")):
+    ) and not request.url.path.startswith(
+        ("/api/ingest/", "/api/agent/", "/api/machine/")
+    ):
         sec_fetch_site = request.headers.get("Sec-Fetch-Site")
         if sec_fetch_site is not None:
             if sec_fetch_site not in ("same-origin", "none"):
@@ -249,6 +267,7 @@ def _register_routers() -> None:
         habits,
         ingest,
         labs,
+        machine_agent,
         metrics,
         offline,
         reminders,
@@ -265,6 +284,7 @@ def _register_routers() -> None:
     app.include_router(fitness.router)
     app.include_router(labs.router)
     app.include_router(ai.router)
+    app.include_router(machine_agent.router)
     app.include_router(metrics.router)
     app.include_router(diet.router)
     app.include_router(discipline.router)

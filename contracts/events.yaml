@@ -1,0 +1,6 @@
+version: 1
+events:
+  - id: health.agent-record-draft.created
+    producer: health
+    data_classification: sensitive
+    payload: metadata-only

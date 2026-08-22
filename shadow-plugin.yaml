@@ -1,0 +1,20 @@
+apiVersion: shadow.cylunex/v1alpha1
+kind: ShadowDomainPlugin
+metadata:
+  id: shadow-health
+  version: 0.1.0
+  display_name: Shadow Health
+  description: 以最小披露方式提供健康摘要、聚合趋势和待审核记录草案
+spec:
+  compatibility:
+    shadow_plugin_api: v1alpha1
+    dsh:
+      distribution: ">=0.1.1-rc.2 <0.2.0"
+      tools_api: ">=0.1.1-rc.2 <0.2.0"
+  descriptors:
+    agent: agent/manifest.yaml
+    events: contracts/events.yaml
+    resources: contracts/resources.yaml
+    captures: contracts/captures.yaml
+    confirmations: contracts/confirmations.yaml
+    permissions: contracts/permissions.yaml
