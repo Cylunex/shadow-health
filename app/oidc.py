@@ -42,6 +42,8 @@ class OIDCConfig:
     post_logout_redirect_uri: str
     required_group: str
     session_db: str
+    alternate_redirect_uri: str = ""
+    alternate_post_logout_redirect_uri: str = ""
     session_ttl_seconds: int = 12 * 60 * 60
     transaction_ttl_seconds: int = 10 * 60
     clock_skew_seconds: int = 60
@@ -59,6 +61,10 @@ class OIDCConfig:
             post_logout_redirect_uri=settings.oidc_post_logout_redirect_uri,
             required_group=settings.oidc_required_group,
             session_db=settings.oidc_session_db,
+            alternate_redirect_uri=settings.oidc_alternate_redirect_uri,
+            alternate_post_logout_redirect_uri=(
+                settings.oidc_alternate_post_logout_redirect_uri
+            ),
             session_ttl_seconds=settings.oidc_session_ttl_seconds,
         )
 
@@ -89,8 +95,58 @@ class OIDCConfig:
                 "post logout URI must use the canonical application origin",
                 reason="configuration",
             )
+        alternate_values = (
+            self.alternate_redirect_uri,
+            self.alternate_post_logout_redirect_uri,
+        )
+        if any(alternate_values) and not all(alternate_values):
+            raise OIDCError(
+                "alternate redirect and logout URIs must be configured together",
+                reason="configuration",
+            )
+        if self.alternate_redirect_uri:
+            _require_https_url("alternate redirect URI", self.alternate_redirect_uri)
+            _require_https_url(
+                "alternate post logout URI", self.alternate_post_logout_redirect_uri
+            )
+            alternate_redirect = urlsplit(self.alternate_redirect_uri)
+            alternate_logout = urlsplit(self.alternate_post_logout_redirect_uri)
+            if not alternate_redirect.path.endswith("/auth/callback"):
+                raise OIDCError(
+                    "alternate OIDC callback path must end with /auth/callback",
+                    reason="configuration",
+                )
+            if (alternate_redirect.scheme, alternate_redirect.netloc) != (
+                alternate_logout.scheme,
+                alternate_logout.netloc,
+            ):
+                raise OIDCError(
+                    "alternate logout URI must use the alternate application origin",
+                    reason="configuration",
+                )
         if not Path(self.client_secret_file).expanduser().is_file():
             raise OIDCError("OIDC client secret file is unavailable", reason="configuration")
+
+    def entry_for(self, host: str, prefix: str = "") -> tuple[str, str]:
+        normalized_prefix = prefix.rstrip("/") if prefix.startswith("/") else ""
+        callback_path = f"{normalized_prefix}/auth/callback"
+        normalized_host = host.strip().lower()
+        entries = (
+            (self.redirect_uri, self.post_logout_redirect_uri),
+            (self.alternate_redirect_uri, self.alternate_post_logout_redirect_uri),
+        )
+        for redirect_uri, logout_uri in entries:
+            if not redirect_uri:
+                continue
+            parsed = urlsplit(redirect_uri)
+            if parsed.netloc.lower() == normalized_host and parsed.path == callback_path:
+                return redirect_uri, logout_uri
+        raise OIDCError("current browser entry is not allowed", reason="configuration")
+
+    def require_allowed_redirect_uri(self, redirect_uri: str) -> str:
+        if redirect_uri not in {self.redirect_uri, self.alternate_redirect_uri}:
+            raise OIDCError("OIDC redirect URI is not allowed", reason="configuration")
+        return redirect_uri
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,6 +200,7 @@ class SessionStore:
                       nonce TEXT NOT NULL,
                       code_verifier TEXT NOT NULL,
                       return_to TEXT NOT NULL,
+                      redirect_uri TEXT NOT NULL DEFAULT '',
                       expires_at REAL NOT NULL,
                       created_at REAL NOT NULL
                     );
@@ -172,6 +229,15 @@ class SessionStore:
                       ON browser_sessions(shadow_user_id, expires_at);
                     """
                 )
+                columns = {
+                    str(row[1])
+                    for row in connection.execute("PRAGMA table_info(oidc_transactions)")
+                }
+                if "redirect_uri" not in columns:
+                    connection.execute(
+                        "ALTER TABLE oidc_transactions "
+                        "ADD COLUMN redirect_uri TEXT NOT NULL DEFAULT ''"
+                    )
                 connection.commit()
             finally:
                 connection.close()
@@ -182,7 +248,7 @@ class SessionStore:
             self._initialized = True
 
     def create_login_transaction(
-        self, *, return_to: str, ttl_seconds: int = 10 * 60
+        self, *, return_to: str, redirect_uri: str = "", ttl_seconds: int = 10 * 60
     ) -> tuple[str, str, str]:
         state = secrets.token_urlsafe(32)
         nonce = secrets.token_urlsafe(32)
@@ -193,9 +259,13 @@ class SessionStore:
             connection.execute("DELETE FROM oidc_transactions WHERE expires_at <= ?", (now,))
             connection.execute(
                 """INSERT INTO oidc_transactions
-                   (state_hash, nonce, code_verifier, return_to, expires_at, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (_digest(state), nonce, verifier, return_to, now + ttl_seconds, now),
+                   (state_hash, nonce, code_verifier, return_to, redirect_uri,
+                    expires_at, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    _digest(state), nonce, verifier, return_to, redirect_uri,
+                    now + ttl_seconds, now,
+                ),
             )
         return state, nonce, challenge
 
@@ -207,7 +277,7 @@ class SessionStore:
         try:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
-                """SELECT nonce, code_verifier, return_to, expires_at
+                """SELECT nonce, code_verifier, return_to, redirect_uri, expires_at
                    FROM oidc_transactions WHERE state_hash = ?""",
                 (_digest(state),),
             ).fetchone()
@@ -320,12 +390,17 @@ class OIDCClient:
         self._metadata: tuple[float, dict[str, Any]] | None = None
         self._jwks: tuple[float, dict[str, Any]] | None = None
 
-    def authorization_url(self, *, state: str, nonce: str, challenge: str) -> str:
+    def authorization_url(
+        self, *, state: str, nonce: str, challenge: str, redirect_uri: str | None = None
+    ) -> str:
+        redirect_uri = self.config.require_allowed_redirect_uri(
+            redirect_uri or self.config.redirect_uri
+        )
         params = {
             "client_id": self.config.client_id,
             "response_type": "code",
             "scope": OIDC_SCOPES,
-            "redirect_uri": self.config.redirect_uri,
+            "redirect_uri": redirect_uri,
             "state": state,
             "nonce": nonce,
             "code_challenge": challenge,
@@ -333,7 +408,12 @@ class OIDCClient:
         }
         return f"{self._get_metadata()['authorization_endpoint']}?{urlencode(params)}"
 
-    def exchange_code(self, *, code: str, verifier: str) -> dict[str, Any]:
+    def exchange_code(
+        self, *, code: str, verifier: str, redirect_uri: str | None = None
+    ) -> dict[str, Any]:
+        redirect_uri = self.config.require_allowed_redirect_uri(
+            redirect_uri or self.config.redirect_uri
+        )
         if not code or len(code) > 4096:
             raise OIDCError("authorization code is missing", reason="code")
         try:
@@ -347,7 +427,7 @@ class OIDCClient:
                 data={
                     "grant_type": "authorization_code",
                     "code": code,
-                    "redirect_uri": self.config.redirect_uri,
+                    "redirect_uri": redirect_uri,
                     "code_verifier": verifier,
                 },
                 auth=(self.config.client_id, secret),
@@ -431,11 +511,19 @@ class OIDCClient:
                 claims[name] = profile[name]
         return claims
 
-    def global_logout_url(self) -> str:
+    def global_logout_url(self, post_logout_redirect_uri: str | None = None) -> str:
+        post_logout_redirect_uri = (
+            post_logout_redirect_uri or self.config.post_logout_redirect_uri
+        )
+        if post_logout_redirect_uri not in {
+            self.config.post_logout_redirect_uri,
+            self.config.alternate_post_logout_redirect_uri,
+        }:
+            raise OIDCError("post logout URI is not allowed", reason="configuration")
         endpoint = self._get_metadata().get("end_session_endpoint")
         if not endpoint:
-            return self.config.post_logout_redirect_uri
-        return f"{endpoint}?{urlencode({'client_id': self.config.client_id, 'post_logout_redirect_uri': self.config.post_logout_redirect_uri})}"
+            return post_logout_redirect_uri
+        return f"{endpoint}?{urlencode({'client_id': self.config.client_id, 'post_logout_redirect_uri': post_logout_redirect_uri})}"
 
     def _candidate_keys(self, key_id: str, algorithm: str) -> list[dict[str, Any]]:
         return [

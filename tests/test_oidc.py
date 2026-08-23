@@ -93,6 +93,33 @@ def test_login_transaction_is_one_time_and_pkce_is_s256(tmp_path):
     assert query["redirect_uri"] == ["https://health.example.test/auth/callback"]
 
 
+def test_alternate_prefixed_entry_is_selected_exactly(tmp_path):
+    canonical = config(tmp_path)
+    alternate = oidc.OIDCConfig(
+        issuer=canonical.issuer,
+        client_id=canonical.client_id,
+        client_secret_file=canonical.client_secret_file,
+        redirect_uri=canonical.redirect_uri,
+        post_logout_redirect_uri=canonical.post_logout_redirect_uri,
+        required_group=canonical.required_group,
+        session_db=canonical.session_db,
+        alternate_redirect_uri=(
+            "https://nas.example.test:55443/shealth/auth/callback"
+        ),
+        alternate_post_logout_redirect_uri=(
+            "https://nas.example.test:55443/shealth/"
+        ),
+    )
+    alternate.validate()
+
+    assert alternate.entry_for("nas.example.test:55443", "/shealth") == (
+        alternate.alternate_redirect_uri,
+        alternate.alternate_post_logout_redirect_uri,
+    )
+    with pytest.raises(oidc.OIDCError, match="not allowed"):
+        alternate.entry_for("nas.example.test:55443", "/ledger")
+
+
 def test_identity_session_is_opaque_stable_and_revocable(tmp_path):
     store = oidc.SessionStore(str(tmp_path / "sessions.db"))
     claims = {
@@ -152,7 +179,9 @@ def test_oidc_login_route_uses_native_client(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "get_oidc_service", lambda: service)
     monkeypatch.setattr(main.auth, "browser_identity", lambda *_: None)
 
-    client = TestClient(main.app, follow_redirects=False)
+    client = TestClient(
+        main.app, base_url="https://health.example.test", follow_redirects=False
+    )
     response = client.get("/login?return_to=%2Fmetrics")
     client.close()
 

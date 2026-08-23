@@ -130,12 +130,17 @@ def login_page(request: Request, return_to: str = "/"):
         return RedirectResponse(settings.sso_entry_url, status_code=303)
     try:
         service = get_oidc_service()
+        redirect_uri, _logout_uri = service.config.entry_for(
+            request.headers.get("Host", ""),
+            str(request.scope.get("x_forwarded_prefix", "")),
+        )
         state, nonce, challenge = service.store.create_login_transaction(
             return_to=sanitize_return_to(return_to),
+            redirect_uri=redirect_uri,
             ttl_seconds=service.config.transaction_ttl_seconds,
         )
         target = service.client.authorization_url(
-            state=state, nonce=nonce, challenge=challenge
+            state=state, nonce=nonce, challenge=challenge, redirect_uri=redirect_uri
         )
         response = RedirectResponse(target, status_code=302)
         set_transaction_cookie(
@@ -161,7 +166,9 @@ def auth_callback(request: Request, state: str = "", code: str = "", error: str 
             raise OIDCError("identity provider rejected login", reason="provider")
         stage = "exchange_code"
         tokens = service.client.exchange_code(
-            code=code, verifier=transaction["code_verifier"]
+            code=code,
+            verifier=transaction["code_verifier"],
+            redirect_uri=transaction["redirect_uri"],
         )
         stage = "verify_id_token"
         claims = service.client.verify_id_token(
@@ -174,9 +181,7 @@ def auth_callback(request: Request, state: str = "", code: str = "", error: str 
         session = service.store.create_session(
             identity, service.config.session_ttl_seconds
         )
-        response = RedirectResponse(
-            sanitize_return_to(transaction["return_to"]), status_code=303
-        )
+        response = redirect(request, sanitize_return_to(transaction["return_to"]), 303)
         set_session_cookie(response, session)
         clear_transaction_cookie(response)
         response.headers["Cache-Control"] = "no-store"
@@ -248,7 +253,13 @@ def logout(request: Request):
     try:
         service = get_oidc_service()
         service.store.revoke_session(request.cookies.get(SESSION_COOKIE, ""))
-        response = RedirectResponse(service.client.global_logout_url(), status_code=303)
+        _redirect_uri, logout_uri = service.config.entry_for(
+            request.headers.get("Host", ""),
+            str(request.scope.get("x_forwarded_prefix", "")),
+        )
+        response = RedirectResponse(
+            service.client.global_logout_url(logout_uri), status_code=303
+        )
     except OIDCError:
         response = RedirectResponse(settings.oidc_post_logout_redirect_uri, status_code=303)
     clear_session_cookie(response)

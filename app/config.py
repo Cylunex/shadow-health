@@ -84,6 +84,12 @@ class Settings:
         self.oidc_post_logout_redirect_uri: str = os.environ.get(
             "SHADOW_OIDC_POST_LOGOUT_REDIRECT_URI", ""
         ).strip()
+        self.oidc_alternate_redirect_uri: str = os.environ.get(
+            "SHADOW_OIDC_ALTERNATE_REDIRECT_URI", ""
+        ).strip()
+        self.oidc_alternate_post_logout_redirect_uri: str = os.environ.get(
+            "SHADOW_OIDC_ALTERNATE_POST_LOGOUT_REDIRECT_URI", ""
+        ).strip()
         self.oidc_required_group: str = os.environ.get(
             "SHADOW_OIDC_REQUIRED_GROUP", "health-users"
         ).strip()
