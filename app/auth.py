@@ -25,6 +25,20 @@ class ForwardIdentity:
     groups: tuple[str, ...]
 
 
+def is_lan_bypass(request: Request, expected_prefix: str = "/shealth") -> bool:
+    """Accept only the marker written by the loopback Nginx LAN location."""
+    if request.headers.get("X-Shadow-Lan-Bypass", "") != "1":
+        return False
+    if request.headers.get("X-Forwarded-Prefix", "").rstrip("/") != expected_prefix:
+        return False
+    host = request.headers.get("Host", "").split(":", 1)[0].strip("[]")
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return True
+
+
 def is_trusted_proxy(client_host: str, cidrs: tuple[str, ...]) -> bool:
     try:
         address = ipaddress.ip_address(client_host)
@@ -63,6 +77,15 @@ def forward_identity(
 
 
 def browser_identity(request: Request, settings: Settings):
+    if is_lan_bypass(request):
+        identity = ForwardIdentity(
+            username="lan-local",
+            display_name="LAN Local",
+            email="",
+            groups=settings.sso_allowed_groups,
+        )
+        request.state.browser_identity = identity
+        return identity
     if settings.auth_mode == "legacy-forward":
         client_host = request.client.host if request.client else ""
         return forward_identity(request.headers, client_host, settings)

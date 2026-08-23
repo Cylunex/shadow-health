@@ -89,6 +89,51 @@ def test_login_endpoint_hands_direct_clients_to_platform(monkeypatch):
     assert response.headers["location"] == "https://health.example.test"
 
 
+def test_ip_prefixed_lan_entry_bypasses_browser_login(monkeypatch):
+    from app import main
+
+    configured = settings(auth_mode="oidc")
+    monkeypatch.setattr(main, "get_settings", lambda: configured)
+    headers = {
+        "Host": "192.0.2.21:55080",
+        "X-Forwarded-Prefix": "/shealth",
+        "X-Shadow-Lan-Bypass": "1",
+    }
+    client = TestClient(
+        main.app,
+        base_url="http://192.0.2.21:55080",
+        client=("127.0.0.1", 50000),
+        follow_redirects=False,
+    )
+    response = client.get("/login", headers=headers)
+    client.close()
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/shealth/"
+
+
+def test_lan_marker_does_not_bypass_for_a_domain_host():
+    from starlette.requests import Request
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "scheme": "http",
+            "server": ("health.example.test", 80),
+            "path": "/",
+            "raw_path": b"/",
+            "query_string": b"",
+            "headers": [
+                (b"host", b"health.example.test"),
+                (b"x-forwarded-prefix", b"/shealth"),
+                (b"x-shadow-lan-bypass", b"1"),
+            ],
+        }
+    )
+    assert auth.is_lan_bypass(request) is False
+
+
 def test_legacy_session_cookie_no_longer_authenticates():
     from app import main
 

@@ -182,7 +182,9 @@ def test_oidc_login_route_uses_native_client(tmp_path, monkeypatch):
     client = TestClient(
         main.app, base_url="https://health.example.test", follow_redirects=False
     )
-    response = client.get("/login?return_to=%2Fmetrics")
+    response = client.get(
+        "/login?return_to=%2Fmetrics", headers={"Host": "health.example.test"}
+    )
     client.close()
 
     assert response.status_code == 302

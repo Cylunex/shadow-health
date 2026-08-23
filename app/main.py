@@ -245,6 +245,8 @@ def more_page(request: Request):
 @app.post("/logout")
 def logout(request: Request):
     settings = get_settings()
+    if auth.is_lan_bypass(request):
+        return RedirectResponse(prefixed(request, "/"), status_code=303)
     if settings.auth_mode == "legacy-forward":
         client_host = request.client.host if request.client else ""
         identity = auth.forward_identity(request.headers, client_host, settings)
