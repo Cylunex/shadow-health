@@ -19,7 +19,9 @@ DSH Bundle。DSH 使用 Health 专属 Bearer 直接访问本应用，Platform �
 - `SHADOW_HEALTH_AGENT_SECRETS_DIR`：只读凭据摘要目录。
 
 注册表为每个 Agent 分别声明 `audiences`、`scopes`、`profile_grants` 和相对摘要文件位置。
-Profile grant 使用 `summary:read`、`trends:read`、`drafts:create`。摘要文件只保存 Bearer Token
+Profile grant 使用 `summary:read`、`trends:read`、`drafts:create`；Nexus Review 的专用主体另需
+`health.records.write` scope 与 `records:write` grant。正式写入能力在 Agent 目录中保持 hidden，
+只由用户在 Nexus 明确确认后通过草稿 commit 端点调用。摘要文件只保存 Bearer Token
 的 SHA-256 十六进制摘要；真实 Token、地址和生产注册表不进入仓库。
 
 ## 审计与幂等

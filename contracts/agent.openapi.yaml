@@ -69,6 +69,23 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthRecordDraftCreated"
+  /api/machine/v1/agent/profiles/{profile_id}/drafts/{draft_id}/commit:
+    post:
+      operationId: commit_health_record_draft
+      summary: Commit one explicitly reviewed Nexus draft to canonical Health data
+      parameters:
+        - $ref: "#/components/parameters/ProfileId"
+        - name: draft_id
+          in: path
+          required: true
+          schema: { type: string, pattern: "^hd_[a-f0-9]{32}$" }
+      responses:
+        "200":
+          description: Applied canonical Health record reference
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthRecordDraftCommitted"
 components:
   securitySchemes:
     machineBearer:
@@ -195,4 +212,15 @@ components:
         profile_id: { type: string }
         status: { const: pending }
         direct_domain_write: { const: false }
+        replayed: { type: boolean }
+    HealthRecordDraftCommitted:
+      type: object
+      additionalProperties: false
+      required: [resource_uri, draft_id, profile_id, record_type, status, replayed]
+      properties:
+        resource_uri: { type: string }
+        draft_id: { type: string }
+        profile_id: { type: string }
+        record_type: { enum: [metric, meal, workout] }
+        status: { const: applied }
         replayed: { type: boolean }

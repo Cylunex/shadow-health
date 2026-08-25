@@ -9,3 +9,6 @@ confirmations:
   - capability: health.records.draft
     mode: notify
     receipt_required: false
+  - capability: health.records.write
+    mode: policy
+    receipt_required: false

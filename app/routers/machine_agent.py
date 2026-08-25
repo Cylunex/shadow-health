@@ -23,7 +23,14 @@ from app.machine_auth import (
     authorize_machine_principal,
     machine_request_id,
 )
-from app.models import AgentMachineAudit, AgentRecordDraft, SCHEMA
+from app.models import (
+    AgentMachineAudit,
+    AgentRecordDraft,
+    BodyMetrics,
+    DietLog,
+    SCHEMA,
+    WorkoutLog,
+)
 from app.timeutil import today_local
 
 router = APIRouter(prefix="/api/machine/v1/agent")
@@ -225,6 +232,68 @@ class MachineHealthService:
             return existing, True
         return draft, False
 
+    def commit_draft(self, draft: AgentRecordDraft) -> tuple[str, bool]:
+        """Materialize one explicitly reviewed Nexus draft into canonical Health data."""
+        if draft.status == "applied":
+            resource_uri = draft.payload.get("_result_uri")
+            if isinstance(resource_uri, str) and resource_uri:
+                return resource_uri, True
+            raise MachineAPIError(409, "draft_state_invalid", "The applied draft has no result reference.")
+        if draft.status != "pending":
+            raise MachineAPIError(409, "draft_state_invalid", "The draft is not pending review.")
+        fields = draft.payload["fields"]
+        provenance = {
+            "source": "shadow-nexus",
+            "agent_draft_id": draft.draft_id,
+            "agent_id": draft.agent_id,
+        }
+        if draft.record_type == "meal":
+            record = DietLog(
+                log_date=draft.effective_date,
+                meal=fields["meal"],
+                free_text=fields["name"],
+                amount_g=fields.get("amount_g"),
+                kcal=fields.get("kcal"),
+                protein_g=fields.get("protein_g"),
+                provenance=provenance,
+            )
+            self.db.add(record)
+            self.db.flush()
+            resource_uri = f"shadow://health/diet/{record.id}"
+        elif draft.record_type == "workout":
+            record = WorkoutLog(
+                log_date=draft.effective_date,
+                session_type=fields["session_type"],
+                duration_min=fields["duration_min"],
+                distance_km=fields.get("distance_km"),
+                rpe=fields.get("rpe"),
+                notes=fields.get("notes") or draft.payload.get("note"),
+                source="manual",
+                external_id=f"agent-{draft.draft_id}",
+                detail={"provenance": provenance},
+            )
+            self.db.add(record)
+            self.db.flush()
+            resource_uri = f"shadow://health/workouts/{record.id}"
+        else:
+            record = self.db.execute(
+                select(BodyMetrics).where(BodyMetrics.log_date == draft.effective_date)
+            ).scalar_one_or_none()
+            if record is None:
+                record = BodyMetrics(log_date=draft.effective_date, autofilled={})
+                self.db.add(record)
+            markers = dict(record.autofilled or {})
+            for field_name, value in fields.items():
+                setattr(record, field_name, value)
+                markers[field_name] = "shadow-nexus"
+            record.autofilled = markers
+            self.db.flush()
+            resource_uri = f"shadow://health/metrics/{draft.effective_date.isoformat()}"
+        draft.payload = {**draft.payload, "_result_uri": resource_uri}
+        draft.status = "applied"
+        self.db.flush()
+        return resource_uri, False
+
 
 def get_machine_health_service(db: Session = Depends(get_db)) -> MachineHealthService:
     return MachineHealthService(db)
@@ -412,6 +481,63 @@ async def create_health_record_draft(
             "replayed": replayed,
         },
         status_code=201,
+    )
+
+
+@router.post("/profiles/{profile_id}/drafts/{draft_id}/commit")
+def commit_health_record_draft(
+    request: Request,
+    profile_id: str,
+    draft_id: str,
+    service: MachineHealthService = Depends(get_machine_health_service),
+) -> JSONResponse:
+    capability = "health.records.write"
+    principal, request_id = _authorize(
+        request, service, profile_id, capability, "records:write"
+    )
+    draft = service.db.get(AgentRecordDraft, draft_id)
+    if draft is None or draft.profile_id != profile_id or draft.agent_id != principal.agent_id:
+        service.audit(
+            request_id=request_id,
+            principal=principal,
+            capability=capability,
+            profile_id=profile_id,
+            outcome="rejected",
+            status_code=404,
+            detail_code="draft_not_found",
+        )
+        raise MachineAPIError(404, "draft_not_found", "The health draft was not found.")
+    try:
+        resource_uri, replayed = service.commit_draft(draft)
+    except MachineAPIError as exc:
+        service.audit(
+            request_id=request_id,
+            principal=principal,
+            capability=capability,
+            profile_id=profile_id,
+            outcome="rejected",
+            status_code=exc.status_code,
+            detail_code=exc.code,
+        )
+        raise
+    service.audit(
+        request_id=request_id,
+        principal=principal,
+        capability=capability,
+        profile_id=profile_id,
+        outcome="replayed" if replayed else "success",
+        status_code=200,
+        resource_uri=resource_uri,
+    )
+    return JSONResponse(
+        {
+            "resource_uri": resource_uri,
+            "draft_id": draft.draft_id,
+            "profile_id": draft.profile_id,
+            "record_type": draft.record_type,
+            "status": "applied",
+            "replayed": replayed,
+        }
     )
 
 

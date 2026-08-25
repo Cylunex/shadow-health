@@ -12,3 +12,7 @@ permissions:
     audience: health
     scopes: [health.records.draft]
     resource_grant: health-profile.drafts
+  - capability: health.records.write
+    audience: health
+    scopes: [health.records.write]
+    resource_grant: health-profile.records

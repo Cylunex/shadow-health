@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 import yaml
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, event, func, select
+from sqlalchemy import create_engine, event, func, select, text
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -76,6 +76,7 @@ def test_shadow_plugin_contract_matches_machine_routes() -> None:
         "health.summary.read",
         "health.trends.read",
         "health.records.draft",
+        "health.records.write",
     }
     assert all(
         item["risk_level"] != "L4" for item in plugin.agent_manifest["capabilities"]
@@ -96,8 +97,15 @@ def machine_api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         digest = secrets_root / "agents" / agent_id / "current-token.sha256"
         digest.parent.mkdir(parents=True, exist_ok=True)
         digest.write_text(hashlib.sha256(token.encode()).hexdigest(), encoding="utf-8")
-        scopes = ["health.summary.read", "health.trends.read", "health.records.draft"]
-        grants = {"primary": ["summary:read", "trends:read", "drafts:create"]}
+        scopes = [
+            "health.summary.read",
+            "health.trends.read",
+            "health.records.draft",
+            "health.records.write",
+        ]
+        grants = {
+            "primary": ["summary:read", "trends:read", "drafts:create", "records:write"]
+        }
         audiences = ["health"]
         if agent_id == "summary-only":
             scopes = ["health.summary.read"]
@@ -132,7 +140,11 @@ def machine_api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     with engine.begin() as connection:
         connection.exec_driver_sql(
             "CREATE TABLE health.diet_logs "
-            "(log_date DATE, kcal NUMERIC, protein_g NUMERIC)"
+            "(id INTEGER PRIMARY KEY AUTOINCREMENT, log_date DATE NOT NULL, meal TEXT, "
+            "food_id INTEGER, free_text TEXT, amount_g NUMERIC, kcal NUMERIC, "
+            "protein_g NUMERIC, fat_g NUMERIC, carb_g NUMERIC, provenance JSON, "
+            "created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL, "
+            "updated_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL)"
         )
         connection.exec_driver_sql(
             "CREATE TABLE health.workout_logs "
@@ -147,7 +159,7 @@ def machine_api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         )
         today = today_local().isoformat()
         connection.exec_driver_sql(
-            "INSERT INTO health.diet_logs VALUES (?, ?, ?)",
+            "INSERT INTO health.diet_logs (log_date, kcal, protein_g) VALUES (?, ?, ?)",
             (today, 820, 48),
         )
         connection.exec_driver_sql(
@@ -295,3 +307,54 @@ def test_draft_endpoint_is_pending_resource_granted_and_idempotent(machine_api) 
         assert session.scalar(select(func.count()).select_from(AgentRecordDraft)) == 1
         audits = session.scalars(select(AgentMachineAudit)).all()
     assert all(event.detail_code != json.dumps(payload) for event in audits)
+
+
+def test_nexus_review_commit_materializes_meal_and_is_idempotent(machine_api) -> None:
+    client, tokens, session_factory = machine_api
+    headers = {
+        **_bearer(tokens["health-helper"]),
+        "Idempotency-Key": "shadow-nexus-meal-review-0001",
+    }
+    payload = {
+        "record_type": "meal",
+        "effective_date": today_local().isoformat(),
+        "fields": {
+            "meal": "午餐",
+            "name": "单人麻辣烫",
+            "amount_g": 570,
+            "kcal": 679,
+            "protein_g": 44.7,
+        },
+    }
+    created = client.post(
+        "/api/machine/v1/agent/profiles/primary/drafts", headers=headers, json=payload
+    )
+    draft_id = created.json()["draft_id"]
+    committed = client.post(
+        f"/api/machine/v1/agent/profiles/primary/drafts/{draft_id}/commit",
+        headers=_bearer(tokens["health-helper"]),
+        json={},
+    )
+    replayed = client.post(
+        f"/api/machine/v1/agent/profiles/primary/drafts/{draft_id}/commit",
+        headers=_bearer(tokens["health-helper"]),
+        json={},
+    )
+
+    assert committed.status_code == replayed.status_code == 200
+    assert committed.json()["status"] == "applied"
+    assert committed.json()["resource_uri"].startswith("shadow://health/diet/")
+    assert replayed.json()["resource_uri"] == committed.json()["resource_uri"]
+    assert replayed.json()["replayed"] is True
+    with session_factory() as session:
+        row = session.execute(
+            text(
+                "SELECT meal, free_text, kcal, protein_g, provenance "
+                "FROM health.diet_logs WHERE free_text = '单人麻辣烫'"
+            )
+        ).one()
+        draft = session.get(AgentRecordDraft, draft_id)
+    assert row.meal == "午餐"
+    assert float(row.kcal) == 679
+    assert float(row.protein_g) == 44.7
+    assert draft is not None and draft.status == "applied"
