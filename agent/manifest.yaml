@@ -99,6 +99,28 @@ capabilities:
         timeout_ms: 10000
         concurrency_safe: false
         retry_policy: idempotent
+      - name: health.records.pending
+        transport: http
+        contract_ref: contracts/agent.openapi.yaml
+        operation_id: list_pending_health_record_drafts
+        exposure: hidden
+        result_mode: reference
+        max_result_bytes: 262144
+        max_model_chars: 1000
+        timeout_ms: 10000
+        concurrency_safe: true
+        retry_policy: idempotent
+      - name: health.records.reject
+        transport: http
+        contract_ref: contracts/agent.openapi.yaml
+        operation_id: reject_health_record_draft
+        exposure: hidden
+        result_mode: reference
+        max_result_bytes: 4096
+        max_model_chars: 1000
+        timeout_ms: 10000
+        concurrency_safe: false
+        retry_policy: idempotent
     effect: write
     data_classification: sensitive
     risk_level: L2

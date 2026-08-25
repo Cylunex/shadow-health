@@ -294,6 +294,31 @@ class MachineHealthService:
         self.db.flush()
         return resource_uri, False
 
+    def pending_drafts(
+        self, principal: MachinePrincipal, profile_id: str, limit: int
+    ) -> list[AgentRecordDraft]:
+        return list(
+            self.db.scalars(
+                select(AgentRecordDraft)
+                .where(
+                    AgentRecordDraft.agent_id == principal.agent_id,
+                    AgentRecordDraft.profile_id == profile_id,
+                    AgentRecordDraft.status == "pending",
+                )
+                .order_by(AgentRecordDraft.created_at, AgentRecordDraft.draft_id)
+                .limit(limit)
+            )
+        )
+
+    def reject_draft(self, draft: AgentRecordDraft) -> bool:
+        if draft.status == "rejected":
+            return True
+        if draft.status != "pending":
+            raise MachineAPIError(409, "draft_state_invalid", "The health draft is not pending review.")
+        draft.status = "rejected"
+        self.db.flush()
+        return False
+
 
 def get_machine_health_service(db: Session = Depends(get_db)) -> MachineHealthService:
     return MachineHealthService(db)
@@ -536,6 +561,92 @@ def commit_health_record_draft(
             "profile_id": draft.profile_id,
             "record_type": draft.record_type,
             "status": "applied",
+            "replayed": replayed,
+        }
+    )
+
+
+@router.get("/profiles/{profile_id}/drafts")
+def list_pending_health_record_drafts(
+    request: Request,
+    profile_id: str,
+    limit: int = Query(default=200, ge=1, le=200),
+    service: MachineHealthService = Depends(get_machine_health_service),
+) -> JSONResponse:
+    capability = "health.records.write"
+    principal, request_id = _authorize(
+        request, service, profile_id, capability, "records:write"
+    )
+    drafts = service.pending_drafts(principal, profile_id, limit)
+    service.audit(
+        request_id=request_id,
+        principal=principal,
+        capability=capability,
+        profile_id=profile_id,
+        outcome="success",
+        status_code=200,
+    )
+    return JSONResponse(
+        {
+            "items": [
+                {
+                    "resource_uri": f"shadow://health/drafts/{draft.draft_id}",
+                    "draft_id": draft.draft_id,
+                    "profile_id": draft.profile_id,
+                    "record_type": draft.record_type,
+                    "effective_date": draft.effective_date.isoformat(),
+                    "fields": draft.payload["fields"],
+                    "note": draft.payload.get("note", ""),
+                    "created_at": draft.created_at.isoformat(),
+                    "status": "pending",
+                }
+                for draft in drafts
+            ],
+            "truncated": len(drafts) == limit,
+        }
+    )
+
+
+@router.post("/profiles/{profile_id}/drafts/{draft_id}/reject")
+def reject_health_record_draft(
+    request: Request,
+    profile_id: str,
+    draft_id: str,
+    service: MachineHealthService = Depends(get_machine_health_service),
+) -> JSONResponse:
+    capability = "health.records.write"
+    principal, request_id = _authorize(
+        request, service, profile_id, capability, "records:write"
+    )
+    draft = service.db.get(AgentRecordDraft, draft_id)
+    if draft is None or draft.profile_id != profile_id or draft.agent_id != principal.agent_id:
+        service.audit(
+            request_id=request_id,
+            principal=principal,
+            capability=capability,
+            profile_id=profile_id,
+            outcome="rejected",
+            status_code=404,
+            detail_code="draft_not_found",
+        )
+        raise MachineAPIError(404, "draft_not_found", "The health draft was not found.")
+    replayed = service.reject_draft(draft)
+    resource_uri = f"shadow://health/drafts/{draft.draft_id}"
+    service.audit(
+        request_id=request_id,
+        principal=principal,
+        capability=capability,
+        profile_id=profile_id,
+        outcome="replayed" if replayed else "success",
+        status_code=200,
+        resource_uri=resource_uri,
+    )
+    return JSONResponse(
+        {
+            "resource_uri": resource_uri,
+            "draft_id": draft.draft_id,
+            "profile_id": draft.profile_id,
+            "status": "rejected",
             "replayed": replayed,
         }
     )

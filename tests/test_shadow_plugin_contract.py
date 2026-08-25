@@ -358,3 +358,50 @@ def test_nexus_review_commit_materializes_meal_and_is_idempotent(machine_api) ->
     assert float(row.kcal) == 679
     assert float(row.protein_g) == 44.7
     assert draft is not None and draft.status == "applied"
+
+
+def test_pending_health_drafts_can_be_federated_and_rejected_from_nexus(machine_api) -> None:
+    client, tokens, session_factory = machine_api
+    headers = {
+        **_bearer(tokens["health-helper"]),
+        "Idempotency-Key": "shadow-nexus-federated-health-0001",
+    }
+    payload = {
+        "record_type": "meal",
+        "effective_date": today_local().isoformat(),
+        "fields": {"meal": "午餐", "name": "待审核午餐", "kcal": 520},
+    }
+    created = client.post(
+        "/api/machine/v1/agent/profiles/primary/drafts", headers=headers, json=payload
+    )
+    draft_id = created.json()["draft_id"]
+    pending = client.get(
+        "/api/machine/v1/agent/profiles/primary/drafts",
+        headers=_bearer(tokens["health-helper"]),
+    )
+    rejected = client.post(
+        f"/api/machine/v1/agent/profiles/primary/drafts/{draft_id}/reject",
+        headers=_bearer(tokens["health-helper"]),
+        json={},
+    )
+    replayed = client.post(
+        f"/api/machine/v1/agent/profiles/primary/drafts/{draft_id}/reject",
+        headers=_bearer(tokens["health-helper"]),
+        json={},
+    )
+    remaining = client.get(
+        "/api/machine/v1/agent/profiles/primary/drafts",
+        headers=_bearer(tokens["health-helper"]),
+    )
+
+    assert pending.status_code == 200
+    assert len(pending.json()["items"]) == 1
+    assert pending.json()["items"][0]["resource_uri"] == created.json()["resource_uri"]
+    assert pending.json()["items"][0]["fields"] == payload["fields"]
+    assert rejected.status_code == replayed.status_code == 200
+    assert rejected.json()["status"] == "rejected"
+    assert replayed.json()["replayed"] is True
+    assert remaining.json()["items"] == []
+    with session_factory() as session:
+        draft = session.get(AgentRecordDraft, draft_id)
+    assert draft is not None and draft.status == "rejected"

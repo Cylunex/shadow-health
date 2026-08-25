@@ -51,6 +51,22 @@ paths:
               schema:
                 $ref: "#/components/schemas/HealthTrendResult"
   /api/machine/v1/agent/profiles/{profile_id}/drafts:
+    get:
+      operationId: list_pending_health_record_drafts
+      summary: List pending drafts created by the same Agent for Nexus review
+      parameters:
+        - $ref: "#/components/parameters/ProfileId"
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 200 }
+      responses:
+        "200":
+          description: Pending Agent health drafts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthRecordDraftList"
     post:
       operationId: create_health_record_draft
       summary: Create a pending and reversible health record draft
@@ -86,6 +102,23 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthRecordDraftCommitted"
+  /api/machine/v1/agent/profiles/{profile_id}/drafts/{draft_id}/reject:
+    post:
+      operationId: reject_health_record_draft
+      summary: Reject one pending Agent draft from Nexus review
+      parameters:
+        - $ref: "#/components/parameters/ProfileId"
+        - name: draft_id
+          in: path
+          required: true
+          schema: { type: string, pattern: "^hd_[a-f0-9]{32}$" }
+      responses:
+        "200":
+          description: Rejected Health draft reference
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthRecordDraftRejected"
 components:
   securitySchemes:
     machineBearer:
@@ -223,4 +256,38 @@ components:
         profile_id: { type: string }
         record_type: { enum: [metric, meal, workout] }
         status: { const: applied }
+        replayed: { type: boolean }
+    HealthRecordDraftSummary:
+      type: object
+      additionalProperties: false
+      required: [resource_uri, draft_id, profile_id, record_type, effective_date, fields, note, created_at, status]
+      properties:
+        resource_uri: { type: string }
+        draft_id: { type: string }
+        profile_id: { type: string }
+        record_type: { enum: [metric, meal, workout] }
+        effective_date: { type: string, format: date }
+        fields: { $ref: "#/components/schemas/HealthDraftFields" }
+        note: { type: string }
+        created_at: { type: string, format: date-time }
+        status: { const: pending }
+    HealthRecordDraftList:
+      type: object
+      additionalProperties: false
+      required: [items, truncated]
+      properties:
+        items:
+          type: array
+          maxItems: 200
+          items: { $ref: "#/components/schemas/HealthRecordDraftSummary" }
+        truncated: { type: boolean }
+    HealthRecordDraftRejected:
+      type: object
+      additionalProperties: false
+      required: [resource_uri, draft_id, profile_id, status, replayed]
+      properties:
+        resource_uri: { type: string }
+        draft_id: { type: string }
+        profile_id: { type: string }
+        status: { const: rejected }
         replayed: { type: boolean }
