@@ -248,18 +248,36 @@ class MachineHealthService:
             "agent_id": draft.agent_id,
         }
         if draft.record_type == "meal":
-            record = DietLog(
-                log_date=draft.effective_date,
-                meal=fields["meal"],
-                free_text=fields["name"],
-                amount_g=fields.get("amount_g"),
-                kcal=fields.get("kcal"),
-                protein_g=fields.get("protein_g"),
-                provenance=provenance,
-            )
-            self.db.add(record)
+            items = fields.get("items")
+            meal_items = items if isinstance(items, list) else [fields]
+            records = [
+                DietLog(
+                    log_date=draft.effective_date,
+                    meal=fields["meal"],
+                    free_text=item["name"],
+                    amount_g=item.get("amount_g"),
+                    kcal=item.get("kcal"),
+                    protein_g=item.get("protein_g"),
+                    fat_g=item.get("fat_g"),
+                    carb_g=item.get("carb_g"),
+                    provenance={
+                        **provenance,
+                        "meal_name": fields["name"],
+                        "item_index": index,
+                        "item_count": len(meal_items),
+                    },
+                )
+                for index, item in enumerate(meal_items, start=1)
+            ]
+            self.db.add_all(records)
             self.db.flush()
-            resource_uri = f"shadow://health/diet/{record.id}"
+            result_ids = [record.id for record in records]
+            resource_uri = (
+                f"shadow://health/diet/{result_ids[0]}"
+                if len(result_ids) == 1
+                else f"shadow://health/diet/batches/{draft.draft_id}"
+            )
+            draft.payload = {**draft.payload, "_result_ids": result_ids}
         elif draft.record_type == "workout":
             record = WorkoutLog(
                 log_date=draft.effective_date,
@@ -741,16 +759,47 @@ def _validate_metric_fields(fields: dict[str, Any]) -> dict[str, Any]:
 
 
 def _validate_meal_fields(fields: dict[str, Any]) -> dict[str, Any]:
-    allowed = {"meal", "name", "amount_g", "kcal", "protein_g"}
+    allowed = {"meal", "name", "amount_g", "kcal", "protein_g", "fat_g", "carb_g", "items"}
     if set(fields) - allowed or fields.get("meal") not in {"早餐", "午餐", "晚餐", "加餐"}:
         raise ValueError
     name = fields.get("name")
     if not isinstance(name, str) or not 1 <= len(name.strip()) <= 120:
         raise ValueError
     result: dict[str, Any] = {"meal": fields["meal"], "name": name.strip()}
-    for key, high in {"amount_g": 5000, "kcal": 20000, "protein_g": 1000}.items():
+    for key, high in {
+        "amount_g": 5000,
+        "kcal": 20000,
+        "protein_g": 1000,
+        "fat_g": 1000,
+        "carb_g": 5000,
+    }.items():
         if key in fields:
             result[key] = _bounded_number(fields[key], 0, high)
+    if "items" in fields:
+        items = fields["items"]
+        if not isinstance(items, list) or not 1 <= len(items) <= 50:
+            raise ValueError
+        result["items"] = [_validate_meal_item(item) for item in items]
+    return result
+
+
+def _validate_meal_item(raw: Any) -> dict[str, Any]:
+    allowed = {"name", "amount_g", "kcal", "protein_g", "fat_g", "carb_g"}
+    if not isinstance(raw, dict) or set(raw) - allowed:
+        raise ValueError
+    name = raw.get("name")
+    if not isinstance(name, str) or not 1 <= len(name.strip()) <= 120:
+        raise ValueError
+    result: dict[str, Any] = {"name": name.strip()}
+    for key, high in {
+        "amount_g": 5000,
+        "kcal": 20000,
+        "protein_g": 1000,
+        "fat_g": 1000,
+        "carb_g": 5000,
+    }.items():
+        if key in raw:
+            result[key] = _bounded_number(raw[key], 0, high)
     return result
 
 

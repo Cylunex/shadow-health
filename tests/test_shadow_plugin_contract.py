@@ -360,6 +360,100 @@ def test_nexus_review_commit_materializes_meal_and_is_idempotent(machine_api) ->
     assert draft is not None and draft.status == "applied"
 
 
+def test_nexus_review_commit_materializes_each_meal_item_with_all_macros(machine_api) -> None:
+    client, tokens, session_factory = machine_api
+    headers = {
+        **_bearer(tokens["health-helper"]),
+        "Idempotency-Key": "shadow-nexus-meal-items-0001",
+    }
+    payload = {
+        "record_type": "meal",
+        "effective_date": today_local().isoformat(),
+        "fields": {
+            "meal": "午餐",
+            "name": "食堂快餐（一荤两素）",
+            "amount_g": 500,
+            "kcal": 671,
+            "protein_g": 30,
+            "fat_g": 35,
+            "carb_g": 60.4,
+            "items": [
+                {"name": "白米饭", "amount_g": 160, "kcal": 186, "carb_g": 41.4, "protein_g": 4.2, "fat_g": 0.5},
+                {"name": "手撕包菜", "amount_g": 110, "kcal": 85, "carb_g": 5.5, "protein_g": 1.8, "fat_g": 6.5},
+                {"name": "辣椒炒香干", "amount_g": 140, "kcal": 140, "carb_g": 6, "protein_g": 8, "fat_g": 9.5},
+                {"name": "香酥炸鸡块", "amount_g": 90, "kcal": 260, "carb_g": 7.5, "protein_g": 16, "fat_g": 18.5},
+            ],
+        },
+    }
+    created = client.post(
+        "/api/machine/v1/agent/profiles/primary/drafts", headers=headers, json=payload
+    )
+    assert created.status_code == 201
+    draft_id = created.json()["draft_id"]
+
+    pending = client.get(
+        "/api/machine/v1/agent/profiles/primary/drafts",
+        headers=_bearer(tokens["health-helper"]),
+    )
+    assert pending.status_code == 200
+    assert pending.json()["items"][0]["fields"]["items"][2]["name"] == "辣椒炒香干"
+
+    committed = client.post(
+        f"/api/machine/v1/agent/profiles/primary/drafts/{draft_id}/commit",
+        headers=_bearer(tokens["health-helper"]),
+        json={},
+    )
+    replayed = client.post(
+        f"/api/machine/v1/agent/profiles/primary/drafts/{draft_id}/commit",
+        headers=_bearer(tokens["health-helper"]),
+        json={},
+    )
+    assert committed.status_code == replayed.status_code == 200
+    assert committed.json()["resource_uri"] == f"shadow://health/diet/batches/{draft_id}"
+    assert replayed.json()["resource_uri"] == committed.json()["resource_uri"]
+    assert replayed.json()["replayed"] is True
+
+    with session_factory() as session:
+        rows = session.execute(
+            text(
+                "SELECT id, free_text, amount_g, kcal, protein_g, fat_g, carb_g, provenance "
+                "FROM health.diet_logs WHERE free_text IN "
+                "('白米饭', '手撕包菜', '辣椒炒香干', '香酥炸鸡块') ORDER BY id"
+            )
+        ).all()
+        draft = session.get(AgentRecordDraft, draft_id)
+    assert [row.free_text for row in rows] == ["白米饭", "手撕包菜", "辣椒炒香干", "香酥炸鸡块"]
+    assert sum(float(row.kcal) for row in rows) == 671
+    assert sum(float(row.carb_g) for row in rows) == 60.4
+    assert json.loads(rows[3].provenance)["meal_name"] == "食堂快餐（一荤两素）"
+    assert draft is not None and draft.payload["_result_ids"] == [row.id for row in rows]
+
+
+def test_meal_item_validation_rejects_unknown_or_oversized_detail(machine_api) -> None:
+    client, tokens, _ = machine_api
+    headers = {
+        **_bearer(tokens["health-helper"]),
+        "Idempotency-Key": "shadow-nexus-invalid-items-001",
+    }
+    base = {
+        "record_type": "meal",
+        "effective_date": today_local().isoformat(),
+        "fields": {"meal": "午餐", "name": "套餐"},
+    }
+    unknown = client.post(
+        "/api/machine/v1/agent/profiles/primary/drafts",
+        headers=headers,
+        json={**base, "fields": {**base["fields"], "items": [{"name": "米饭", "price": 2}]}},
+    )
+    too_many = client.post(
+        "/api/machine/v1/agent/profiles/primary/drafts",
+        headers={**headers, "Idempotency-Key": "shadow-nexus-invalid-items-002"},
+        json={**base, "fields": {**base["fields"], "items": [{"name": "米饭"}] * 51}},
+    )
+    assert unknown.status_code == too_many.status_code == 400
+    assert unknown.json()["error"]["code"] == "invalid_draft"
+
+
 def test_pending_health_drafts_can_be_federated_and_rejected_from_nexus(machine_api) -> None:
     client, tokens, session_factory = machine_api
     headers = {
