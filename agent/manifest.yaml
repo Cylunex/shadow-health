@@ -76,6 +76,17 @@ capabilities:
         timeout_ms: 10000
         concurrency_safe: false
         retry_policy: idempotent
+      - name: health.nexus.review.create
+        transport: http
+        contract_ref: contracts/agent.openapi.yaml
+        operation_id: create_nexus_health_review
+        exposure: hidden
+        result_mode: reference
+        max_result_bytes: 8192
+        max_model_chars: 1000
+        timeout_ms: 10000
+        concurrency_safe: false
+        retry_policy: idempotent
     effect: draft
     data_classification: sensitive
     risk_level: L1
@@ -117,6 +128,39 @@ capabilities:
         exposure: hidden
         result_mode: reference
         max_result_bytes: 4096
+        max_model_chars: 1000
+        timeout_ms: 10000
+        concurrency_safe: false
+        retry_policy: idempotent
+      - name: health.nexus.review.list
+        transport: http
+        contract_ref: contracts/agent.openapi.yaml
+        operation_id: list_nexus_health_reviews
+        exposure: hidden
+        result_mode: reference
+        max_result_bytes: 262144
+        max_model_chars: 1000
+        timeout_ms: 10000
+        concurrency_safe: true
+        retry_policy: idempotent
+      - name: health.nexus.review.commit
+        transport: http
+        contract_ref: contracts/agent.openapi.yaml
+        operation_id: commit_nexus_health_review
+        exposure: hidden
+        result_mode: reference
+        max_result_bytes: 8192
+        max_model_chars: 1000
+        timeout_ms: 10000
+        concurrency_safe: false
+        retry_policy: idempotent
+      - name: health.nexus.review.reject
+        transport: http
+        contract_ref: contracts/agent.openapi.yaml
+        operation_id: reject_nexus_health_review
+        exposure: hidden
+        result_mode: reference
+        max_result_bytes: 8192
         max_model_chars: 1000
         timeout_ms: 10000
         concurrency_safe: false

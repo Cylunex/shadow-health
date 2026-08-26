@@ -499,3 +499,48 @@ def test_pending_health_drafts_can_be_federated_and_rejected_from_nexus(machine_
     with session_factory() as session:
         draft = session.get(AgentRecordDraft, draft_id)
     assert draft is not None and draft.status == "rejected"
+
+
+def test_standard_nexus_review_protocol_creates_lists_and_commits(machine_api) -> None:
+    client, tokens, _ = machine_api
+    headers = {
+        **_bearer(tokens["health-helper"]),
+        "Idempotency-Key": "standard-health-review-0001",
+    }
+    created = client.post(
+        "/api/machine/v1/agent/nexus/reviews?profile_id=primary",
+        headers=headers,
+        json={
+            "intent": "health.meal",
+            "summary": "午餐",
+            "fields": {
+                "recordType": "meal",
+                "effectiveDate": today_local().isoformat(),
+                "meal": "午餐",
+                "mealName": "测试套餐",
+                "kcal": 520,
+            },
+        },
+    )
+    assert created.status_code == 201, created.text
+    review = created.json()
+    assert review["protocol"] == "shadow.review.v1"
+    assert review["domain"] == "health"
+    assert review["state"] == "pending"
+    assert review["fields"]["mealName"] == "测试套餐"
+
+    listed = client.get(
+        "/api/machine/v1/agent/nexus/reviews?profile_id=primary",
+        headers=_bearer(tokens["health-helper"]),
+    )
+    assert listed.status_code == 200, listed.text
+    assert [item["review_id"] for item in listed.json()["items"]] == [review["review_id"]]
+
+    committed = client.post(
+        f"/api/machine/v1/agent/nexus/reviews/{review['review_id']}/commit?profile_id=primary",
+        headers=_bearer(tokens["health-helper"]),
+        json={},
+    )
+    assert committed.status_code == 200, committed.text
+    assert committed.json()["state"] == "committed"
+    assert committed.json()["receipt"].startswith("shadow://health/diet/")

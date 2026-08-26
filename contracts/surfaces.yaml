@@ -1,0 +1,35 @@
+version: 1
+presentation:
+  short_id: health
+  title: Health
+  caption: 身体、饮食、训练与日常状态
+  icon: health
+  color: "#14B8A6"
+  order: 10
+surfaces:
+  - id: today
+    type: summary
+    capability: health.summary.read
+    operation_id: get_health_profile_summary
+    display:
+      detail_pointer: /summary
+  - id: capture
+    type: capture
+    capability: health.records.draft
+    operation_id: create_nexus_health_review
+    risk_level: L2
+    intent_prefixes: [health.record, health.metric, health.meal, health.workout]
+  - id: review
+    type: review
+    capability: health.records.write
+    risk_level: L2
+    intent_prefixes: [health.record, health.metric, health.meal, health.workout]
+  - id: app
+    type: app-link
+review:
+  protocol: shadow.review.v1
+  mode: commit
+  list_operation_id: list_nexus_health_reviews
+  create_operation_id: create_nexus_health_review
+  commit_operation_id: commit_nexus_health_review
+  reject_operation_id: reject_nexus_health_review

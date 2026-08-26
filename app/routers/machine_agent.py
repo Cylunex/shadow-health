@@ -670,6 +670,285 @@ def reject_health_record_draft(
     )
 
 
+@router.post("/nexus/reviews", status_code=201, operation_id="create_nexus_health_review")
+async def create_nexus_health_review(
+    request: Request,
+    profile_id: str = Query(min_length=1, max_length=64),
+    service: MachineHealthService = Depends(get_machine_health_service),
+) -> JSONResponse:
+    """Create the domain-owned draft behind one Nexus Proposal."""
+    capability = "health.records.draft"
+    principal, request_id = _authorize(
+        request, service, profile_id, capability, "drafts:create"
+    )
+    idempotency_key = request.headers.get("Idempotency-Key", "").strip()
+    if not IDEMPOTENCY_RE.fullmatch(idempotency_key):
+        raise MachineAPIError(
+            400, "invalid_idempotency_key", "A stable idempotency key is required."
+        )
+    try:
+        raw = json.loads(await _read_bounded_body(request, MAX_DRAFT_BODY_BYTES))
+        payload = _nexus_health_payload(raw)
+    except (UnicodeDecodeError, ValueError, json.JSONDecodeError) as exc:
+        raise MachineAPIError(400, "invalid_nexus_review", "Nexus review is invalid.") from exc
+    payload_hash = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    ).hexdigest()
+    draft, replayed = service.create_draft(
+        principal=principal,
+        profile_id=profile_id,
+        idempotency_key=idempotency_key,
+        payload=payload,
+        payload_hash=payload_hash,
+    )
+    resource_uri = f"shadow://health/drafts/{draft.draft_id}"
+    service.audit(
+        request_id=request_id,
+        principal=principal,
+        capability=capability,
+        profile_id=profile_id,
+        outcome="replayed" if replayed else "success",
+        status_code=201,
+        resource_uri=resource_uri,
+    )
+    return JSONResponse(
+        _health_review_envelope(draft, trace_id=request_id, replayed=replayed),
+        status_code=201,
+    )
+
+
+@router.get("/nexus/reviews", operation_id="list_nexus_health_reviews")
+def list_nexus_health_reviews(
+    request: Request,
+    profile_id: str = Query(min_length=1, max_length=64),
+    limit: int = Query(default=200, ge=1, le=200),
+    service: MachineHealthService = Depends(get_machine_health_service),
+) -> JSONResponse:
+    capability = "health.records.write"
+    principal, request_id = _authorize(
+        request, service, profile_id, capability, "records:write"
+    )
+    drafts = service.pending_drafts(principal, profile_id, limit)
+    service.audit(
+        request_id=request_id,
+        principal=principal,
+        capability=capability,
+        profile_id=profile_id,
+        outcome="success",
+        status_code=200,
+    )
+    return JSONResponse(
+        {
+            "protocol": "shadow.review.v1",
+            "items": [
+                _health_review_envelope(draft, trace_id=request_id) for draft in drafts
+            ],
+            "truncated": len(drafts) == limit,
+            "trace_id": request_id,
+        }
+    )
+
+
+@router.post(
+    "/nexus/reviews/{review_id}/commit",
+    operation_id="commit_nexus_health_review",
+)
+def commit_nexus_health_review(
+    review_id: str,
+    request: Request,
+    profile_id: str = Query(min_length=1, max_length=64),
+    service: MachineHealthService = Depends(get_machine_health_service),
+) -> JSONResponse:
+    capability = "health.records.write"
+    principal, request_id = _authorize(
+        request, service, profile_id, capability, "records:write"
+    )
+    draft = service.db.get(AgentRecordDraft, review_id)
+    if draft is None or draft.profile_id != profile_id or draft.agent_id != principal.agent_id:
+        raise MachineAPIError(404, "draft_not_found", "The health draft was not found.")
+    receipt, replayed = service.commit_draft(draft)
+    service.audit(
+        request_id=request_id,
+        principal=principal,
+        capability=capability,
+        profile_id=profile_id,
+        outcome="replayed" if replayed else "success",
+        status_code=200,
+        resource_uri=receipt,
+    )
+    return JSONResponse(
+        _health_review_envelope(
+            draft, trace_id=request_id, replayed=replayed, receipt=receipt
+        )
+    )
+
+
+@router.post(
+    "/nexus/reviews/{review_id}/reject",
+    operation_id="reject_nexus_health_review",
+)
+def reject_nexus_health_review(
+    review_id: str,
+    request: Request,
+    profile_id: str = Query(min_length=1, max_length=64),
+    service: MachineHealthService = Depends(get_machine_health_service),
+) -> JSONResponse:
+    capability = "health.records.write"
+    principal, request_id = _authorize(
+        request, service, profile_id, capability, "records:write"
+    )
+    draft = service.db.get(AgentRecordDraft, review_id)
+    if draft is None or draft.profile_id != profile_id or draft.agent_id != principal.agent_id:
+        raise MachineAPIError(404, "draft_not_found", "The health draft was not found.")
+    replayed = service.reject_draft(draft)
+    service.audit(
+        request_id=request_id,
+        principal=principal,
+        capability=capability,
+        profile_id=profile_id,
+        outcome="replayed" if replayed else "success",
+        status_code=200,
+        resource_uri=f"shadow://health/drafts/{draft.draft_id}",
+    )
+    return JSONResponse(
+        _health_review_envelope(draft, trace_id=request_id, replayed=replayed)
+    )
+
+
+def _nexus_health_payload(raw: Any) -> dict[str, Any]:
+    if not isinstance(raw, dict) or set(raw) - {
+        "intent",
+        "summary",
+        "fields",
+        "source_text",
+        "source_refs",
+    }:
+        raise ValueError
+    intent = raw.get("intent")
+    fields = raw.get("fields")
+    if not isinstance(intent, str) or not intent.startswith("health."):
+        raise ValueError
+    if not isinstance(fields, dict):
+        raise ValueError
+    record_type = fields.get("recordType")
+    effective_date = str(fields.get("effectiveDate") or today_local().isoformat())
+    native: dict[str, Any]
+    if record_type == "metric":
+        aliases = {
+            "weightKg": "weight_kg",
+            "sleepHours": "sleep_hours",
+            "moodScore": "mood_score",
+        }
+        native = {
+            target: fields[source]
+            for source, target in aliases.items()
+            if source in fields
+        }
+    elif record_type == "meal":
+        native = {
+            "meal": fields.get("meal"),
+            "name": fields.get("mealName") or raw.get("summary"),
+        }
+        for source, target in {
+            "amountG": "amount_g",
+            "kcal": "kcal",
+            "proteinG": "protein_g",
+            "fatG": "fat_g",
+            "carbG": "carb_g",
+        }.items():
+            if source in fields:
+                native[target] = fields[source]
+        items_json = fields.get("mealItemsJson")
+        if items_json is not None:
+            items = json.loads(str(items_json))
+            if not isinstance(items, list):
+                raise ValueError
+            native["items"] = [
+                {
+                    ({
+                        "amountG": "amount_g",
+                        "proteinG": "protein_g",
+                        "fatG": "fat_g",
+                        "carbG": "carb_g",
+                    }.get(key, key)): value
+                    for key, value in item.items()
+                }
+                for item in items
+                if isinstance(item, dict)
+            ]
+    elif record_type == "workout":
+        native = {
+            "session_type": fields.get("sessionType") or "运动",
+            "duration_min": fields.get("durationMin"),
+        }
+        if "distanceKm" in fields:
+            native["distance_km"] = fields["distanceKm"]
+        if "rpe" in fields:
+            native["rpe"] = fields["rpe"]
+    else:
+        raise ValueError
+    return _validate_draft_payload(
+        {
+            "record_type": record_type,
+            "effective_date": effective_date,
+            "fields": native,
+            "note": str(raw.get("source_text") or raw.get("summary") or "")[:500],
+        }
+    )
+
+
+def _health_review_envelope(
+    draft: AgentRecordDraft,
+    *,
+    trace_id: str,
+    replayed: bool = False,
+    receipt: str | None = None,
+) -> dict[str, Any]:
+    fields = dict(draft.payload["fields"])
+    aliases = {
+        "weight_kg": "weightKg",
+        "sleep_hours": "sleepHours",
+        "mood_score": "moodScore",
+        "name": "mealName",
+        "amount_g": "amountG",
+        "protein_g": "proteinG",
+        "fat_g": "fatG",
+        "carb_g": "carbG",
+        "session_type": "sessionType",
+        "duration_min": "durationMin",
+        "distance_km": "distanceKm",
+    }
+    projected = {aliases.get(key, key): value for key, value in fields.items() if key != "items"}
+    projected.update(
+        {
+            "recordType": draft.record_type,
+            "effectiveDate": draft.effective_date.isoformat(),
+        }
+    )
+    if isinstance(fields.get("items"), list):
+        projected["mealItemsJson"] = json.dumps(fields["items"], ensure_ascii=False)
+    state = {"pending": "pending", "applied": "committed", "rejected": "rejected"}.get(
+        draft.status, draft.status
+    )
+    return {
+        "protocol": "shadow.review.v1",
+        "review_id": draft.draft_id,
+        "reference": f"shadow://health/drafts/{draft.draft_id}",
+        "revision": 1,
+        "domain": "health",
+        "intent": f"health.{draft.record_type}",
+        "summary": draft.payload.get("note") or f"Health {draft.record_type} 草稿",
+        "fields": projected,
+        "risk_level": "L2",
+        "state": state,
+        "created_at": draft.created_at.isoformat(),
+        "source_refs": [],
+        "trace_id": trace_id,
+        "receipt": receipt,
+        "replayed": replayed,
+    }
+
+
 def _authorize(
     request: Request,
     service: MachineHealthService,

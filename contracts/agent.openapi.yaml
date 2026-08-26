@@ -119,6 +119,58 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthRecordDraftRejected"
+  /api/machine/v1/agent/nexus/reviews:
+    get:
+      operationId: list_nexus_health_reviews
+      summary: List normalized Health reviews for the Nexus Host
+      parameters:
+        - $ref: "#/components/parameters/ProfileQuery"
+      responses:
+        "200":
+          description: Normalized review queue
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NexusReviewList" }
+    post:
+      operationId: create_nexus_health_review
+      summary: Create a Health-owned draft from one reviewed Nexus Proposal
+      parameters:
+        - $ref: "#/components/parameters/ProfileQuery"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NexusReviewCreate" }
+      responses:
+        "201":
+          description: Normalized Health review
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NexusReview" }
+  /api/machine/v1/agent/nexus/reviews/{review_id}/commit:
+    post:
+      operationId: commit_nexus_health_review
+      parameters:
+        - $ref: "#/components/parameters/ProfileQuery"
+        - $ref: "#/components/parameters/ReviewId"
+      responses:
+        "200":
+          description: Committed normalized Health review
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NexusReview" }
+  /api/machine/v1/agent/nexus/reviews/{review_id}/reject:
+    post:
+      operationId: reject_nexus_health_review
+      parameters:
+        - $ref: "#/components/parameters/ProfileQuery"
+        - $ref: "#/components/parameters/ReviewId"
+      responses:
+        "200":
+          description: Rejected normalized Health review
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NexusReview" }
 components:
   securitySchemes:
     machineBearer:
@@ -132,7 +184,64 @@ components:
       schema:
         type: string
         pattern: "^[a-z][a-z0-9-]{0,63}$"
+    ProfileQuery:
+      name: profile_id
+      in: query
+      required: true
+      schema: { type: string, pattern: "^[a-z][a-z0-9-]{0,63}$" }
+    ReviewId:
+      name: review_id
+      in: path
+      required: true
+      schema: { type: string, pattern: "^hd_[a-f0-9]{32}$" }
   schemas:
+    NexusReviewCreate:
+      type: object
+      additionalProperties: false
+      required: [intent, summary, fields]
+      properties:
+        intent: { type: string }
+        summary: { type: string, maxLength: 500 }
+        fields: { type: object, additionalProperties: true }
+        source_text: { type: string, maxLength: 4000 }
+        source_refs:
+          type: array
+          maxItems: 16
+          items: { type: string }
+    NexusReview:
+      type: object
+      additionalProperties: false
+      required: [protocol, review_id, reference, revision, domain, intent, summary, fields, risk_level, state, created_at, source_refs, trace_id, receipt, replayed]
+      properties:
+        protocol: { const: shadow.review.v1 }
+        review_id: { type: string }
+        reference: { type: string }
+        revision: { type: integer }
+        domain: { const: health }
+        intent: { type: string }
+        summary: { type: string }
+        fields: { type: object, additionalProperties: true }
+        risk_level: { const: L2 }
+        state: { enum: [pending, committed, rejected] }
+        created_at: { type: string, format: date-time }
+        source_refs: { type: array, items: { type: string } }
+        trace_id: { type: string }
+        receipt:
+          anyOf:
+            - { type: string }
+            - { type: "null" }
+        replayed: { type: boolean }
+    NexusReviewList:
+      type: object
+      additionalProperties: true
+      required: [protocol, items, truncated, trace_id]
+      properties:
+        protocol: { const: shadow.review.v1 }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/NexusReview" }
+        truncated: { type: boolean }
+        trace_id: { type: string }
     NullableNumber:
       anyOf:
         - { type: number }

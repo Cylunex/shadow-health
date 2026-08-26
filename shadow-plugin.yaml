@@ -18,3 +18,4 @@ spec:
     captures: contracts/captures.yaml
     confirmations: contracts/confirmations.yaml
     permissions: contracts/permissions.yaml
+    surfaces: contracts/surfaces.yaml
