@@ -8,6 +8,7 @@ skills:
     capabilities:
       - health.summary.read
       - health.trends.read
+      - health.suggestions.read
       - health.records.draft
       - health.records.write
     invocation:
@@ -50,6 +51,29 @@ capabilities:
         result_mode: summary
         max_result_bytes: 8192
         max_model_chars: 1600
+        timeout_ms: 10000
+        concurrency_safe: true
+        retry_policy: idempotent
+    effect: analyze
+    data_classification: sensitive
+    risk_level: L0
+    confirmation: none
+    reversible: true
+    resource_grant_required: true
+    idempotency_required: false
+  - id: health.suggestions.read
+    summary: 读取已授权 Health Profile 的可解释周度回顾建议，不返回逐条健康原始数据
+    audience: health
+    scopes: [health.suggestions.read]
+    tools:
+      - name: health.suggestions.read
+        transport: http
+        contract_ref: contracts/agent.openapi.yaml
+        operation_id: list_health_suggestions
+        exposure: hidden
+        result_mode: summary
+        max_result_bytes: 16384
+        max_model_chars: 2400
         timeout_ms: 10000
         concurrency_safe: true
         retry_policy: idempotent

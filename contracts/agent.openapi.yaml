@@ -50,6 +50,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthTrendResult"
+  /api/machine/v1/agent/profiles/{profile_id}/suggestions:
+    get:
+      operationId: list_health_suggestions
+      summary: List explainable weekly Health suggestions without raw events
+      parameters:
+        - $ref: "#/components/parameters/ProfileId"
+      responses:
+        "200":
+          description: Current Health suggestions
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuggestionList" }
   /api/machine/v1/agent/profiles/{profile_id}/drafts:
     get:
       operationId: list_pending_health_record_drafts
@@ -195,6 +207,44 @@ components:
       required: true
       schema: { type: string, pattern: "^hd_[a-f0-9]{32}$" }
   schemas:
+    SuggestionList:
+      type: object
+      additionalProperties: false
+      required: [protocol, items, generated_at]
+      properties:
+        protocol: { const: shadow.suggestion-list.v1 }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Suggestion" }
+        generated_at: { type: string, format: date-time }
+    Suggestion:
+      type: object
+      additionalProperties: false
+      required: [protocol, suggestion_id, domain, rule_id, dedupe_key, title, summary, reason, evidence_refs, importance, confidence, allowed_actions, created_at, valid_until, data_freshness]
+      properties:
+        protocol: { const: shadow.suggestion.v1 }
+        suggestion_id: { type: string }
+        domain: { const: health }
+        rule_id: { const: health.weekly-review }
+        dedupe_key: { type: string }
+        title: { type: string }
+        summary: { type: string }
+        reason: { type: string }
+        evidence_refs: { type: array, items: { type: string } }
+        importance: { enum: [low, normal, high, urgent] }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+        allowed_actions:
+          type: array
+          items: { enum: [ignore, snooze, mute, create_draft, view_evidence] }
+        created_at: { type: string, format: date-time }
+        valid_until: { type: string, format: date-time }
+        data_freshness:
+          type: object
+          additionalProperties: false
+          required: [observed_at, missing_ratio]
+          properties:
+            observed_at: { type: string, format: date-time }
+            missing_ratio: { type: number, minimum: 0, maximum: 1 }
     NexusReviewCreate:
       type: object
       additionalProperties: false

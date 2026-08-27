@@ -75,6 +75,7 @@ def test_shadow_plugin_contract_matches_machine_routes() -> None:
     assert {item["id"] for item in plugin.agent_manifest["capabilities"]} == {
         "health.summary.read",
         "health.trends.read",
+        "health.suggestions.read",
         "health.records.draft",
         "health.records.write",
     }
@@ -100,11 +101,12 @@ def machine_api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         scopes = [
             "health.summary.read",
             "health.trends.read",
+            "health.suggestions.read",
             "health.records.draft",
             "health.records.write",
         ]
         grants = {
-            "primary": ["summary:read", "trends:read", "drafts:create", "records:write"]
+            "primary": ["summary:read", "trends:read", "suggestions:read", "drafts:create", "records:write"]
         }
         audiences = ["health"]
         if agent_id == "summary-only":
@@ -226,6 +228,32 @@ def test_machine_endpoints_return_bounded_summary_and_trend(machine_api) -> None
     assert trend.json()["data_points"] == 2
     assert "series" not in trend.json()
     assert "不构成诊断或治疗建议" in trend.json()["summary"]
+
+
+def test_weekly_suggestion_is_explainable_bounded_and_stable(machine_api) -> None:
+    client, tokens, _session = machine_api
+    headers = _bearer(tokens["health-helper"])
+
+    first = client.get(
+        "/api/machine/v1/agent/profiles/primary/suggestions", headers=headers
+    )
+    second = client.get(
+        "/api/machine/v1/agent/profiles/primary/suggestions", headers=headers
+    )
+
+    assert first.status_code == second.status_code == 200
+    item = first.json()["items"][0]
+    assert item["protocol"] == "shadow.suggestion.v1"
+    assert item["suggestion_id"] == second.json()["items"][0]["suggestion_id"]
+    assert item["evidence_refs"] == [
+        (
+            f"shadow://health/profiles/primary/weekly-reviews/"
+            f"{today_local().isocalendar().year}-W{today_local().isocalendar().week:02d}"
+        )
+    ]
+    assert "近 7 天" in item["reason"]
+    assert "不构成诊断或治疗建议" in item["reason"]
+    assert 0 <= item["data_freshness"]["missing_ratio"] <= 1
 
 
 def test_machine_api_rejects_legacy_token_scope_and_resource_grant(machine_api) -> None:

@@ -6,7 +6,8 @@ import hashlib
 import json
 import re
 import uuid
-from datetime import date as date_type, timedelta
+from datetime import UTC, datetime, time, timedelta
+from datetime import date as date_type
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -24,11 +25,11 @@ from app.machine_auth import (
     machine_request_id,
 )
 from app.models import (
+    SCHEMA,
     AgentMachineAudit,
     AgentRecordDraft,
     BodyMetrics,
     DietLog,
-    SCHEMA,
     WorkoutLog,
 )
 from app.timeutil import today_local
@@ -175,6 +176,67 @@ class MachineHealthService:
                 "change": change,
                 "unit": unit,
             },
+        }
+
+    def weekly_suggestions(self, profile_id: str, now: datetime | None = None) -> dict[str, Any]:
+        """Build one bounded, explainable suggestion from confirmed aggregate facts only."""
+        observed_at = (now or datetime.now(UTC)).astimezone(UTC)
+        end_day = today_local()
+        start_day = end_day - timedelta(days=6)
+        daily = [self.summary(profile_id, start_day + timedelta(days=index)) for index in range(7)]
+        present = [
+            item for item in daily
+            if any(
+                value not in (None, 0, 0.0)
+                for value in item["indicators"].values()
+            )
+        ]
+        recorded_days = len(present)
+        missing_ratio = round((7 - recorded_days) / 7, 3)
+        steps = [item["indicators"]["steps"] for item in daily if item["indicators"]["steps"] is not None]
+        sleep = [item["indicators"]["sleep_hours"] for item in daily if item["indicators"]["sleep_hours"] is not None]
+        workout_min = sum(item["indicators"]["workout_min"] for item in daily)
+        diet_days = sum(1 for item in daily if item["indicators"]["diet_kcal"] > 0)
+        facts = [f"近 7 天有 {recorded_days} 天留下健康数据", f"训练合计 {workout_min} 分钟"]
+        if steps:
+            facts.append(f"有记录日平均 {round(sum(steps) / len(steps))} 步")
+        if sleep:
+            facts.append(f"有记录日平均睡眠 {sum(sleep) / len(sleep):.1f} 小时")
+        facts.append(f"饮食记录覆盖 {diet_days} 天")
+        week_start = end_day - timedelta(days=end_day.weekday())
+        week_key = f"{week_start.isocalendar().year}-W{week_start.isocalendar().week:02d}"
+        evidence = f"shadow://health/profiles/{profile_id}/weekly-reviews/{week_key}"
+        valid_until = datetime.combine(week_start + timedelta(days=7), time.min, tzinfo=UTC)
+        digest = hashlib.sha256(f"{profile_id}:{week_key}".encode()).hexdigest()[:20]
+        if recorded_days < 3:
+            summary = "本周数据还比较稀疏，先补齐日常记录，再判断趋势会更可靠。"
+            importance = "low"
+        else:
+            summary = "本周健康记录已形成可回顾的聚合脉络，可以据此检查节奏并创建调整草稿。"
+            importance = "normal"
+        return {
+            "protocol": "shadow.suggestion-list.v1",
+            "items": [{
+                "protocol": "shadow.suggestion.v1",
+                "suggestion_id": f"sug_health_{digest}",
+                "domain": "health",
+                "rule_id": "health.weekly-review",
+                "dedupe_key": f"health:{profile_id}:weekly-review:{week_key}",
+                "title": "本周健康回顾已就绪",
+                "summary": summary,
+                "reason": "；".join(facts) + "。数据只用于个人记录与趋势参考，不构成诊断或治疗建议。",
+                "evidence_refs": [evidence],
+                "importance": importance,
+                "confidence": round(max(0.2, 1 - missing_ratio), 3),
+                "allowed_actions": ["view_evidence", "create_draft", "snooze", "ignore", "mute"],
+                "created_at": datetime.combine(week_start, time.min, tzinfo=UTC).isoformat().replace("+00:00", "Z"),
+                "valid_until": valid_until.isoformat().replace("+00:00", "Z"),
+                "data_freshness": {
+                    "observed_at": observed_at.isoformat().replace("+00:00", "Z"),
+                    "missing_ratio": missing_ratio,
+                },
+            }],
+            "generated_at": observed_at.isoformat().replace("+00:00", "Z"),
         }
 
     def create_draft(
@@ -421,6 +483,30 @@ def get_health_profile_trend(
         outcome="success",
         status_code=200,
         resource_uri=result["resource_uri"],
+    )
+    return JSONResponse(result)
+
+
+@router.get("/profiles/{profile_id}/suggestions", operation_id="list_health_suggestions")
+def list_health_suggestions(
+    request: Request,
+    profile_id: str,
+    service: MachineHealthService = Depends(get_machine_health_service),
+) -> JSONResponse:
+    capability = "health.suggestions.read"
+    principal, request_id = _authorize(
+        request, service, profile_id, capability, "suggestions:read"
+    )
+    result = service.weekly_suggestions(profile_id)
+    evidence = result["items"][0]["evidence_refs"][0]
+    service.audit(
+        request_id=request_id,
+        principal=principal,
+        capability=capability,
+        profile_id=profile_id,
+        outcome="success",
+        status_code=200,
+        resource_uri=evidence,
     )
     return JSONResponse(result)
 

@@ -8,6 +8,10 @@ permissions:
     audience: health
     scopes: [health.trends.read]
     resource_grant: health-profile.trends
+  - capability: health.suggestions.read
+    audience: health
+    scopes: [health.suggestions.read]
+    resource_grant: health-profile.suggestions
   - capability: health.records.draft
     audience: health
     scopes: [health.records.draft]

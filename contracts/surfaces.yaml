@@ -13,6 +13,10 @@ surfaces:
     operation_id: get_health_profile_summary
     display:
       detail_pointer: /summary
+  - id: weekly-suggestions
+    type: suggestions
+    capability: health.suggestions.read
+    operation_id: list_health_suggestions
   - id: capture
     type: capture
     capability: health.records.draft
