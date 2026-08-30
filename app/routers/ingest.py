@@ -16,7 +16,8 @@ POST /api/ingest/health_connect
     exercise 按类型分流并 upsert；
   * 单条失败置 parse_status='failed' 记 parse_error；整体失败只记
     sync_state.consecutive_failures，绝不 5xx（防手机端重发风暴）。
-- heart_rate / unknown 类型仅留档（parse_status 保持 pending，供后续解析器重放）。
+- heart_rate 会严格解析 sample 并按日重建 hr_min/hr_avg/hr_max；unknown 不猜测业务
+  语义，保留原始证据、稳定 pending_reason，并可通过显式 replay 入口重新判定。
 """
 from __future__ import annotations
 
@@ -41,6 +42,7 @@ from app.models import (
     BodyMetrics,
     DailyActivity,
     ImportRaw,
+    ImportRawRevision,
     ReleaseLog,
     SleepSession,
     SyncCursor,
@@ -54,7 +56,7 @@ from app.services.sleep import total_sleep_with_source
 from app.timeutil import LOCAL_TZ, now_local
 
 MAX_BODY_BYTES = 5 * 1024 * 1024
-PARSER_VERSION = 1
+PARSER_VERSION = 2
 SOURCE = "health_connect"
 RAW_BATCH = 500  # shared by offline/agent bulk archival
 HEALTH_CONNECT_TYPES = ("steps", "weight", "sleep", "exercise", "heart_rate")
@@ -329,6 +331,19 @@ def _qty(v: Any, *unit_keys: str) -> float | None:
 
 # ---------- 各类型归一化 ----------
 
+class HealthConnectNormalizationError(ValueError):
+    """A bounded, stable failure code plus operator-readable detail."""
+
+    def __init__(self, code: str, detail: str):
+        super().__init__(detail)
+        self.code = code
+
+
+def _failure_reason(exc: Exception) -> tuple[str, str]:
+    if isinstance(exc, HealthConnectNormalizationError):
+        return exc.code, f"{exc.code}: {exc}"[:500]
+    return "normalization_failed", f"normalization_failed: {exc}"[:500]
+
 def _extract_steps(rec: dict) -> tuple[date, int]:
     ts = _record_time(rec)
     if ts is None:
@@ -355,6 +370,84 @@ def _extract_weight(rec: dict) -> tuple[date, datetime, float]:
     if w is None or not (10 <= w <= 500):
         raise ValueError("weight 记录缺少合理体重值")
     return d, ts, round(w, 2)
+
+
+_HEART_RATE_VALUE_KEYS = (
+    "beatsPerMinute",
+    "beats_per_minute",
+    "bpm",
+    "heartRate",
+    "heart_rate",
+    "value",
+)
+_HEART_RATE_TIME_KEYS = ("time", "timestamp", "startTime", "start_time")
+
+
+def _extract_heart_rate_samples(rec: dict) -> list[tuple[datetime, date, int]]:
+    """Parse a Health Connect HeartRateRecord without discarding bad samples.
+
+    Android Health Connect normally serializes ``samples`` as objects containing
+    ``time`` and ``beatsPerMinute``. The fallback single-value shape keeps the
+    server compatible with thin device bridges. If a declared sample is malformed,
+    the whole raw record remains failed/replayable rather than silently producing a
+    deceptively complete daily aggregate.
+    """
+    raw_samples = rec.get("samples")
+    if raw_samples is None:
+        raw_samples = rec.get("measurements")
+    if raw_samples is None:
+        candidates: list[Any] = [rec]
+        record_fallback = _record_time(rec)
+    elif isinstance(raw_samples, list):
+        if not raw_samples:
+            raise HealthConnectNormalizationError(
+                "heart_rate_samples_empty", "heart_rate 记录的 samples 为空"
+            )
+        candidates = raw_samples
+        record_fallback = _record_time(rec) if len(raw_samples) == 1 else None
+    else:
+        raise HealthConnectNormalizationError(
+            "heart_rate_samples_invalid", "heart_rate samples 必须是数组"
+        )
+
+    parsed: list[tuple[datetime, date, int]] = []
+    for index, sample in enumerate(candidates):
+        if not isinstance(sample, dict):
+            raise HealthConnectNormalizationError(
+                "heart_rate_sample_invalid", f"heart_rate sample[{index}] 不是对象"
+            )
+        timestamp = next(
+            (
+                parsed_time
+                for key in _HEART_RATE_TIME_KEYS
+                if (parsed_time := _parse_ts(sample.get(key))) is not None
+            ),
+            record_fallback,
+        )
+        if timestamp is None:
+            raise HealthConnectNormalizationError(
+                "heart_rate_time_missing", f"heart_rate sample[{index}] 缺少可解析时间"
+            )
+        bpm = next(
+            (
+                parsed_value
+                for key in _HEART_RATE_VALUE_KEYS
+                if (parsed_value := _qty(
+                    sample.get(key), "beatsPerMinute", "beats_per_minute", "bpm"
+                )) is not None
+            ),
+            None,
+        )
+        if bpm is None or not 20 <= bpm <= 250:
+            raise HealthConnectNormalizationError(
+                "heart_rate_value_invalid",
+                f"heart_rate sample[{index}] 缺少 20..250 bpm 的合理值",
+            )
+        day = _local_date(
+            timestamp, rec, "startZoneOffset", "zoneOffset", "endZoneOffset"
+        )
+        parsed.append((timestamp, day, round(bpm)))
+    return parsed
 
 
 # Health Connect SleepSessionRecord stage 常量：1/3/7=清醒类、4=浅睡、5=深睡、6=REM、2=泛化 SLEEPING
@@ -524,6 +617,8 @@ def _mark_raw(
     version: int = PARSER_VERSION,
     blob_patch: dict | None = None,
     normalized: dict[str, Any] | None = None,
+    pending_reason: str | None = None,
+    attempted: bool = False,
 ) -> None:
     """import_raw 行解析状态统一更新（HC/秤/三星直读/offline/agent 各通道共享）。
 
@@ -531,6 +626,13 @@ def _mark_raw(
     记归一化行 id 与 agent 名，供 /agent-log 精确撤销与归属展示。
     """
     values: dict[str, Any] = dict(parse_status=status, parse_error=error, parse_version=version)
+    if status in {"parsed", "skipped"}:
+        values["pending_reason"] = None
+    elif pending_reason is not None:
+        values["pending_reason"] = pending_reason
+    if attempted:
+        values["normalization_attempts"] = ImportRaw.normalization_attempts + 1
+        values["last_normalization_at"] = now_local()
     if normalized is not None:
         values["normalized"] = normalized
     if blob_patch:
@@ -545,6 +647,51 @@ def _mark_raw(
             ImportRaw.external_id == ext_id,
         )
         .values(**values)
+    )
+
+
+def _archive_raw_revision(
+    db: Session,
+    current: ImportRaw,
+    *,
+    evidence_kind: str,
+    raw: dict | None = None,
+    record_version: int | None = None,
+    payload_hash: str | None = None,
+    provenance: dict | None = None,
+) -> None:
+    """Append displaced/conflicting evidence without duplicating retransmits."""
+    evidence_raw = raw if raw is not None else current.raw
+    evidence_hash = payload_hash or current.payload_hash or _payload_hash(evidence_raw)
+    values = {
+        "import_raw_id": current.id,
+        "record_version": (
+            record_version if record_version is not None else int(current.record_version or 0)
+        ),
+        "payload_hash": evidence_hash,
+        "evidence_kind": evidence_kind,
+        "raw": evidence_raw,
+        "provenance": provenance if raw is not None else current.provenance,
+        "normalized": current.normalized if evidence_kind == "superseded" else None,
+        "parse_status": (
+            current.parse_status if evidence_kind == "superseded" else "failed"
+        ),
+        "parse_error": (
+            current.parse_error
+            if evidence_kind == "superseded"
+            else "同一 client_record_id/version 的 payload 不一致"
+        ),
+        "pending_reason": (
+            current.pending_reason if evidence_kind == "superseded" else "version_conflict"
+        ),
+        "parse_version": int(current.parse_version or 0),
+    }
+    db.execute(
+        pg_insert(ImportRawRevision)
+        .values(**values)
+        .on_conflict_do_nothing(
+            index_elements=["import_raw_id", "record_version", "payload_hash"]
+        )
     )
 
 
@@ -654,6 +801,23 @@ def _normalized_date(value: Any) -> date | None:
         return None
 
 
+def _normalized_dates(value: Any) -> set[date]:
+    if not isinstance(value, dict):
+        return set()
+    raw_dates = value.get("dates")
+    if not isinstance(raw_dates, list):
+        single = _normalized_date(value)
+        return {single} if single is not None else set()
+    result: set[date] = set()
+    for raw in raw_dates:
+        try:
+            if isinstance(raw, str):
+                result.add(date.fromisoformat(raw))
+        except ValueError:
+            continue
+    return result
+
+
 def _existing_effective_date(record_type: str, row: ImportRaw) -> date | None:
     """Find the old day even for rows created before normalized snapshots existed."""
     normalized = _normalized_date(row.normalized)
@@ -678,6 +842,16 @@ def _existing_effective_date(record_type: str, row: ImportRaw) -> date | None:
     except (TypeError, ValueError):
         return None
     return None
+
+
+def _existing_heart_rate_dates(row: ImportRaw) -> set[date]:
+    normalized = _normalized_dates(row.normalized)
+    if normalized:
+        return normalized
+    try:
+        return {day for _, day, _ in _extract_heart_rate_samples(row.raw)}
+    except (TypeError, ValueError):
+        return set()
 
 
 def _clear_source_autofill(db: Session, d: date, field: str) -> None:
@@ -713,13 +887,30 @@ def _rebuild_hc_steps(db: Session, affected: set[date]) -> None:
     for d, count in totals.items():
         current = db.get(DailyActivity, d)
         if count <= 0:
-            if current is not None and current.source == SOURCE:
+            if current is not None and (current.field_sources or {}).get("steps") == SOURCE:
                 current.steps = None
+                current.field_sources = {
+                    key: value
+                    for key, value in (current.field_sources or {}).items()
+                    if key != "steps"
+                }
             continue
-        ins = pg_insert(DailyActivity).values(log_date=d, steps=count, source=SOURCE)
+        ins = pg_insert(DailyActivity).values(
+            log_date=d,
+            steps=count,
+            source=SOURCE,
+            field_sources={"steps": SOURCE},
+        )
         db.execute(ins.on_conflict_do_update(
             index_elements=["log_date"],
-            set_={"steps": ins.excluded.steps, "source": ins.excluded.source, "updated_at": text("now()")},
+            set_={
+                "steps": ins.excluded.steps,
+                "source": ins.excluded.source,
+                "field_sources": DailyActivity.__table__.c.field_sources.op("||")(
+                    ins.excluded.field_sources
+                ),
+                "updated_at": text("now()"),
+            },
             where=DailyActivity.__table__.c.source != "samsung_direct",
         ))
 
@@ -749,6 +940,69 @@ def _rebuild_hc_weight(db: Session, affected: set[date]) -> None:
             _clear_source_autofill(db, d, "weight_kg")
 
 
+def _rebuild_hc_heart_rate(db: Session, affected: set[date]) -> None:
+    """Rebuild daily heart-rate aggregates from current parsed raw evidence."""
+    if not affected:
+        return
+    values: dict[date, list[int]] = {day: [] for day in affected}
+    rows = db.execute(
+        select(ImportRaw.raw).where(
+            ImportRaw.source == SOURCE,
+            ImportRaw.record_type == "heart_rate",
+            ImportRaw.parse_status == "parsed",
+        )
+    ).scalars()
+    for raw in rows:
+        try:
+            samples = _extract_heart_rate_samples(raw)
+        except (TypeError, ValueError):
+            continue
+        for _, day, bpm in samples:
+            if day in values:
+                values[day].append(bpm)
+
+    for day, samples in values.items():
+        current = db.get(DailyActivity, day)
+        if not samples:
+            if current is not None and any(
+                (current.field_sources or {}).get(field) == SOURCE
+                for field in ("hr_min", "hr_avg", "hr_max")
+            ):
+                current.hr_min = current.hr_avg = current.hr_max = None
+                current.field_sources = {
+                    key: value
+                    for key, value in (current.field_sources or {}).items()
+                    if key not in {"hr_min", "hr_avg", "hr_max"}
+                }
+            continue
+        aggregate = {
+            "hr_min": min(samples),
+            "hr_avg": round(sum(samples) / len(samples)),
+            "hr_max": max(samples),
+        }
+        ins = pg_insert(DailyActivity).values(
+            log_date=day,
+            source=SOURCE,
+            field_sources={field: SOURCE for field in aggregate},
+            **aggregate,
+        )
+        db.execute(
+            ins.on_conflict_do_update(
+                index_elements=["log_date"],
+                set_={
+                    **{field: getattr(ins.excluded, field) for field in aggregate},
+                    "source": ins.excluded.source,
+                    "field_sources": DailyActivity.__table__.c.field_sources.op("||")(
+                        ins.excluded.field_sources
+                    ),
+                    "updated_at": text("now()"),
+                },
+                # The direct Samsung daily aggregate has explicit source priority.
+                where=DailyActivity.__table__.c.source != "samsung_direct",
+            )
+        )
+
+
 def _refresh_sleep_days(db: Session, affected: set[date]) -> None:
     for d in affected:
         total, source = total_sleep_with_source(db, d)
@@ -766,7 +1020,36 @@ def health_connect_state(request: Request, db: Session = Depends(get_db)) -> Res
     rows = db.execute(
         select(SyncCursor).where(SyncCursor.source == SOURCE).order_by(SyncCursor.record_type)
     ).scalars().all()
-    return JSONResponse({"source": SOURCE, "record_types": [_cursor_payload(row) for row in rows]})
+    queue_rows = db.execute(
+        select(
+            ImportRaw.record_type,
+            ImportRaw.parse_status,
+            ImportRaw.pending_reason,
+            func.count(),
+        )
+        .where(
+            ImportRaw.source == SOURCE,
+            ImportRaw.parse_status.in_(("pending", "failed")),
+        )
+        .group_by(
+            ImportRaw.record_type, ImportRaw.parse_status, ImportRaw.pending_reason
+        )
+        .order_by(ImportRaw.record_type, ImportRaw.parse_status)
+    ).all()
+    return JSONResponse({
+        "source": SOURCE,
+        "parser_version": PARSER_VERSION,
+        "record_types": [_cursor_payload(row) for row in rows],
+        "normalization_queue": [
+            {
+                "record_type": record_type,
+                "status": status,
+                "reason": reason or "reason_not_recorded",
+                "count": count,
+            }
+            for record_type, status, reason, count in queue_rows
+        ],
+    })
 
 
 @router.post("/health_connect")
@@ -823,6 +1106,9 @@ async def ingest_health_connect(request: Request, db: Session = Depends(get_db))
         record_version = _record_version(rec)
         payload_hash = _payload_hash(rec)
         provenance = _record_provenance(rec)
+        pending_reason = (
+            "unsupported_record_type" if record_type == "unknown" else "awaiting_normalization"
+        )
         entries.append({
             "rec": rec,
             "rtype": record_type,
@@ -840,6 +1126,7 @@ async def ingest_health_connect(request: Request, db: Session = Depends(get_db))
                 "raw": rec,
                 "time_offset": offset_val if isinstance(offset_val, str) else None,
                 "parse_status": "pending",
+                "pending_reason": pending_reason,
                 "parse_version": 0,
                 "last_seen_at": now,
             },
@@ -860,6 +1147,7 @@ async def ingest_health_connect(request: Request, db: Session = Depends(get_db))
     affected_steps: set[date] = set()
     affected_weights: set[date] = set()
     affected_sleep: set[date] = set()
+    affected_heart_rate: set[date] = set()
     new_raws: list[dict[str, Any]] = []
     for entry in entries:
         key = (entry["rtype"], entry["ext_id"])
@@ -880,6 +1168,8 @@ async def ingest_health_connect(request: Request, db: Session = Depends(get_db))
             old_date = _existing_effective_date("sleep", prior)
             if old_date:
                 affected_sleep.add(old_date)
+        elif entry["rtype"] == "heart_rate":
+            affected_heart_rate.update(_existing_heart_rate_dates(prior))
         prior_version = int(prior.record_version or 0)
         prior_hash = prior.payload_hash or _payload_hash(prior.raw)
         incoming_version = entry["record_version"]
@@ -891,6 +1181,7 @@ async def ingest_health_connect(request: Request, db: Session = Depends(get_db))
             incoming_hash=entry["payload_hash"],
         )
         if action == "update":
+            _archive_raw_revision(db, prior, evidence_kind="superseded")
             db.execute(
                 update(ImportRaw).where(ImportRaw.id == prior.id).values(
                     raw=entry["rec"],
@@ -901,6 +1192,11 @@ async def ingest_health_connect(request: Request, db: Session = Depends(get_db))
                     time_offset=entry["raw"]["time_offset"],
                     parse_status="pending",
                     parse_error=None,
+                    pending_reason=(
+                        "unsupported_record_type"
+                        if entry["rtype"] == "unknown"
+                        else "awaiting_normalization"
+                    ),
                     parse_version=0,
                     last_seen_at=now,
                 )
@@ -917,13 +1213,18 @@ async def ingest_health_connect(request: Request, db: Session = Depends(get_db))
             if action == "retry":
                 process_keys.add(key)
         elif action == "conflict":
-            db.execute(
-                update(ImportRaw).where(ImportRaw.id == prior.id).values(
-                    parse_status="failed",
-                    parse_error="同一 client_record_id/version 的 payload 不一致",
-                    last_seen_at=now,
-                )
+            _archive_raw_revision(
+                db,
+                prior,
+                evidence_kind="version_conflict",
+                raw=entry["rec"],
+                record_version=incoming_version,
+                payload_hash=entry["payload_hash"],
+                provenance=entry["provenance"],
             )
+            # Keep the already normalized current version valid. The conflicting
+            # payload is quarantined in import_raw_revisions and never normalized.
+            db.execute(update(ImportRaw).where(ImportRaw.id == prior.id).values(last_seen_at=now))
             conflict_keys.add(key)
         else:
             db.execute(update(ImportRaw).where(ImportRaw.id == prior.id).values(last_seen_at=now))
@@ -938,6 +1239,20 @@ async def ingest_health_connect(request: Request, db: Session = Depends(get_db))
             if (e["rtype"], e["ext_id"]) not in process_keys:
                 continue
             rec, rtype, ext_id = e["rec"], e["rtype"], e["ext_id"]
+            if rtype == "unknown":
+                # Unknown evidence is never discarded by a legacy watermark: it
+                # has no trusted semantic time/type until a parser recognizes it.
+                _mark_raw(
+                    db,
+                    SOURCE,
+                    rtype,
+                    ext_id,
+                    "pending",
+                    version=PARSER_VERSION,
+                    pending_reason="unsupported_record_type",
+                    attempted=True,
+                )
+                continue
             rec_ts = _record_time(rec)
             cursor_state = db.get(SyncCursor, (SOURCE, rtype))
             legacy_state = db.get(SyncState, SOURCE)
@@ -948,8 +1263,6 @@ async def ingest_health_connect(request: Request, db: Session = Depends(get_db))
             if watermark is not None and rec_ts is not None and rec_ts <= watermark:
                 _mark_raw(db, SOURCE, rtype, ext_id, "skipped")  # 水位线以内：zip 历史已覆盖
                 continue
-            if rtype not in ("steps", "weight", "sleep", "exercise"):
-                continue  # heart_rate / unknown：留档 pending，供后续解析器重放
             try:
                 with db.begin_nested():  # 单条失败回滚到 SAVEPOINT，不毒化整个事务
                     if rtype == "steps":
@@ -964,17 +1277,48 @@ async def ingest_health_connect(request: Request, db: Session = Depends(get_db))
                         d = _normalize_sleep(db, rec, ext_id)
                         affected_sleep.add(d)
                         normalized = {"date": d.isoformat()}
-                    else:
+                    elif rtype == "exercise":
                         _normalize_exercise(db, rec, ext_id)
                         normalized = {"date": _local_date(rec_ts, rec).isoformat()} if rec_ts else {}
-                _mark_raw(db, SOURCE, rtype, ext_id, "parsed", normalized=normalized)
+                    elif rtype == "heart_rate":
+                        samples = _extract_heart_rate_samples(rec)
+                        dates = {day for _, day, _ in samples}
+                        affected_heart_rate.update(dates)
+                        normalized = {
+                            "dates": sorted(day.isoformat() for day in dates),
+                            "sample_count": len(samples),
+                        }
+                    else:  # defensive: a classifier addition must add a parser explicitly
+                        raise HealthConnectNormalizationError(
+                            "parser_not_registered", f"{rtype} 尚未注册归一化解析器"
+                        )
+                _mark_raw(
+                    db,
+                    SOURCE,
+                    rtype,
+                    ext_id,
+                    "parsed",
+                    normalized=normalized,
+                    attempted=True,
+                )
             except Exception as exc:
-                _mark_raw(db, SOURCE, rtype, ext_id, "failed", str(exc)[:500])
+                reason, detail = _failure_reason(exc)
+                _mark_raw(
+                    db,
+                    SOURCE,
+                    rtype,
+                    ext_id,
+                    "failed",
+                    detail,
+                    pending_reason=reason,
+                    attempted=True,
+                )
 
         # Rebuild affected derived days from the latest version of every source record.
         # This makes version updates idempotent instead of double-counting interval data.
         _rebuild_hc_steps(db, affected_steps)
         _rebuild_hc_weight(db, affected_weights)
+        _rebuild_hc_heart_rate(db, affected_heart_rate)
         _refresh_sleep_days(db, affected_sleep)
 
         # 6. 成功：sync_state 记 last_success_at、清零失败计数（不触碰 watermark）
@@ -994,7 +1338,15 @@ async def ingest_health_connect(request: Request, db: Session = Depends(get_db))
         db.rollback()
         try:
             for rtype, ext_id in process_keys:
-                _mark_raw(db, SOURCE, rtype, ext_id, "failed", f"批次归一化失败：{str(exc)[:400]}")
+                _mark_raw(
+                    db,
+                    SOURCE,
+                    rtype,
+                    ext_id,
+                    "failed",
+                    f"batch_normalization_failed: {str(exc)[:400]}",
+                    pending_reason="batch_normalization_failed",
+                )
             _touch_sync_state(db, SOURCE, False, str(exc))
             for spec in sync_specs:
                 state = db.get(SyncCursor, (SOURCE, spec["record_type"]))
@@ -1014,6 +1366,139 @@ async def ingest_health_connect(request: Request, db: Session = Depends(get_db))
         "skipped": max(len(entries) - len(process_keys) - len(conflict_keys), 0),
         "conflicts": len(conflict_keys),
         "sync": [_cursor_payload(row) for row in cursor_rows],
+    })
+
+
+@router.post("/health_connect/replay")
+async def replay_health_connect(request: Request, db: Session = Depends(get_db)) -> Response:
+    """Explicitly re-run bounded pending/failed Health Connect raw evidence.
+
+    The endpoint intentionally supports only parser-backed types. Unknown records
+    can be inspected here without changing their status; when a future release adds
+    a classifier/parser, extending the dispatch below makes the same retained rows
+    replayable without asking the device to resend them.
+    """
+    reject = _bearer_reject(request)
+    if reject is not None:
+        return reject
+    body = await request.body()
+    if len(body) > 16 * 1024:
+        return JSONResponse({"error": "payload too large"}, status_code=413)
+    try:
+        payload = json.loads(body or b"{}")
+    except (ValueError, UnicodeDecodeError):
+        return JSONResponse({"error": "invalid json"}, status_code=400)
+    if not isinstance(payload, dict):
+        return JSONResponse({"error": "unsupported payload"}, status_code=400)
+    record_type = str(payload.get("record_type") or "heart_rate").strip().lower()
+    if record_type not in {"heart_rate", "unknown"}:
+        return JSONResponse(
+            {"error": "record_type must be heart_rate or unknown"}, status_code=400
+        )
+    try:
+        limit = int(payload.get("limit", 250))
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "limit must be an integer"}, status_code=400)
+    if not 1 <= limit <= 1000:
+        return JSONResponse({"error": "limit must be between 1 and 1000"}, status_code=400)
+    include_failed = payload.get("include_failed", True)
+    if not isinstance(include_failed, bool):
+        return JSONResponse({"error": "include_failed must be boolean"}, status_code=400)
+    external_id = payload.get("external_id")
+    if external_id is not None and (
+        not isinstance(external_id, str) or not 1 <= len(external_id.strip()) <= 512
+    ):
+        return JSONResponse({"error": "external_id is invalid"}, status_code=400)
+    external_id = external_id.strip() if isinstance(external_id, str) else None
+
+    statuses = ["pending", "failed"] if include_failed else ["pending"]
+    statement = (
+        select(ImportRaw)
+        .where(
+            ImportRaw.source == SOURCE,
+            ImportRaw.record_type == record_type,
+            ImportRaw.parse_status.in_(statuses),
+            # A version conflict requires corrected upstream evidence, not replay
+            # of the previously stored version.
+            func.coalesce(ImportRaw.pending_reason, "") != "version_conflict",
+        )
+        .order_by(ImportRaw.imported_at, ImportRaw.id)
+        .limit(limit)
+        .with_for_update(skip_locked=True)
+    )
+    if external_id is not None:
+        statement = statement.where(ImportRaw.external_id == external_id)
+    rows = db.execute(statement).scalars().all()
+
+    parsed_count = failed_count = still_pending = 0
+    affected_heart_rate: set[date] = set()
+    for row in rows:
+        if record_type == "unknown":
+            # Re-run classification so the operation is useful evidence that the
+            # current release still has no safe semantic parser for this payload.
+            inferred = _infer_record_type(row.raw)
+            reason = (
+                "unsupported_record_type"
+                if inferred == "unknown"
+                else "reclassification_requires_migration"
+            )
+            _mark_raw(
+                db,
+                SOURCE,
+                row.record_type,
+                row.external_id,
+                "pending",
+                version=PARSER_VERSION,
+                pending_reason=reason,
+                attempted=True,
+            )
+            still_pending += 1
+            continue
+
+        affected_heart_rate.update(_existing_heart_rate_dates(row))
+        try:
+            with db.begin_nested():
+                samples = _extract_heart_rate_samples(row.raw)
+                dates = {day for _, day, _ in samples}
+                affected_heart_rate.update(dates)
+                normalized = {
+                    "dates": sorted(day.isoformat() for day in dates),
+                    "sample_count": len(samples),
+                }
+            _mark_raw(
+                db,
+                SOURCE,
+                row.record_type,
+                row.external_id,
+                "parsed",
+                normalized=normalized,
+                attempted=True,
+            )
+            parsed_count += 1
+        except Exception as exc:
+            reason, detail = _failure_reason(exc)
+            _mark_raw(
+                db,
+                SOURCE,
+                row.record_type,
+                row.external_id,
+                "failed",
+                detail,
+                pending_reason=reason,
+                attempted=True,
+            )
+            failed_count += 1
+
+    _rebuild_hc_heart_rate(db, affected_heart_rate)
+    db.commit()
+    return JSONResponse({
+        "record_type": record_type,
+        "external_id": external_id,
+        "parser_version": PARSER_VERSION,
+        "selected": len(rows),
+        "parsed": parsed_count,
+        "failed": failed_count,
+        "still_pending": still_pending,
     })
 
 
@@ -1464,13 +1949,19 @@ async def ingest_samsung_direct(request: Request, db: Session = Depends(get_db))
                         d = date.fromisoformat(data["date"])
                         values = {f: data[f] for f in _SD_DAILY_FIELDS if data[f] is not None}
                         ins = pg_insert(DailyActivity).values(
-                            log_date=d, source=SAMSUNG_DIRECT_SOURCE, **values
+                            log_date=d,
+                            source=SAMSUNG_DIRECT_SOURCE,
+                            field_sources={field: SAMSUNG_DIRECT_SOURCE for field in values},
+                            **values,
                         )
                         db.execute(ins.on_conflict_do_update(
                             index_elements=["log_date"],
                             set_={
                                 **{f: getattr(ins.excluded, f) for f in values},
                                 "source": ins.excluded.source,
+                                "field_sources": DailyActivity.__table__.c.field_sources.op("||")(
+                                    ins.excluded.field_sources
+                                ),
                                 "updated_at": text("now()"),
                             },
                         ))

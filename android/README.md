@@ -78,6 +78,10 @@ JAVA_HOME=/opt/homebrew/opt/openjdk@17 ./gradlew --no-daemon assembleDebug   # m
 之后 WorkManager 每小时同步一次增量（首次回溯 7 天），保存设置也会立即触发一次。
 去重与幂等由服务端保证（`/api/ingest/samsung_direct`，详见 docs/mobile-sync.md）。
 
+当前 Android 模块实际接入的是 Samsung Health Data SDK，尚未打包 AndroidX Health Connect
+采集器。服务端 Health Connect envelope、逐类型 cursor、心率 sample 与 replay 契约已经完成，
+但在加入 SDK worker 并用真实设备验证授权撤销、分页与后台限制前，不得标记为真机闭环。
+
 ## 目录结构
 
 ```

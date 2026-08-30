@@ -11,7 +11,8 @@ Profile 实际提供的工具为能力真相，Skill 文字本身不授予写权
 ## 操作顺序
 
 1. 默认先调用 `health.summary.read` 获取指定日期的最小摘要；日期不明确时先询问用户。
-2. 只有用户询问变化时才调用 `health.trends.read`。只使用工具返回的聚合统计，不反推逐日值。
+2. 只有用户询问变化时才调用 `health.trends.read`。只使用工具返回的聚合统计，不反推逐日值；
+   `heart_rate` 表示手表全天记录的日最低心率代理，不等同于临床静息心率。
 3. 只有独立 Health Profile 的当前工具目录明确包含 `health.records.draft` 时，用户要求记录后才可
    复述日期、类型与字段并创建草稿。
 4. 在统一 Shadow Nexus Profile 中该工具不可用：不要尝试写入或声称已创建草稿；普通对话引导

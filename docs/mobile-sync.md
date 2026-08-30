@@ -64,5 +64,13 @@ Agent 接入说明见 [MCP server](../mcp_server/README.md)。
 服务端已将 Health Connect 从单一时间 watermark 升级为按 record type 独立 cursor，并接受
 `clientRecordId` / `clientRecordVersion`、来源 App/设备 provenance、权限撤销与来源指纹变化。
 Android 侧下一次接入 Health Connect SDK 时必须逐类型分页并回传 `sync` envelope；详细契约与
-真机验证项见 [长期健康数据底座](health-data-foundation.md)。旧 webhook payload 仍兼容，但没有
+真机验证项见 [Health Connect ingest schema](../contracts/health-connect-ingest.schema.json) 和
+[长期健康数据底座](health-data-foundation.md)。旧 webhook payload 仍兼容，但没有
 cursor/permission evidence，不能被视为完整同步证明。
+
+服务端解析 `HeartRateRecord.samples[].time/beatsPerMinute`，支持记录时区跨日拆分并重建日最低、
+日均和日最高心率。Android 侧必须发送稳定的 `metadata.clientRecordId`、单调的
+`clientRecordVersion`、原始 sample 时间和值以及 zone offset；不要先在壳内压成一个日均值。
+未知 Health Connect 类型允许原样发送：服务端会以可解释 pending 留存，后续通过受限 replay
+入口重处理。该边界已有契约和服务端测试，但 Health Connect 权限、分页 token、后台调度及不同
+来源 App 的真实序列化形态仍必须在 Android 真机逐项验证，不能以服务端测试替代。

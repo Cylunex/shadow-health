@@ -89,6 +89,11 @@ class DailyActivity(Base):
     hr_avg: Mapped[int | None] = mapped_column(Integer)
     hr_max: Mapped[int | None] = mapped_column(Integer)
     source: Mapped[str] = mapped_column(Text, nullable=False, server_default="samsung_zip")
+    # Field-level attribution is authoritative; ``source`` remains a compatibility
+    # label for older UI/import code that treated the whole day as one source.
+    field_sources: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=_tz_now, onupdate=datetime.now
     )
@@ -483,6 +488,9 @@ class ImportRaw(Base):
             "parse_status IN ('pending','parsed','failed','skipped')", name="ck_parse_status"
         ),
         CheckConstraint("record_version >= 0", name="ck_import_raw_record_version"),
+        CheckConstraint(
+            "normalization_attempts >= 0", name="ck_import_raw_normalization_attempts"
+        ),
         UniqueConstraint("source", "record_type", "external_id", name="ux_import_raw_ext"),
         Index(
             "ix_import_raw_replay",
@@ -514,11 +522,59 @@ class ImportRaw(Base):
     time_offset: Mapped[str | None] = mapped_column(Text)
     parse_status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
     parse_error: Mapped[str | None] = mapped_column(Text)
+    # Stable machine-readable queue/failure reason. ``parse_error`` remains the
+    # bounded human detail and must never be the only way to decide replayability.
+    pending_reason: Mapped[str | None] = mapped_column(Text)
     parse_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    normalization_attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0"
+    )
+    last_normalization_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True)
+    )
     imported_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=_tz_now
     )
     last_seen_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+
+
+class ImportRawRevision(Base):
+    """Append-only evidence displaced from the current ImportRaw identity."""
+
+    __tablename__ = "import_raw_revisions"
+    __table_args__ = (
+        CheckConstraint("record_version >= 0", name="ck_import_raw_revision_version"),
+        CheckConstraint(
+            "evidence_kind IN ('superseded','version_conflict')",
+            name="ck_import_raw_revision_kind",
+        ),
+        UniqueConstraint(
+            "import_raw_id",
+            "record_version",
+            "payload_hash",
+            name="ux_import_raw_revision_evidence",
+        ),
+        Index("ix_import_raw_revision_parent", "import_raw_id", "received_at"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    import_raw_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA}.import_raw.id", ondelete="CASCADE"), nullable=False
+    )
+    record_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    payload_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    raw: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    provenance: Mapped[dict | None] = mapped_column(JSONB)
+    normalized: Mapped[dict | None] = mapped_column(JSONB)
+    parse_status: Mapped[str] = mapped_column(Text, nullable=False)
+    parse_error: Mapped[str | None] = mapped_column(Text)
+    pending_reason: Mapped[str | None] = mapped_column(Text)
+    parse_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    received_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=_tz_now
+    )
 
 
 class SyncState(Base):

@@ -22,6 +22,27 @@ provider record id。没有稳定 ID 时使用规范 JSON 的确定性摘要，�
 步数、体重和睡眠修订不会再叠加旧版本：步数按当前全部 source record 重建日合计，体重按
 当日最后测量重建，睡眠按跨源优先规则重算。手动字段仍有最高保护，不被设备回填覆盖。
 
+心率使用 Health Connect `HeartRateRecord.samples` 的时间与 `beatsPerMinute` 严格解析，按记录
+时区拆分日期，再从当前 `parsed` 原始证据重建 `daily_activity.hr_min/hr_avg/hr_max`。声明了
+samples 却存在空数组、缺时间、缺值或超出 20..250 bpm 的样本时，整条记录进入可重放的
+`failed`，不会只挑“看起来正常”的样本后静默提高数据覆盖率。日最低值在界面和 Agent 查询中
+只称为“静息代理”，不等同于临床静息心率。
+
+`daily_activity.field_sources` 按字段记录步数、距离、活动热量和三个心率聚合的来源，解决同一天
+不同指标来自不同设备时整行 `source` 失真的问题；旧 `source` 仅保留兼容。迁移会用旧整行来源
+尽力回填存量字段，但迁移前已经混合来源的日行无法凭空恢复字段级历史，后续新写入才是精确证据。
+
+迁移 `20260831u19` 为归一化队列增加 `pending_reason`、`normalization_attempts` 和
+`last_normalization_at`。`parse_error` 只保存有界的人类可读细节，调度与排障使用稳定的
+`pending_reason`。未知类型始终保留完整 `raw` 与 `provenance`，状态为
+`pending / unsupported_record_type`，并且不会被旧 zip watermark 静默标为 skipped。
+
+同一稳定身份的当前版本仍保存在 `import_raw`，但被高版本替换的原文会追加到
+`import_raw_revisions (superseded)`；同版本不同 payload 的传入原文追加为
+`version_conflict`，当前已归一化版本保持有效。冲突版本不会进入健康事实，也不会因重复传输重复
+建行。该表从 `20260831u19` 起保留修订证据，部署前已经被覆盖且未另行备份的历史版本无法反向
+恢复，运维记录不得声称覆盖该时间段。
+
 ## Health Connect 增量边界
 
 `health.sync_cursors` 以 `(source, record_type)` 为主键。`steps`、`weight`、`sleep`、
@@ -52,7 +73,22 @@ provider record id。没有稳定 ID 时使用规范 JSON 的确定性摘要，�
 权限为 `denied`/`revoked` 时清除该类型 cursor 并置 `needs_resync`，不影响其他类型。来源指纹
 变化时也停止推进 cursor；客户端完成该类型的受控全量重扫后发送 `reset: true`，才恢复推进。
 `GET /api/ingest/health_connect/state` 使用同一 Bearer 鉴权，只返回游标/权限运行元数据，不返回
-健康值。Android 端仍需真机验证 Health Connect 权限撤销、来源 App 安装/卸载和分页 cursor。
+健康值；现在也返回按类型、状态和稳定原因聚合的 `normalization_queue` 计数。Android 端仍需
+真机验证 Health Connect 权限撤销、来源 App 安装/卸载和分页 cursor。
+
+部署迁移后，用相同受限采集 token 显式重放旧心率队列；可传 `external_id` 先做单条验证：
+
+```http
+POST /api/ingest/health_connect/replay
+Content-Type: application/json
+Authorization: Bearer REPLACE_WITH_RESTRICTED_INGEST_TOKEN
+
+{"record_type":"heart_rate","limit":250,"include_failed":true}
+```
+
+响应只包含 selected/parsed/failed/still_pending 计数。`version_conflict` 不能靠重放消除，必须由
+上游以更高 `clientRecordVersion` 提供修订。未知类型也可以重放，用来确认当前版本是否已经能够
+重新识别；在新解析器和数据迁移明确落地前仍保持 pending，不猜测写入任何健康事实。
 
 ## 覆盖、来源与新鲜度
 

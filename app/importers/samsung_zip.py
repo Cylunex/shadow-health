@@ -585,13 +585,19 @@ class _Importer:
                 cnt = _fnum(row, "count")
                 dist = _fnum(row, "distance")
                 cal = _fnum(row, "calorie")
-                items.append({
+                item = {
                     "log_date": d,
                     "steps": round(cnt) if cnt is not None else None,
                     "distance_m": round(dist) if dist is not None else None,
                     "active_kcal": round(cal, 1) if cal is not None else None,
                     "source": SOURCE,
-                })
+                }
+                item["field_sources"] = {
+                    field: SOURCE
+                    for field in ("steps", "distance_m", "active_kcal")
+                    if item[field] is not None
+                }
+                items.append(item)
             for i in range(0, len(items), BATCH_SIZE):
                 chunk = items[i:i + BATCH_SIZE]
                 ins = pg_insert(DailyActivity).values(chunk)
@@ -602,6 +608,9 @@ class _Importer:
                         "distance_m": ins.excluded.distance_m,
                         "active_kcal": ins.excluded.active_kcal,
                         "source": ins.excluded.source,
+                        "field_sources": DailyActivity.__table__.c.field_sources.op("||")(
+                            ins.excluded.field_sources
+                        ),
                         "updated_at": text("now()"),
                     },
                 ).returning(literal_column("(xmax = 0)"))
@@ -656,12 +665,19 @@ class _Importer:
             items = []
             for d in sorted(agg):
                 lo, hi, s, n = agg[d]
-                items.append({
+                item = {
                     "log_date": d,
                     "hr_min": round(lo) if lo else None,
                     "hr_avg": round(s / n) if n else None,
                     "hr_max": round(hi) if hi else None,
-                })
+                    "source": SOURCE,
+                }
+                item["field_sources"] = {
+                    field: SOURCE
+                    for field in ("hr_min", "hr_avg", "hr_max")
+                    if item[field] is not None
+                }
+                items.append(item)
             for i in range(0, len(items), BATCH_SIZE):
                 chunk = items[i:i + BATCH_SIZE]
                 ins = pg_insert(DailyActivity).values(chunk)
@@ -671,6 +687,10 @@ class _Importer:
                         "hr_min": ins.excluded.hr_min,
                         "hr_avg": ins.excluded.hr_avg,
                         "hr_max": ins.excluded.hr_max,
+                        "source": ins.excluded.source,
+                        "field_sources": DailyActivity.__table__.c.field_sources.op("||")(
+                            ins.excluded.field_sources
+                        ),
                         "updated_at": text("now()"),
                     },
                 ).returning(literal_column("(xmax = 0)"))

@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shadow.example.com/contracts/health-connect-ingest.schema.json",
+  "title": "Shadow Health Connect incremental ingest envelope",
+  "type": "object",
+  "required": ["records", "sync"],
+  "additionalProperties": false,
+  "properties": {
+    "records": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {
+        "type": "object",
+        "required": ["recordType", "metadata"],
+        "properties": {
+          "recordType": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "metadata": {
+            "type": "object",
+            "required": ["clientRecordId", "clientRecordVersion"],
+            "properties": {
+              "clientRecordId": { "type": "string", "minLength": 1, "maxLength": 512 },
+              "clientRecordVersion": { "type": "integer", "minimum": 0, "maximum": 2147483647 },
+              "dataOrigin": { "type": "object" },
+              "device": { "type": "object" },
+              "recordingMethod": {}
+            },
+            "additionalProperties": true
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": { "recordType": { "const": "HeartRateRecord" } },
+              "required": ["recordType"]
+            },
+            "then": {
+              "required": ["startTime", "endTime", "startZoneOffset", "samples"],
+              "properties": {
+                "startTime": { "type": "string", "format": "date-time" },
+                "endTime": { "type": "string", "format": "date-time" },
+                "startZoneOffset": { "type": "string", "pattern": "^(Z|[+-][0-9]{2}:[0-9]{2})$" },
+                "samples": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "object",
+                    "required": ["time", "beatsPerMinute"],
+                    "properties": {
+                      "time": { "type": "string", "format": "date-time" },
+                      "beatsPerMinute": { "type": "integer", "minimum": 20, "maximum": 250 }
+                    },
+                    "additionalProperties": false
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "additionalProperties": true
+      }
+    },
+    "sync": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 5,
+      "items": {
+        "type": "object",
+        "required": ["record_type", "permission"],
+        "additionalProperties": false,
+        "properties": {
+          "record_type": {
+            "enum": ["steps", "weight", "sleep", "exercise", "heart_rate"]
+          },
+          "permission": { "enum": ["unknown", "granted", "denied", "revoked"] },
+          "cursor": { "type": "string", "minLength": 1, "maxLength": 2048 },
+          "source_fingerprint": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "reset": { "type": "boolean", "default": false }
+        }
+      }
+    }
+  }
+}

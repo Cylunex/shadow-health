@@ -44,6 +44,8 @@ TREND_FIELDS = {
     "weight_kg": ("body_metrics", "weight_kg", "体重", "kg"),
     "sleep_hours": ("body_metrics", "sleep_hours", "睡眠", "小时"),
     "steps": ("daily_activity", "steps", "步数", "步"),
+    # Daily minimum is an explicit resting-heart-rate proxy, not a diagnosis.
+    "heart_rate": ("daily_activity", "hr_min", "日最低心率（静息代理）", "bpm"),
 }
 SUMMARY_INDICATORS = (
     "diet_kcal",
@@ -175,7 +177,7 @@ class MachineHealthService:
         ).one()
         activity = self.db.execute(
             text(
-                f"SELECT steps, source, updated_at FROM {SCHEMA}.daily_activity "
+                f"SELECT steps, source, field_sources, updated_at FROM {SCHEMA}.daily_activity "
                 f"WHERE log_date = :day"
             ),
             {"day": day},
@@ -211,6 +213,7 @@ class MachineHealthService:
         metric_sources = _json_object(metrics.autofilled) if metrics else {}
         diet_sources = {_source_name(row.provenance) for row in diet_meta}
         workout_sources = {str(row.source or "manual") for row in workout_meta}
+        activity_sources = _json_object(activity.field_sources) if activity else {}
         diet_updated = max((row.updated_at for row in diet_meta), default=None)
         workout_updated = max((row.updated_at for row in workout_meta), default=None)
         evidence = {
@@ -229,7 +232,11 @@ class MachineHealthService:
             "steps": _metric_evidence(
                 present=values["steps"] is not None,
                 effective_day=day,
-                sources={str(activity.source)} if activity else set(),
+                sources=(
+                    {str(activity_sources.get("steps") or activity.source)}
+                    if activity
+                    else set()
+                ),
                 last_updated_at=activity.updated_at if activity else None,
             ),
             "workout_sessions": _metric_evidence(
@@ -295,7 +302,11 @@ class MachineHealthService:
         table, column, label, unit = TREND_FIELDS[metric]
         end_day = today_local()
         start_day = end_day - timedelta(days=days - 1)
-        extra = "autofilled, updated_at" if table == "body_metrics" else "source, updated_at"
+        extra = (
+            "autofilled, updated_at"
+            if table == "body_metrics"
+            else "source, field_sources, updated_at"
+        )
         rows = self.db.execute(
             text(
                 f"SELECT log_date, {column} AS value, {extra} FROM {SCHEMA}.{table} "
@@ -317,7 +328,8 @@ class MachineHealthService:
                 markers = _json_object(row.autofilled)
                 sources.add(str(markers.get(column) or "manual"))
             else:
-                sources.add(str(row.source or "unknown"))
+                markers = _json_object(row.field_sources)
+                sources.add(str(markers.get(column) or row.source or "unknown"))
             if row.updated_at is not None and (
                 last_updated_at is None or row.updated_at > last_updated_at
             ):

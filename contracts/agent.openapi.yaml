@@ -34,7 +34,7 @@ paths:
           in: query
           required: true
           schema:
-            enum: [weight_kg, sleep_hours, steps]
+            enum: [weight_kg, sleep_hours, steps, heart_rate]
         - name: days
           in: query
           required: false
@@ -361,7 +361,7 @@ components:
         summary: { type: string, maxLength: 1200 }
         resource_uri: { type: string }
         metric:
-          enum: [weight_kg, sleep_hours, steps]
+          enum: [weight_kg, sleep_hours, steps, heart_rate]
         days: { type: integer }
         data_points: { type: integer }
         statistics:

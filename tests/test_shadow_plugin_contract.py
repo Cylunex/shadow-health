@@ -155,7 +155,8 @@ def machine_api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         )
         connection.exec_driver_sql(
             "CREATE TABLE health.daily_activity "
-            "(log_date DATE, steps INTEGER, source TEXT DEFAULT 'manual', "
+            "(log_date DATE, steps INTEGER, hr_min INTEGER, source TEXT DEFAULT 'manual', "
+            "field_sources JSON DEFAULT '{}', "
             "updated_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL)"
         )
         connection.exec_driver_sql(
@@ -173,8 +174,9 @@ def machine_api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             (today, 35),
         )
         connection.exec_driver_sql(
-            "INSERT INTO health.daily_activity (log_date, steps) VALUES (?, ?)",
-            (today, 6800),
+            "INSERT INTO health.daily_activity (log_date, steps, hr_min, field_sources) "
+            "VALUES (?, ?, ?, ?)",
+            (today, 6800, 62, json.dumps({"steps": "manual", "hr_min": "health_connect"})),
         )
         connection.exec_driver_sql(
             "INSERT INTO health.body_metrics "
@@ -227,8 +229,12 @@ def test_machine_endpoints_return_bounded_summary_and_trend(machine_api) -> None
         "/api/machine/v1/agent/profiles/primary/trends?metric=weight_kg&days=7",
         headers=headers,
     )
+    heart_rate = client.get(
+        "/api/machine/v1/agent/profiles/primary/trends?metric=heart_rate&days=7",
+        headers=headers,
+    )
 
-    assert summary.status_code == trend.status_code == 200
+    assert summary.status_code == trend.status_code == heart_rate.status_code == 200
     assert summary.json()["indicators"]["steps"] == 6800
     assert summary.json()["data_quality"]["coverage_ratio"] > 0
     assert summary.json()["data_quality"]["sources"]
@@ -240,6 +246,7 @@ def test_machine_endpoints_return_bounded_summary_and_trend(machine_api) -> None
     assert trend.json()["data_quality"]["sufficient_for_trend"] is False
     assert "series" not in trend.json()
     assert "不构成诊断或治疗建议" in trend.json()["summary"]
+    assert heart_rate.json()["data_quality"]["sources"] == ["health_connect"]
 
 
 def test_weekly_suggestion_is_explainable_bounded_and_stable(machine_api) -> None:

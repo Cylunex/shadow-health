@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from app.routers.ingest import (
+    HealthConnectNormalizationError,
     _external_id,
     _existing_effective_date,
+    _extract_heart_rate_samples,
+    _failure_reason,
     _parse_sync_boundaries,
     _payload_hash,
     _record_action,
@@ -78,6 +83,75 @@ def test_existing_rows_without_normalized_snapshot_keep_their_old_day() -> None:
         },
     )
     assert _existing_effective_date("steps", row).isoformat() == "2026-08-29"
+
+
+def test_heart_rate_samples_are_strictly_parsed_and_split_by_record_timezone() -> None:
+    samples = _extract_heart_rate_samples({
+        "recordType": "HeartRateRecord",
+        "startZoneOffset": "+08:00",
+        "samples": [
+            {"time": "2026-08-30T15:59:00Z", "beatsPerMinute": 58},
+            {"time": "2026-08-30T16:01:00Z", "beatsPerMinute": {"value": 82}},
+        ],
+    })
+    assert [(sample[1].isoformat(), sample[2]) for sample in samples] == [
+        ("2026-08-30", 58),
+        ("2026-08-31", 82),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("record", "code"),
+    [
+        ({"recordType": "HeartRateRecord", "samples": []}, "heart_rate_samples_empty"),
+        (
+            {
+                "recordType": "HeartRateRecord",
+                "samples": [{"time": "2026-08-30T01:00:00Z", "beatsPerMinute": 999}],
+            },
+            "heart_rate_value_invalid",
+        ),
+        (
+            {"recordType": "HeartRateRecord", "samples": [{"beatsPerMinute": 70}]},
+            "heart_rate_time_missing",
+        ),
+    ],
+)
+def test_heart_rate_never_silently_discards_malformed_samples(
+    record: dict, code: str
+) -> None:
+    with pytest.raises(HealthConnectNormalizationError) as captured:
+        _extract_heart_rate_samples(record)
+    reason, detail = _failure_reason(captured.value)
+    assert reason == code
+    assert detail.startswith(f"{code}:")
+
+
+def test_heart_rate_single_value_bridge_shape_remains_supported() -> None:
+    samples = _extract_heart_rate_samples({
+        "type": "heart_rate",
+        "time": 1_788_051_600_000,
+        "heart_rate": "72",
+    })
+    assert len(samples) == 1
+    assert samples[0][2] == 72
+
+
+def test_health_connect_android_contract_requires_stable_identity_and_raw_hr_samples() -> None:
+    contract = json.loads(
+        (Path(__file__).parents[1] / "contracts" / "health-connect-ingest.schema.json")
+        .read_text(encoding="utf-8")
+    )
+    record = contract["properties"]["records"]["items"]
+    assert record["required"] == ["recordType", "metadata"]
+    assert record["properties"]["metadata"]["required"] == [
+        "clientRecordId", "clientRecordVersion"
+    ]
+    heart = record["allOf"][0]["then"]
+    assert "samples" in heart["required"]
+    assert heart["properties"]["samples"]["items"]["required"] == [
+        "time", "beatsPerMinute"
+    ]
 
 
 def test_observed_evidence_requires_quality_envelopes_without_copying_values() -> None:

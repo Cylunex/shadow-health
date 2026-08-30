@@ -379,7 +379,8 @@ def test_agent_log_requires_login(web):
 
     with TestClient(app, follow_redirects=False) as anon:
         r = anon.get("/agent-log")
-        assert r.status_code == 303 and r.headers["location"] == "/login"
+        assert r.status_code == 303
+        assert r.headers["location"] == "/login?return_to=%2Fagent-log"
         assert anon.post("/agent-log/revoke", data={"raw_id": "1"}).status_code == 303
 
     assert web.get("/agent-log?t=diet&n=5").status_code == 200
