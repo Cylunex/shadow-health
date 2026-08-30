@@ -6,15 +6,14 @@ POST /api/ingest/health_connect
 - 请求体上限 5MB：读 body 前查 Content-Length，读后复核实际长度，超限 413。
 - payload 结构防御式提取：顶层 list 视为记录数组；顶层 dict 按 'records'/'data'
   取数组，取不到把整个 dict 当单条记录。
-- 每条记录：键名启发式推断 record_type；external_id 取 metadata.id / id / uid，
-  都没有回退 sha1(记录 JSON)；先整包落 import_raw（ON CONFLICT 只刷新
-  last_seen_at ≈ DO NOTHING），随即固定返回 200 {"received": N}。
+- 每条记录：键名启发式推断 record_type；优先使用 clientRecordId/version，并保存
+  payload hash 与来源 App/设备证据；没有稳定 ID 时回退确定性摘要。同版本不同 payload
+  隔离为冲突，高版本才替换，原始记录先提交后再归一化。
 - 归一化在同请求 try/except：
-  * 水位线：记录时间 <= sync_state('health_connect').watermark 置 parse_status='skipped'
-   （留档可审计，与三星 zip 历史导入一刀切去重）；
-  * steps → daily_activity 按日增量累加（HC Steps 是区间记录，import_raw 去重
-    保证重发不重复累计）；weight → body_metrics autofill；sleep → sleep_sessions
-    upsert + 按 wake_date 汇总回填 sleep_hours；exercise 按类型分流并 upsert；
+  * steps/weight/sleep/exercise/heart_rate 使用彼此独立的 cursor、历史 watermark、权限和
+    来源指纹；权限撤销或来源变化只阻断对应类型；
+  * steps/weight/sleep 的版本修订按当前 source records 重建受影响日期，不叠加旧版本；
+    exercise 按类型分流并 upsert；
   * 单条失败置 parse_status='failed' 记 parse_error；整体失败只记
     sync_state.consecutive_failures，绝不 5xx（防手机端重发风暴）。
 - heart_rate / unknown 类型仅留档（parse_status 保持 pending，供后续解析器重放）。
@@ -30,7 +29,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
-from sqlalchemy import cast, delete, func, literal_column, select, text, update
+from sqlalchemy import cast, delete, func, literal_column, select, text, tuple_, update
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
@@ -39,23 +38,27 @@ from app.config import get_settings
 from app.db import get_db
 from app.models import (
     AppSetting,
+    BodyMetrics,
     DailyActivity,
     ImportRaw,
     ReleaseLog,
     SleepSession,
+    SyncCursor,
     SyncState,
     WorkoutLog,
 )
 from app.services.autofill import autofill_fields
 from app.services.discipline import is_release_session
 from app.services.miscale import compute_body_metrics
-from app.services.sleep import total_sleep_min as sleep_total_min
+from app.services.sleep import total_sleep_with_source
 from app.timeutil import LOCAL_TZ, now_local
 
 MAX_BODY_BYTES = 5 * 1024 * 1024
 PARSER_VERSION = 1
 SOURCE = "health_connect"
-RAW_BATCH = 500
+RAW_BATCH = 500  # shared by offline/agent bulk archival
+HEALTH_CONNECT_TYPES = ("steps", "weight", "sleep", "exercise", "heart_rate")
+PERMISSION_STATES = {"unknown", "granted", "denied", "revoked"}
 
 # webhook 走 Bearer 鉴权，不挂 require_login（设计文档 §3.7/§7.2 豁免项）
 router = APIRouter(prefix="/api/ingest")
@@ -89,20 +92,137 @@ def _infer_record_type(rec: dict) -> str:
 
 
 def _external_id(rec: dict) -> str:
-    """metadata.id / id / uid，都没有回退 sha1(记录 JSON)。"""
+    """Stable client identity, then provider id, then a deterministic payload id."""
     md = rec.get("metadata")
     if isinstance(md, dict):
-        for k in ("id", "uid"):
+        for k in ("clientRecordId", "client_record_id", "id", "uid"):
             v = md.get(k)
             if v not in (None, "") and not isinstance(v, (dict, list)):
                 return str(v)
-    for k in ("id", "uid"):
+    for k in ("clientRecordId", "client_record_id", "id", "uid"):
         v = rec.get(k)
         if v not in (None, "") and not isinstance(v, (dict, list)):
             return str(v)
     return hashlib.sha1(
         json.dumps(rec, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")
     ).hexdigest()
+
+
+def _record_version(rec: dict) -> int:
+    metadata = rec.get("metadata")
+    candidates = []
+    if isinstance(metadata, dict):
+        candidates.extend(
+            (metadata.get("clientRecordVersion"), metadata.get("client_record_version"))
+        )
+    candidates.extend((rec.get("clientRecordVersion"), rec.get("record_version")))
+    for value in candidates:
+        if isinstance(value, bool):
+            continue
+        try:
+            version = int(value)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= version <= 2_147_483_647:
+            return version
+    return 0
+
+
+def _payload_hash(rec: dict) -> str:
+    encoded = json.dumps(
+        rec, sort_keys=True, ensure_ascii=False, separators=(",", ":"), default=str
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _record_action(
+    *,
+    prior_version: int,
+    prior_hash: str,
+    prior_status: str,
+    incoming_version: int,
+    incoming_hash: str,
+) -> str:
+    if incoming_version > prior_version:
+        return "update"
+    if incoming_version < prior_version:
+        return "skip"
+    if incoming_hash != prior_hash:
+        return "conflict"
+    return "retry" if prior_status in {"pending", "failed"} else "skip"
+
+
+def _record_provenance(rec: dict) -> dict[str, Any]:
+    """Bounded, value-free device/app origin evidence from Health Connect metadata."""
+    metadata = rec.get("metadata") if isinstance(rec.get("metadata"), dict) else {}
+    origin = metadata.get("dataOrigin")
+    if not isinstance(origin, dict):
+        origin = rec.get("dataOrigin") if isinstance(rec.get("dataOrigin"), dict) else {}
+    device = metadata.get("device")
+    if not isinstance(device, dict):
+        device = rec.get("device") if isinstance(rec.get("device"), dict) else {}
+    out: dict[str, Any] = {"channel": SOURCE}
+    package = origin.get("packageName") or origin.get("package_name")
+    if isinstance(package, str) and package.strip():
+        out["origin_package"] = package.strip()[:200]
+    bounded_device = {
+        key: str(device[key]).strip()[:120]
+        for key in ("manufacturer", "model", "type")
+        if device.get(key) not in (None, "")
+    }
+    if bounded_device:
+        out["device"] = bounded_device
+    recording = metadata.get("recordingMethod") or metadata.get("recording_method")
+    if recording not in (None, ""):
+        out["recording_method"] = str(recording)[:80]
+    modified = metadata.get("lastModifiedTime") or metadata.get("last_modified_time")
+    if modified not in (None, ""):
+        out["last_modified_time"] = str(modified)[:80]
+    return out
+
+
+def _parse_sync_boundaries(payload: Any) -> list[dict[str, Any]]:
+    """Validate optional per-record-type cursor/permission envelopes.
+
+    Accepts a list or one object.  Tokens are opaque and never compared across
+    types.  A changed source fingerprint requires ``reset: true`` before cursor
+    advancement resumes.
+    """
+    if not isinstance(payload, dict) or "sync" not in payload:
+        return []
+    raw = payload.get("sync")
+    items = raw if isinstance(raw, list) else [raw]
+    if not all(isinstance(item, dict) for item in items):
+        raise ValueError("sync must be an object or list of objects")
+    parsed: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in items:
+        record_type = str(item.get("record_type") or "").strip().lower()
+        permission = str(item.get("permission") or "unknown").strip().lower()
+        cursor = item.get("cursor")
+        fingerprint = item.get("source_fingerprint")
+        reset = item.get("reset", False)
+        if record_type not in HEALTH_CONNECT_TYPES or record_type in seen:
+            raise ValueError("sync record_type must be unique and supported")
+        if permission not in PERMISSION_STATES:
+            raise ValueError("sync permission is invalid")
+        if cursor is not None and (not isinstance(cursor, str) or not 1 <= len(cursor) <= 2048):
+            raise ValueError("sync cursor must be a bounded opaque string")
+        if fingerprint is not None and (
+            not isinstance(fingerprint, str) or not 1 <= len(fingerprint) <= 256
+        ):
+            raise ValueError("sync source_fingerprint is invalid")
+        if not isinstance(reset, bool):
+            raise ValueError("sync reset must be boolean")
+        seen.add(record_type)
+        parsed.append({
+            "record_type": record_type,
+            "permission": permission,
+            "cursor": cursor,
+            "source_fingerprint": fingerprint,
+            "reset": reset,
+        })
+    return parsed
 
 
 def _parse_ts(v: Any) -> datetime | None:
@@ -403,6 +523,7 @@ def _mark_raw(
     error: str | None = None,
     version: int = PARSER_VERSION,
     blob_patch: dict | None = None,
+    normalized: dict[str, Any] | None = None,
 ) -> None:
     """import_raw 行解析状态统一更新（HC/秤/三星直读/offline/agent 各通道共享）。
 
@@ -410,6 +531,8 @@ def _mark_raw(
     记归一化行 id 与 agent 名，供 /agent-log 精确撤销与归属展示。
     """
     values: dict[str, Any] = dict(parse_status=status, parse_error=error, parse_version=version)
+    if normalized is not None:
+        values["normalized"] = normalized
     if blob_patch:
         values["blob"] = func.coalesce(
             ImportRaw.blob, cast({}, JSONB)
@@ -466,6 +589,186 @@ def _bearer_reject(request: Request) -> Response | None:
     return None
 
 
+def _apply_sync_boundaries(
+    db: Session, specs: list[dict[str, Any]], now: datetime
+) -> dict[str, SyncCursor]:
+    states: dict[str, SyncCursor] = {}
+    for spec in specs:
+        key = (SOURCE, spec["record_type"])
+        state = db.get(SyncCursor, key)
+        if state is None:
+            state = SyncCursor(source=SOURCE, record_type=spec["record_type"])
+            db.add(state)
+            db.flush()
+        old_fingerprint = state.source_fingerprint
+        new_fingerprint = spec["source_fingerprint"]
+        changed = bool(
+            old_fingerprint and new_fingerprint and old_fingerprint != new_fingerprint
+        )
+        if changed:
+            state.cursor_token = None
+            state.needs_resync = True
+            state.source_changed_at = now
+        if spec["reset"]:
+            state.cursor_token = None
+            state.needs_resync = False
+            state.source_changed_at = now if changed else state.source_changed_at
+        if new_fingerprint:
+            state.source_fingerprint = new_fingerprint
+        state.permission_state = spec["permission"]
+        if spec["permission"] in {"denied", "revoked"}:
+            state.cursor_token = None
+            state.needs_resync = True
+            state.last_error = f"Health Connect permission {spec['permission']}"
+        states[spec["record_type"]] = state
+    return states
+
+
+def _cursor_payload(state: SyncCursor) -> dict[str, Any]:
+    return {
+        "record_type": state.record_type,
+        "permission": state.permission_state,
+        "cursor": state.cursor_token,
+        "watermark": _iso_ts(state.watermark),
+        "source_fingerprint": state.source_fingerprint,
+        "needs_resync": bool(state.needs_resync),
+        "source_changed_at": _iso_ts(state.source_changed_at),
+        "last_success_at": _iso_ts(state.last_success_at),
+        "last_error": state.last_error,
+    }
+
+
+def _iso_ts(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _normalized_date(value: Any) -> date | None:
+    raw = value.get("date") if isinstance(value, dict) else None
+    try:
+        return date.fromisoformat(raw) if isinstance(raw, str) else None
+    except ValueError:
+        return None
+
+
+def _existing_effective_date(record_type: str, row: ImportRaw) -> date | None:
+    """Find the old day even for rows created before normalized snapshots existed."""
+    normalized = _normalized_date(row.normalized)
+    if normalized is not None:
+        return normalized
+    try:
+        if record_type == "steps":
+            return _extract_steps(row.raw)[0]
+        if record_type == "weight":
+            return _extract_weight(row.raw)[0]
+        if record_type == "sleep":
+            end = next(
+                (
+                    row.raw[key]
+                    for key in ("endTime", "end_time", "end")
+                    if row.raw.get(key) is not None
+                ),
+                None,
+            )
+            end_dt = _parse_ts(end)
+            return _local_date(end_dt, row.raw) if end_dt is not None else None
+    except (TypeError, ValueError):
+        return None
+    return None
+
+
+def _clear_source_autofill(db: Session, d: date, field: str) -> None:
+    row = db.execute(select(BodyMetrics).where(BodyMetrics.log_date == d)).scalar_one_or_none()
+    if row is None:
+        return
+    markers = dict(row.autofilled or {})
+    if markers.get(field) != SOURCE:
+        return
+    setattr(row, field, None)
+    markers.pop(field, None)
+    row.autofilled = markers
+
+
+def _rebuild_hc_steps(db: Session, affected: set[date]) -> None:
+    if not affected:
+        return
+    totals = {d: 0 for d in affected}
+    rows = db.execute(
+        select(ImportRaw.raw).where(
+            ImportRaw.source == SOURCE,
+            ImportRaw.record_type == "steps",
+            ImportRaw.parse_status == "parsed",
+        )
+    ).scalars()
+    for raw in rows:
+        try:
+            d, count = _extract_steps(raw)
+        except (TypeError, ValueError):
+            continue
+        if d in totals:
+            totals[d] += count
+    for d, count in totals.items():
+        current = db.get(DailyActivity, d)
+        if count <= 0:
+            if current is not None and current.source == SOURCE:
+                current.steps = None
+            continue
+        ins = pg_insert(DailyActivity).values(log_date=d, steps=count, source=SOURCE)
+        db.execute(ins.on_conflict_do_update(
+            index_elements=["log_date"],
+            set_={"steps": ins.excluded.steps, "source": ins.excluded.source, "updated_at": text("now()")},
+            where=DailyActivity.__table__.c.source != "samsung_direct",
+        ))
+
+
+def _rebuild_hc_weight(db: Session, affected: set[date]) -> None:
+    if not affected:
+        return
+    latest: dict[date, tuple[datetime, float]] = {}
+    rows = db.execute(
+        select(ImportRaw.raw).where(
+            ImportRaw.source == SOURCE,
+            ImportRaw.record_type == "weight",
+            ImportRaw.parse_status == "parsed",
+        )
+    ).scalars()
+    for raw in rows:
+        try:
+            d, ts, kg = _extract_weight(raw)
+        except (TypeError, ValueError):
+            continue
+        if d in affected and (d not in latest or ts >= latest[d][0]):
+            latest[d] = (ts, kg)
+    for d in affected:
+        if d in latest:
+            autofill_fields(db, d, SOURCE, {"weight_kg": latest[d][1]})
+        else:
+            _clear_source_autofill(db, d, "weight_kg")
+
+
+def _refresh_sleep_days(db: Session, affected: set[date]) -> None:
+    for d in affected:
+        total, source = total_sleep_with_source(db, d)
+        if total > 0 and source is not None:
+            autofill_fields(db, d, source, {"sleep_hours": round(total / 60.0, 1)})
+        else:
+            _clear_source_autofill(db, d, "sleep_hours")
+
+
+@router.get("/health_connect/state")
+def health_connect_state(request: Request, db: Session = Depends(get_db)) -> Response:
+    reject = _bearer_reject(request)
+    if reject is not None:
+        return reject
+    rows = db.execute(
+        select(SyncCursor).where(SyncCursor.source == SOURCE).order_by(SyncCursor.record_type)
+    ).scalars().all()
+    return JSONResponse({"source": SOURCE, "record_types": [_cursor_payload(row) for row in rows]})
+
+
 @router.post("/health_connect")
 async def ingest_health_connect(request: Request, db: Session = Depends(get_db)) -> Response:
     # 1. 鉴权
@@ -488,18 +791,24 @@ async def ingest_health_connect(request: Request, db: Session = Depends(get_db))
         return JSONResponse({"error": "invalid json"}, status_code=400)
     if isinstance(payload, list):
         records = payload
+        sync_specs: list[dict[str, Any]] = []
     elif isinstance(payload, dict):
+        try:
+            sync_specs = _parse_sync_boundaries(payload)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
         arr = None
         for key in ("records", "data"):
             if isinstance(payload.get(key), list):
                 arr = payload[key]
                 break
-        records = arr if arr is not None else [payload]
+        records = arr if arr is not None else ([] if "sync" in payload else [payload])
     else:
         return JSONResponse({"error": "unsupported payload"}, status_code=400)
     received = len(records)
 
-    # 4. 整包落 import_raw（批内去重；冲突只刷新 last_seen_at）
+    # 4. 整包落 import_raw。稳定 client id + 单调 version 决定是否重放；
+    # 同版本不同 payload 隔离为冲突，绝不静默覆盖已归一化事实。
     now = now_local()
     entries: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
@@ -511,14 +820,23 @@ async def ingest_health_connect(request: Request, db: Session = Depends(get_db))
             continue
         seen.add((record_type, ext_id))
         offset_val = rec.get("startZoneOffset") or rec.get("zoneOffset") or rec.get("endZoneOffset")
+        record_version = _record_version(rec)
+        payload_hash = _payload_hash(rec)
+        provenance = _record_provenance(rec)
         entries.append({
             "rec": rec,
             "rtype": record_type,
             "ext_id": ext_id,
+            "record_version": record_version,
+            "payload_hash": payload_hash,
+            "provenance": provenance,
             "raw": {
                 "source": SOURCE,
                 "record_type": record_type,
                 "external_id": ext_id,
+                "record_version": record_version,
+                "payload_hash": payload_hash,
+                "provenance": provenance,
                 "raw": rec,
                 "time_offset": offset_val if isinstance(offset_val, str) else None,
                 "parse_status": "pending",
@@ -527,33 +845,106 @@ async def ingest_health_connect(request: Request, db: Session = Depends(get_db))
             },
         })
 
-    new_keys: set[tuple[str, str]] = set()
-    for i in range(0, len(entries), RAW_BATCH):
-        chunk = [e["raw"] for e in entries[i:i + RAW_BATCH]]
-        ins = pg_insert(ImportRaw).values(chunk)
-        stmt = ins.on_conflict_do_update(
-            index_elements=["source", "record_type", "external_id"],
-            set_={"last_seen_at": now},
-        ).returning(ImportRaw.record_type, ImportRaw.external_id, literal_column("(xmax = 0)"))
-        for rtype, ext_id, is_new in db.execute(stmt):
-            if is_new:
-                new_keys.add((rtype, ext_id))
+    keys = [(entry["rtype"], entry["ext_id"]) for entry in entries]
+    existing_rows = []
+    if keys:
+        existing_rows = db.execute(
+            select(ImportRaw).where(
+                ImportRaw.source == SOURCE,
+                tuple_(ImportRaw.record_type, ImportRaw.external_id).in_(keys),
+            )
+        ).scalars().all()
+    existing = {(row.record_type, row.external_id): row for row in existing_rows}
+    process_keys: set[tuple[str, str]] = set()
+    conflict_keys: set[tuple[str, str]] = set()
+    affected_steps: set[date] = set()
+    affected_weights: set[date] = set()
+    affected_sleep: set[date] = set()
+    new_raws: list[dict[str, Any]] = []
+    for entry in entries:
+        key = (entry["rtype"], entry["ext_id"])
+        prior = existing.get(key)
+        if prior is None:
+            new_raws.append(entry["raw"])
+            process_keys.add(key)
+            continue
+        if entry["rtype"] == "steps":
+            old_date = _existing_effective_date("steps", prior)
+            if old_date:
+                affected_steps.add(old_date)
+        elif entry["rtype"] == "weight":
+            old_date = _existing_effective_date("weight", prior)
+            if old_date:
+                affected_weights.add(old_date)
+        elif entry["rtype"] == "sleep":
+            old_date = _existing_effective_date("sleep", prior)
+            if old_date:
+                affected_sleep.add(old_date)
+        prior_version = int(prior.record_version or 0)
+        prior_hash = prior.payload_hash or _payload_hash(prior.raw)
+        incoming_version = entry["record_version"]
+        action = _record_action(
+            prior_version=prior_version,
+            prior_hash=prior_hash,
+            prior_status=prior.parse_status,
+            incoming_version=incoming_version,
+            incoming_hash=entry["payload_hash"],
+        )
+        if action == "update":
+            db.execute(
+                update(ImportRaw).where(ImportRaw.id == prior.id).values(
+                    raw=entry["rec"],
+                    record_version=incoming_version,
+                    payload_hash=entry["payload_hash"],
+                    provenance=entry["provenance"],
+                    normalized=None,
+                    time_offset=entry["raw"]["time_offset"],
+                    parse_status="pending",
+                    parse_error=None,
+                    parse_version=0,
+                    last_seen_at=now,
+                )
+            )
+            process_keys.add(key)
+        elif action in {"retry", "skip"} and entry["payload_hash"] == prior_hash:
+            db.execute(
+                update(ImportRaw).where(ImportRaw.id == prior.id).values(
+                    payload_hash=entry["payload_hash"],
+                    provenance=entry["provenance"],
+                    last_seen_at=now,
+                )
+            )
+            if action == "retry":
+                process_keys.add(key)
+        elif action == "conflict":
+            db.execute(
+                update(ImportRaw).where(ImportRaw.id == prior.id).values(
+                    parse_status="failed",
+                    parse_error="同一 client_record_id/version 的 payload 不一致",
+                    last_seen_at=now,
+                )
+            )
+            conflict_keys.add(key)
+        else:
+            db.execute(update(ImportRaw).where(ImportRaw.id == prior.id).values(last_seen_at=now))
+    for index in range(0, len(new_raws), RAW_BATCH):
+        db.execute(ImportRaw.__table__.insert(), new_raws[index:index + RAW_BATCH])
+    _apply_sync_boundaries(db, sync_specs, now)
     db.commit()  # 原始留档先落盘：后续归一化再出错也不丢数据，响应恒 200
 
     # 5. 归一化（同请求 try/except，绝不 5xx）
     try:
-        state = db.get(SyncState, SOURCE)
-        watermark = state.watermark if state is not None else None
-
-        day_steps: dict[date, int] = {}
-        weight_by_day: dict[date, tuple[datetime, float]] = {}
-        sleep_dates: set[date] = set()
-
         for e in entries:
-            if (e["rtype"], e["ext_id"]) not in new_keys:
-                continue  # 重复推送：只刷新 last_seen_at，不重复归一化
+            if (e["rtype"], e["ext_id"]) not in process_keys:
+                continue
             rec, rtype, ext_id = e["rec"], e["rtype"], e["ext_id"]
             rec_ts = _record_time(rec)
+            cursor_state = db.get(SyncCursor, (SOURCE, rtype))
+            legacy_state = db.get(SyncState, SOURCE)
+            watermark = (
+                cursor_state.watermark if cursor_state is not None
+                else legacy_state.watermark if legacy_state is not None else None
+            )
             if watermark is not None and rec_ts is not None and rec_ts <= watermark:
                 _mark_raw(db, SOURCE, rtype, ext_id, "skipped")  # 水位线以内：zip 历史已覆盖
                 continue
@@ -563,57 +954,67 @@ async def ingest_health_connect(request: Request, db: Session = Depends(get_db))
                 with db.begin_nested():  # 单条失败回滚到 SAVEPOINT，不毒化整个事务
                     if rtype == "steps":
                         d, cnt = _extract_steps(rec)
-                        day_steps[d] = day_steps.get(d, 0) + cnt
+                        affected_steps.add(d)
+                        normalized = {"date": d.isoformat(), "steps": cnt}
                     elif rtype == "weight":
                         d, ts, kg = _extract_weight(rec)
-                        prev = weight_by_day.get(d)
-                        if prev is None or ts >= prev[0]:  # 同日多条取最后一次
-                            weight_by_day[d] = (ts, kg)
+                        affected_weights.add(d)
+                        normalized = {"date": d.isoformat(), "observed_at": _iso_ts(ts), "weight_kg": kg}
                     elif rtype == "sleep":
-                        sleep_dates.add(_normalize_sleep(db, rec, ext_id))
+                        d = _normalize_sleep(db, rec, ext_id)
+                        affected_sleep.add(d)
+                        normalized = {"date": d.isoformat()}
                     else:
                         _normalize_exercise(db, rec, ext_id)
-                _mark_raw(db, SOURCE, rtype, ext_id, "parsed")
+                        normalized = {"date": _local_date(rec_ts, rec).isoformat()} if rec_ts else {}
+                _mark_raw(db, SOURCE, rtype, ext_id, "parsed", normalized=normalized)
             except Exception as exc:
                 _mark_raw(db, SOURCE, rtype, ext_id, "failed", str(exc)[:500])
 
-        # steps：按日增量累加进 daily_activity（区间记录求和）。
-        # 该日已被三星直读接管（SET 当日总数）时不累加，防双通道双计。
-        for d in sorted(day_steps):
-            ins = pg_insert(DailyActivity).values(log_date=d, steps=day_steps[d], source=SOURCE)
-            db.execute(ins.on_conflict_do_update(
-                index_elements=["log_date"],
-                set_={
-                    "steps": func.coalesce(DailyActivity.__table__.c.steps, 0) + ins.excluded.steps,
-                    "source": ins.excluded.source,
-                    "updated_at": text("now()"),
-                },
-                where=DailyActivity.__table__.c.source != "samsung_direct",
-            ))
-        # weight：同日最后一次 → body_metrics 字段级回填（手动值不覆盖）
-        for d in sorted(weight_by_day):
-            autofill_fields(db, d, SOURCE, {"weight_kg": weight_by_day[d][1]})
-        # sleep：受影响 wake_date 汇总回填 sleep_hours（跨源去重：只取优先 source，防翻倍）
-        for d in sorted(sleep_dates):
-            total = sleep_total_min(db, d)
-            if total > 0:
-                autofill_fields(db, d, SOURCE, {"sleep_hours": round(total / 60.0, 1)})
+        # Rebuild affected derived days from the latest version of every source record.
+        # This makes version updates idempotent instead of double-counting interval data.
+        _rebuild_hc_steps(db, affected_steps)
+        _rebuild_hc_weight(db, affected_weights)
+        _refresh_sleep_days(db, affected_sleep)
 
         # 6. 成功：sync_state 记 last_success_at、清零失败计数（不触碰 watermark）
         _touch_sync_state(db, SOURCE, True, now=now)
+        for spec in sync_specs:
+            state = db.get(SyncCursor, (SOURCE, spec["record_type"]))
+            if state is None:
+                continue
+            if spec["permission"] == "granted" and not state.needs_resync:
+                if spec["cursor"] is not None:
+                    state.cursor_token = spec["cursor"]
+                state.last_success_at = now
+                state.last_error = None
+                state.consecutive_failures = 0
         db.commit()
     except Exception as exc:  # 归一化整体失败：本批 raw 标 failed（导入中心可见），只记状态
         db.rollback()
         try:
-            # 标记本批新行为 failed：重发因 xmax 门控不会重新归一化，必须留下可见痕迹
-            for rtype, ext_id in new_keys:
+            for rtype, ext_id in process_keys:
                 _mark_raw(db, SOURCE, rtype, ext_id, "failed", f"批次归一化失败：{str(exc)[:400]}")
             _touch_sync_state(db, SOURCE, False, str(exc))
+            for spec in sync_specs:
+                state = db.get(SyncCursor, (SOURCE, spec["record_type"]))
+                if state is not None:
+                    state.last_error = str(exc)[:500]
+                    state.consecutive_failures = int(state.consecutive_failures or 0) + 1
             db.commit()
         except Exception:
             db.rollback()
 
-    return JSONResponse({"received": received})
+    cursor_rows = db.execute(
+        select(SyncCursor).where(SyncCursor.source == SOURCE).order_by(SyncCursor.record_type)
+    ).scalars().all()
+    return JSONResponse({
+        "received": received,
+        "processed": len(process_keys),
+        "skipped": max(len(entries) - len(process_keys) - len(conflict_keys), 0),
+        "conflicts": len(conflict_keys),
+        "sync": [_cursor_payload(row) for row in cursor_rows],
+    })
 
 
 # ---------- 小米体脂秤（BLE 网关通道，设计文档外新增） ----------
@@ -1116,9 +1517,9 @@ async def ingest_samsung_direct(request: Request, db: Session = Depends(get_db))
                 f: data[f] for f in _SD_BODY_FIELDS if data[f] is not None
             })
         for d in sorted(sleep_dates):
-            total = sleep_total_min(db, d)  # 跨源去重，防 zip/HC/直读并存翻倍
-            if total > 0:
-                autofill_fields(db, d, SAMSUNG_DIRECT_SOURCE, {"sleep_hours": round(total / 60.0, 1)})
+            total, source = total_sleep_with_source(db, d)  # 跨源去重，保留实际胜出的来源
+            if total > 0 and source is not None:
+                autofill_fields(db, d, source, {"sleep_hours": round(total / 60.0, 1)})
 
         _touch_sync_state(db, SAMSUNG_DIRECT_SOURCE, True, now=now)
         db.commit()

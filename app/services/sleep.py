@@ -58,8 +58,14 @@ def sessions_by_date(db: Session, start: date, end: date) -> dict[date, list[Sle
 
 def total_sleep_min(db: Session, d: date) -> int:
     """该夜总睡眠分钟（优先 source 内求和；无数据返回 0）。"""
+    return total_sleep_with_source(db, d)[0]
+
+
+def total_sleep_with_source(db: Session, d: date) -> tuple[int, str | None]:
+    """Return the deduplicated total and the source that actually won priority."""
     sessions = sessions_by_date(db, d, d).get(d, [])
-    return sum(s.total_sleep_min or 0 for s in sessions)
+    total = sum(s.total_sleep_min or 0 for s in sessions)
+    return total, str(sessions[0].source) if sessions else None
 
 
 # ---------- 睡眠质量洞察（V6 P1）----------
@@ -96,6 +102,7 @@ def night_rows(db: Session, start: date, end: date) -> list[dict[str, Any]]:
             "efficiency_pct": min(round(total * 100 / in_bed), 100) if in_bed > 0 else None,
             **stages,
             "bedtime_min": _bedtime_min_from_noon(min(s.start_at for s in sessions)),
+            "sources": sorted({str(s.source) for s in sessions}),
         })
     return rows
 

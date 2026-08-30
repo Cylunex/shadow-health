@@ -12,10 +12,11 @@
 """
 from __future__ import annotations
 
+import json
 from datetime import date, timedelta
 from typing import Any, Callable
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import BodyMetrics, DailyActivity, DietLog, WorkoutLog
@@ -35,6 +36,18 @@ _THRESHOLDS = {
     "steps": 800.0,     # 日步数
     "erection_pct": 12.0,  # 晨勃率百分点
 }
+
+
+def _json_object(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+        except ValueError:
+            return {}
+        return decoded if isinstance(decoded, dict) else {}
+    return {}
 
 
 def _bucket_stat(
@@ -59,36 +72,48 @@ def build_insights(db: Session, today: date) -> list[dict[str, Any]]:
     bm_rows = db.execute(
         select(
             BodyMetrics.log_date, BodyMetrics.energy_level, BodyMetrics.mood_score,
-            BodyMetrics.morning_erection,
+            BodyMetrics.morning_erection, BodyMetrics.autofilled,
         ).where(BodyMetrics.log_date.between(start, today))
     ).all()
-    energy = {d: float(e) for d, e, _m, _me in bm_rows if e is not None}
-    mood = {d: float(m) for d, _e, m, _me in bm_rows if m is not None}
-    erection = {d: (1.0 if me else 0.0) for d, _e, _m, me in bm_rows if me is not None}
-    kcal = {
-        d: float(v)
-        for d, v in db.execute(
-            select(DietLog.log_date, func.sum(DietLog.kcal))
-            .where(DietLog.log_date.between(start, today), DietLog.kcal.is_not(None))
-            .group_by(DietLog.log_date)
+    energy = {d: float(e) for d, e, _m, _me, _a in bm_rows if e is not None}
+    mood = {d: float(m) for d, _e, m, _me, _a in bm_rows if m is not None}
+    erection = {d: (1.0 if me else 0.0) for d, _e, _m, me, _a in bm_rows if me is not None}
+    metric_sources: dict[str, set[str]] = {"energy_level": set(), "mood_score": set(), "morning_erection": set()}
+    for _d, e, m, me, autofilled in bm_rows:
+        markers = _json_object(autofilled)
+        for field, value in (("energy_level", e), ("mood_score", m), ("morning_erection", me)):
+            if value is not None:
+                metric_sources[field].add(str(markers.get(field) or "manual"))
+
+    kcal: dict[date, float] = {}
+    diet_sources: set[str] = set()
+    for d, value, provenance in db.execute(
+        select(DietLog.log_date, DietLog.kcal, DietLog.provenance).where(
+            DietLog.log_date.between(start, today), DietLog.kcal.is_not(None)
         )
-    }
-    steps = {
-        d: float(v)
-        for d, v in db.execute(
-            select(DailyActivity.log_date, DailyActivity.steps).where(
-                DailyActivity.log_date.between(start, today), DailyActivity.steps.is_not(None)
-            )
+    ):
+        kcal[d] = kcal.get(d, 0.0) + float(value)
+        source = _json_object(provenance).get("source")
+        diet_sources.add(str(source or "manual"))
+
+    steps: dict[date, float] = {}
+    step_sources: set[str] = set()
+    for d, value, source in db.execute(
+        select(DailyActivity.log_date, DailyActivity.steps, DailyActivity.source).where(
+            DailyActivity.log_date.between(start, today), DailyActivity.steps.is_not(None)
         )
-    }
+    ):
+        steps[d] = float(value)
+        step_sources.add(str(source or "unknown"))
     loads = readiness_service.daily_loads(db, start, today)
-    trained_days = {
-        d for (d,) in db.execute(
-            select(func.distinct(WorkoutLog.log_date)).where(
-                WorkoutLog.log_date.between(start, today)
-            )
+    workout_rows = db.execute(
+        select(WorkoutLog.log_date, WorkoutLog.source).where(
+            WorkoutLog.log_date.between(start, today)
         )
-    }
+    ).all()
+    trained_days = {d for d, _source in workout_rows}
+    workout_sources = {str(source or "manual") for _d, source in workout_rows}
+    sleep_sources = {source for row in nights.values() for source in row.get("sources", [])}
 
     # 睡眠分桶（按「夜」，对应影响是**次日**）
     short_nights = [d for d, r in nights.items() if r["total_min"] < SLEEP_SHORT_MIN]
@@ -99,6 +124,7 @@ def build_insights(db: Session, today: date) -> list[dict[str, Any]]:
     def _emit(
         title: str, a_label: str, b_label: str, stat: tuple | None,
         threshold_key: str, fmt: Callable[[float], str],
+        *, sources: set[str], latest_dates: list[date],
     ) -> None:
         if stat is None:
             return
@@ -110,6 +136,18 @@ def build_insights(db: Session, today: date) -> list[dict[str, Any]]:
             "a_label": a_label, "a_value": fmt(a_val),
             "b_label": b_label, "b_value": fmt(b_val),
             "n": a_n + b_n,
+            "a_n": a_n,
+            "b_n": b_n,
+            "data_quality": {
+                "window_days": WINDOW_DAYS,
+                "coverage_ratio": round(min((a_n + b_n) / WINDOW_DAYS, 1.0), 3),
+                "sources": sorted(sources),
+                "latest_effective_date": max(latest_dates).isoformat() if latest_dates else None,
+                "freshness": (
+                    "fresh" if latest_dates and (today - max(latest_dates)).days <= 2
+                    else "stale" if latest_dates else "unknown"
+                ),
+            },
         })
 
     fmt1 = lambda v: f"{v:.1f}"  # noqa: E731
@@ -117,13 +155,19 @@ def build_insights(db: Session, today: date) -> list[dict[str, Any]]:
 
     # 1. 没睡够 → 次日精力
     _emit("睡眠与次日精力", "睡 <6.5h 的次日精力", "睡够 7h 的次日精力",
-          _bucket_stat(next_short, next_good, energy), "energy", fmt1)
+          _bucket_stat(next_short, next_good, energy), "energy", fmt1,
+          sources=sleep_sources | metric_sources["energy_level"],
+          latest_dates=[d for d in next_short + next_good if d in energy])
     # 2. 没睡够 → 次日摄入（睡眠剥夺升食欲是强共识假设）
     _emit("睡眠与次日食欲", "睡 <6.5h 的次日摄入", "睡够 7h 的次日摄入",
-          _bucket_stat(next_short, next_good, kcal), "kcal", lambda v: f"{v:,.0f} kcal")
+          _bucket_stat(next_short, next_good, kcal), "kcal", lambda v: f"{v:,.0f} kcal",
+          sources=sleep_sources | diet_sources,
+          latest_dates=[d for d in next_short + next_good if d in kcal])
     # 3. 没睡够 → 次日步数
     _emit("睡眠与次日活动量", "睡 <6.5h 的次日步数", "睡够 7h 的次日步数",
-          _bucket_stat(next_short, next_good, steps), "steps", fmt0)
+          _bucket_stat(next_short, next_good, steps), "steps", fmt0,
+          sources=sleep_sources | step_sources,
+          latest_dates=[d for d in next_short + next_good if d in steps])
     # 4. 高负荷 → 次日心情（训练日均负荷的 1.3 倍算「高负荷日」，对照=其余全部天）
     if loads:
         avg_load = sum(loads.values()) / len(loads)
@@ -131,17 +175,23 @@ def build_insights(db: Session, today: date) -> list[dict[str, Any]]:
         heavy = [d + timedelta(days=1) for d in window_days if loads.get(d, 0) > avg_load * 1.3]
         light = [d + timedelta(days=1) for d in window_days if loads.get(d, 0) <= avg_load * 1.3]
         _emit("训练负荷与次日心情", "高负荷日的次日心情", "普通日的次日心情",
-              _bucket_stat(heavy, light, mood), "mood", fmt1)
+              _bucket_stat(heavy, light, mood), "mood", fmt1,
+              sources=workout_sources | metric_sources["mood_score"],
+              latest_dates=[d for d in heavy + light if d in mood])
     # 5. 晚睡 → 次日晨勃率（23:00 后入睡）
     late = [d + timedelta(days=1) for d, r in nights.items() if r["bedtime_min"] >= BEDTIME_LATE_MIN]
     early = [d + timedelta(days=1) for d, r in nights.items() if r["bedtime_min"] < BEDTIME_LATE_MIN]
     _emit("就寝时间与晨勃", "23 点后入睡的次日晨勃率", "23 点前入睡的次日晨勃率",
           _bucket_stat(late, early, erection), "erection_pct",
-          lambda v: f"{v * 100:.0f}%")
+          lambda v: f"{v * 100:.0f}%",
+          sources=sleep_sources | metric_sources["morning_erection"],
+          latest_dates=[d for d in late + early if d in erection])
     # 6. 训练日 vs 休息日 → 当日心情
     rest_days = [d for d in mood if d not in trained_days]
     _emit("训练与当日心情", "训练日心情", "休息日心情",
-          _bucket_stat(sorted(trained_days), rest_days, mood), "mood", fmt1)
+          _bucket_stat(sorted(trained_days), rest_days, mood), "mood", fmt1,
+          sources=workout_sources | metric_sources["mood_score"],
+          latest_dates=[d for d in sorted(trained_days) + rest_days if d in mood])
 
     return out
 
@@ -150,6 +200,8 @@ def insights_lines(db: Session, today: date) -> list[str]:
     """给 llm.build_context / 月报用的一行式结论。"""
     return [
         f"- {i['title']}：{i['a_label']} {i['a_value']} vs {i['b_label']} {i['b_value']}"
-        f"（{i['n']} 天样本）"
+        f"（{i['n']}/{i['data_quality']['window_days']} 天样本覆盖；"
+        f"来源 {', '.join(i['data_quality']['sources']) or '未知'}；"
+        f"新鲜度 {i['data_quality']['freshness']}）"
         for i in build_insights(db, today)
     ]

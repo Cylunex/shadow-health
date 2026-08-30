@@ -105,6 +105,9 @@ def healthz() -> PlainTextResponse:
 
 @app.get("/readyz")
 def readyz() -> PlainTextResponse:
+    settings = get_settings()
+    if settings.auth_mode == "legacy-forward" and not auth.legacy_forward_active(settings):
+        raise HTTPException(status_code=503, detail="legacy-forward rollback window expired")
     try:
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
@@ -127,6 +130,8 @@ def login_page(request: Request, return_to: str = "/"):
     if auth.browser_identity(request, settings) is not None:
         return redirect(request, "/")
     if settings.auth_mode == "legacy-forward":
+        if not auth.legacy_forward_active(settings):
+            raise HTTPException(status_code=503, detail="legacy-forward rollback window expired")
         return RedirectResponse(settings.sso_entry_url, status_code=303)
     try:
         service = get_oidc_service()

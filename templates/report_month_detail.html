@@ -46,7 +46,12 @@
         <div class="mt-0.5 text-xs text-slate-400 tabular-nums">
           {{ i.a_label }} <span class="text-emerald-400 font-semibold">{{ i.a_value }}</span>
           vs {{ i.b_label }} <span class="text-sky-400 font-semibold">{{ i.b_value }}</span>
-          <span class="text-slate-600">（{{ i.n }} 天样本）</span>
+          <span class="text-slate-600">（{{ i.n }}/{{ i.data_quality.window_days }} 天覆盖）</span>
+        </div>
+        <div class="mt-0.5 text-[11px] text-slate-600">
+          来源 {{ i.data_quality.sources|join('、') if i.data_quality.sources else '未知' }} ·
+          最新 {{ i.data_quality.latest_effective_date or '未知' }} ·
+          {{ '新鲜' if i.data_quality.freshness == 'fresh' else '较旧' if i.data_quality.freshness == 'stale' else '新鲜度未知' }}
         </div>
       </li>
       {% endfor %}

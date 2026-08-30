@@ -58,3 +58,11 @@
 
 子路径前缀适配（`/shealth`）已经落地：NAS 直连地址保留此前缀，公网域名使用根路径。
 Agent 接入说明见 [MCP server](../mcp_server/README.md)。
+
+## Health Connect v2 增量边界（2026-08-30）
+
+服务端已将 Health Connect 从单一时间 watermark 升级为按 record type 独立 cursor，并接受
+`clientRecordId` / `clientRecordVersion`、来源 App/设备 provenance、权限撤销与来源指纹变化。
+Android 侧下一次接入 Health Connect SDK 时必须逐类型分页并回传 `sync` envelope；详细契约与
+真机验证项见 [长期健康数据底座](health-data-foundation.md)。旧 webhook payload 仍兼容，但没有
+cursor/permission evidence，不能被视为完整同步证明。

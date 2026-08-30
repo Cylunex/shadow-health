@@ -7,6 +7,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    Computed,
     Date,
     ForeignKey,
     Identity,
@@ -481,6 +482,7 @@ class ImportRaw(Base):
         CheckConstraint(
             "parse_status IN ('pending','parsed','failed','skipped')", name="ck_parse_status"
         ),
+        CheckConstraint("record_version >= 0", name="ck_import_raw_record_version"),
         UniqueConstraint("source", "record_type", "external_id", name="ux_import_raw_ext"),
         Index(
             "ix_import_raw_replay",
@@ -495,6 +497,18 @@ class ImportRaw(Base):
     source: Mapped[str] = mapped_column(Text, nullable=False)
     record_type: Mapped[str] = mapped_column(Text, nullable=False)
     external_id: Mapped[str] = mapped_column(Text, nullable=False)
+    # Compatibility name for the stable identity supplied by a client/device.  The
+    # generated column keeps every existing ingest writer working while making the
+    # identity explicit to new sync and evidence consumers.
+    client_record_id: Mapped[str] = mapped_column(
+        Text, Computed("external_id", persisted=True), nullable=False
+    )
+    record_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0"
+    )
+    payload_hash: Mapped[str | None] = mapped_column(Text)
+    provenance: Mapped[dict | None] = mapped_column(JSONB)
+    normalized: Mapped[dict | None] = mapped_column(JSONB)
     raw: Mapped[dict] = mapped_column(JSONB, nullable=False)
     blob: Mapped[dict | list | None] = mapped_column(JSONB)
     time_offset: Mapped[str | None] = mapped_column(Text)
@@ -517,6 +531,45 @@ class SyncState(Base):
     consecutive_failures: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     needs_reauth: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     watermark: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+
+
+class SyncCursor(Base):
+    """Independent incremental boundary for one source and health record type.
+
+    Cursor tokens are opaque.  Permission and source-fingerprint changes are kept
+    beside the token so a revoked grant or a changed provider can never silently
+    advance another record type's checkpoint.
+    """
+
+    __tablename__ = "sync_cursors"
+    __table_args__ = (
+        CheckConstraint(
+            "permission_state IN ('unknown','granted','denied','revoked')",
+            name="ck_sync_cursor_permission",
+        ),
+        {"schema": SCHEMA},
+    )
+
+    source: Mapped[str] = mapped_column(Text, primary_key=True)
+    record_type: Mapped[str] = mapped_column(Text, primary_key=True)
+    cursor_token: Mapped[str | None] = mapped_column(Text)
+    watermark: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    permission_state: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default="unknown"
+    )
+    source_fingerprint: Mapped[str | None] = mapped_column(Text)
+    needs_resync: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    source_changed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    last_success_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(Text)
+    consecutive_failures: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0"
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=_tz_now, onupdate=datetime.now
+    )
 
 
 class ImportJob(Base):

@@ -1,3 +1,4 @@
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -13,6 +14,7 @@ def settings(**overrides):
         "sso_entry_url": "https://health.example.test",
         "sso_logout_url": "https://auth.example.test/logout",
         "auth_mode": "legacy-forward",
+        "legacy_forward_until": datetime.now(UTC) + timedelta(hours=1),
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -87,6 +89,26 @@ def test_login_endpoint_hands_direct_clients_to_platform(monkeypatch):
 
     assert response.status_code == 303
     assert response.headers["location"] == "https://health.example.test"
+
+
+def test_legacy_forward_window_expires_closed(monkeypatch):
+    from app import main
+
+    configured = settings(
+        legacy_forward_until=datetime.now(UTC) - timedelta(seconds=1)
+    )
+    assert auth.forward_identity(forward_headers(), "127.0.0.1", configured) is None
+    monkeypatch.setattr(main, "get_settings", lambda: configured)
+    client = TestClient(
+        main.app,
+        client=("127.0.0.1", 50000),
+        follow_redirects=False,
+    )
+    try:
+        assert client.get("/login").status_code == 503
+        assert client.get("/readyz").status_code == 503
+    finally:
+        client.close()
 
 
 def test_ip_prefixed_lan_entry_bypasses_browser_login(monkeypatch):

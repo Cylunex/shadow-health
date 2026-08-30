@@ -27,3 +27,5 @@ Browser <- Host-only HttpOnly opaque session cookie
 生产切换顺序：登记 `shadow-health` client、写入受限 secret 文件、部署应用、验证 callback，
 最后移除 Nginx `auth_request`。紧急回滚只能整体回滚上一个制品；
 `SHADOW_AUTH_MODE=legacy-forward` 仅用于短时回滚窗口，不作为长期双登录模式。
+该模式现在还必须设置带时区的 `SHADOW_LEGACY_FORWARD_UNTIL`，且截止时间不得超过启动时刻
+72 小时；到期后身份验证、登录入口和 `readyz` 都会失败，必须回到 OIDC 或发布新的受控回滚。

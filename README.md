@@ -40,4 +40,6 @@ uv run uvicorn app.main:app --reload
 
 领域说明、接口合同和迁移脚本位于 [docs](docs/)、[migrations](migrations/) 与
 [scripts](scripts/)。Shadow Agent/DSH 接入边界见 [Health Agent Plugin](docs/agent-plugin.md)。
+长期记录身份、Health Connect 游标、覆盖/来源证据与 Platform 恢复验证见
+[长期健康数据底座](docs/health-data-foundation.md)。
 医疗相关输出仅供个人记录和参考。

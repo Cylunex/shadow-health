@@ -39,12 +39,13 @@ from app.models import (
     ImportRaw,
     ReleaseLog,
     SleepSession,
+    SyncCursor,
     SyncState,
     WorkoutLog,
 )
 from app.services.autofill import autofill_fields
 from app.services.discipline import is_release_session
-from app.services.sleep import total_sleep_min as dedup_total_sleep_min
+from app.services.sleep import total_sleep_with_source
 from app.timeutil import now_local, parse_day_time, parse_event_time, parse_time_offset
 
 PARSER_VERSION = 1
@@ -528,10 +529,10 @@ class _Importer:
             # 重导 zip 不能用 zip 自身求和覆盖它们
             backfilled = 0
             for d in sorted(hours_by_wake):
-                total = dedup_total_sleep_min(self.db, d)
-                if total <= 0:
+                total, source = total_sleep_with_source(self.db, d)
+                if total <= 0 or source is None:
                     continue
-                if autofill_fields(self.db, d, SOURCE, {"sleep_hours": round(total / 60.0, 1)}):
+                if autofill_fields(self.db, d, source, {"sleep_hours": round(total / 60.0, 1)}):
                     backfilled += 1
             stats["sleep_hours_backfilled"] = backfilled
         self.set_range("sleep_stage", ranges)
@@ -796,6 +797,16 @@ class _Importer:
                 ins = pg_insert(SyncState).values(source=channel, watermark=self.max_ts)
                 self.db.execute(ins.on_conflict_do_update(
                     index_elements=["source"], set_={"watermark": ins.excluded.watermark}))
+            for record_type in ("steps", "weight", "sleep", "exercise", "heart_rate"):
+                cursor = pg_insert(SyncCursor).values(
+                    source="health_connect",
+                    record_type=record_type,
+                    watermark=self.max_ts,
+                )
+                self.db.execute(cursor.on_conflict_do_update(
+                    index_elements=["source", "record_type"],
+                    set_={"watermark": cursor.excluded.watermark},
+                ))
             self.report["watermark"] = self.max_ts.isoformat()
         ins = pg_insert(SyncState).values(
             source=SOURCE, last_success_at=now, consecutive_failures=0)

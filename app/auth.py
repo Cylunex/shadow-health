@@ -9,6 +9,7 @@ import ipaddress
 import secrets
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -50,6 +51,8 @@ def is_trusted_proxy(client_host: str, cidrs: tuple[str, ...]) -> bool:
 def forward_identity(
     headers: Mapping[str, str], client_host: str, settings: Settings
 ) -> ForwardIdentity | None:
+    if not legacy_forward_active(settings):
+        return None
     if not is_trusted_proxy(client_host, settings.trusted_proxy_cidrs):
         return None
     supplied_secret = headers.get("X-Shadow-Proxy-Secret", "")
@@ -74,6 +77,17 @@ def forward_identity(
         email=_safe_header(headers.get("Remote-Email", ""), 320),
         groups=groups,
     )
+
+
+def legacy_forward_active(settings: Settings) -> bool:
+    if getattr(settings, "auth_mode", "") != "legacy-forward":
+        return False
+    until = getattr(settings, "legacy_forward_until", None)
+    if not isinstance(until, datetime):
+        return False
+    if until.tzinfo is None:
+        return False
+    return datetime.now(UTC) < until.astimezone(UTC)
 
 
 def browser_identity(request: Request, settings: Settings):

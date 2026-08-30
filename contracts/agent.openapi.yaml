@@ -241,10 +241,19 @@ components:
         data_freshness:
           type: object
           additionalProperties: false
-          required: [observed_at, missing_ratio]
+          required: [observed_at, missing_ratio, coverage_days, sources, quality_score, latest_effective_date]
           properties:
             observed_at: { type: string, format: date-time }
             missing_ratio: { type: number, minimum: 0, maximum: 1 }
+            coverage_days:
+              type: object
+              additionalProperties: { type: integer, minimum: 0, maximum: 7 }
+            sources: { type: array, items: { type: string } }
+            quality_score: { type: number, minimum: 0, maximum: 1 }
+            latest_effective_date:
+              oneOf:
+                - { type: string, format: date }
+                - { type: "null" }
     NexusReviewCreate:
       type: object
       additionalProperties: false
@@ -324,13 +333,16 @@ components:
     HealthSummaryResult:
       type: object
       additionalProperties: false
-      required: [summary, resource_uri, date, indicators]
+      required: [summary, resource_uri, date, indicators, data_quality]
       properties:
         summary: { type: string, maxLength: 1200 }
         resource_uri: { type: string }
         date: { type: string, format: date }
         indicators:
           $ref: "#/components/schemas/HealthIndicators"
+        data_quality:
+          type: object
+          description: 字段级覆盖、来源与新鲜度证据；缺失值不等同于零。
     HealthTrendStatistics:
       type: object
       additionalProperties: false
@@ -344,7 +356,7 @@ components:
     HealthTrendResult:
       type: object
       additionalProperties: false
-      required: [summary, resource_uri, metric, days, data_points, statistics]
+      required: [summary, resource_uri, metric, days, data_points, statistics, data_quality]
       properties:
         summary: { type: string, maxLength: 1200 }
         resource_uri: { type: string }
@@ -354,6 +366,9 @@ components:
         data_points: { type: integer }
         statistics:
           $ref: "#/components/schemas/HealthTrendStatistics"
+        data_quality:
+          type: object
+          description: 覆盖天数、来源、新鲜度与是否足以形成趋势判断。
     HealthDraftFields:
       type: object
       additionalProperties: false

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 import os
+from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -63,6 +64,24 @@ class Settings:
         self.auth_mode: str = os.environ.get("SHADOW_AUTH_MODE", "oidc").strip().lower()
         if self.auth_mode not in {"oidc", "legacy-forward"}:
             raise ValueError("SHADOW_AUTH_MODE must be oidc or legacy-forward")
+        self.legacy_forward_until: datetime | None = None
+        if self.auth_mode == "legacy-forward":
+            raw_until = os.environ.get("SHADOW_LEGACY_FORWARD_UNTIL", "").strip()
+            try:
+                parsed_until = datetime.fromisoformat(raw_until.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise ValueError(
+                    "SHADOW_LEGACY_FORWARD_UNTIL is required as an ISO-8601 timestamp"
+                ) from exc
+            if parsed_until.tzinfo is None:
+                raise ValueError("SHADOW_LEGACY_FORWARD_UNTIL must include a timezone")
+            parsed_until = parsed_until.astimezone(UTC)
+            now = datetime.now(UTC)
+            if parsed_until <= now:
+                raise ValueError("SHADOW_LEGACY_FORWARD_UNTIL has expired")
+            if parsed_until > now + timedelta(hours=72):
+                raise ValueError("legacy-forward rollback windows may not exceed 72 hours")
+            self.legacy_forward_until = parsed_until
         self.sso_allowed_groups: tuple[str, ...] = _csv(
             "SHADOW_SSO_ALLOWED_GROUPS", "health-users,shadow-admins"
         )

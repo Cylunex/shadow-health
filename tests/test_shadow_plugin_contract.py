@@ -150,14 +150,18 @@ def machine_api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         )
         connection.exec_driver_sql(
             "CREATE TABLE health.workout_logs "
-            "(log_date DATE, duration_min INTEGER)"
+            "(log_date DATE, duration_min INTEGER, source TEXT DEFAULT 'manual', "
+            "updated_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL)"
         )
         connection.exec_driver_sql(
-            "CREATE TABLE health.daily_activity (log_date DATE, steps INTEGER)"
+            "CREATE TABLE health.daily_activity "
+            "(log_date DATE, steps INTEGER, source TEXT DEFAULT 'manual', "
+            "updated_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL)"
         )
         connection.exec_driver_sql(
             "CREATE TABLE health.body_metrics "
-            "(log_date DATE, weight_kg NUMERIC, sleep_hours NUMERIC, mood_score INTEGER)"
+            "(log_date DATE, weight_kg NUMERIC, sleep_hours NUMERIC, mood_score INTEGER, "
+            "autofilled JSON DEFAULT '{}', updated_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL)"
         )
         today = today_local().isoformat()
         connection.exec_driver_sql(
@@ -165,19 +169,22 @@ def machine_api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             (today, 820, 48),
         )
         connection.exec_driver_sql(
-            "INSERT INTO health.workout_logs VALUES (?, ?)",
+            "INSERT INTO health.workout_logs (log_date, duration_min) VALUES (?, ?)",
             (today, 35),
         )
         connection.exec_driver_sql(
-            "INSERT INTO health.daily_activity VALUES (?, ?)",
+            "INSERT INTO health.daily_activity (log_date, steps) VALUES (?, ?)",
             (today, 6800),
         )
         connection.exec_driver_sql(
-            "INSERT INTO health.body_metrics VALUES (?, ?, ?, ?)",
+            "INSERT INTO health.body_metrics "
+            "(log_date, weight_kg, sleep_hours, mood_score) VALUES (?, ?, ?, ?)",
             (today, 70.5, 7.2, 8),
         )
         connection.exec_driver_sql(
-            "INSERT INTO health.body_metrics VALUES (date(?, '-6 day'), ?, ?, ?)",
+            "INSERT INTO health.body_metrics "
+            "(log_date, weight_kg, sleep_hours, mood_score) "
+            "VALUES (date(?, '-6 day'), ?, ?, ?)",
             (today, 71.2, 6.8, 7),
         )
 
@@ -223,9 +230,14 @@ def test_machine_endpoints_return_bounded_summary_and_trend(machine_api) -> None
 
     assert summary.status_code == trend.status_code == 200
     assert summary.json()["indicators"]["steps"] == 6800
+    assert summary.json()["data_quality"]["coverage_ratio"] > 0
+    assert summary.json()["data_quality"]["sources"]
     assert "不构成诊断或治疗建议" in summary.json()["summary"]
     assert "bp_systolic" not in json.dumps(summary.json())
     assert trend.json()["data_points"] == 2
+    assert trend.json()["statistics"]["average"] is None
+    assert trend.json()["statistics"]["change"] is None
+    assert trend.json()["data_quality"]["sufficient_for_trend"] is False
     assert "series" not in trend.json()
     assert "不构成诊断或治疗建议" in trend.json()["summary"]
 
@@ -254,6 +266,8 @@ def test_weekly_suggestion_is_explainable_bounded_and_stable(machine_api) -> Non
     assert "近 7 天" in item["reason"]
     assert "不构成诊断或治疗建议" in item["reason"]
     assert 0 <= item["data_freshness"]["missing_ratio"] <= 1
+    assert item["data_freshness"]["coverage_days"]["steps"] >= 1
+    assert item["data_freshness"]["sources"]
 
 
 def test_machine_api_rejects_legacy_token_scope_and_resource_grant(machine_api) -> None:
