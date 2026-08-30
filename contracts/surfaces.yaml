@@ -6,6 +6,47 @@ presentation:
   icon: health
   color: "#14B8A6"
   order: 10
+entities:
+  - id: weight
+    label: 体重
+    class: measurement
+    source_surface_id: today
+    value_pointer: /indicators/weight_kg
+    unit: kg
+    icon: weight
+    sensitivity: sensitive
+    freshness_seconds: 172800
+    order: 10
+    action_ids: [weigh]
+  - id: sleep
+    label: 睡眠
+    class: measurement
+    source_surface_id: today
+    value_pointer: /indicators/sleep_hours
+    unit: 小时
+    icon: sleep
+    sensitivity: sensitive
+    freshness_seconds: 172800
+    order: 20
+    action_ids: [sleep]
+  - id: steps
+    label: 步数
+    class: counter
+    source_surface_id: today
+    value_pointer: /indicators/steps
+    unit: 步
+    sensitivity: personal
+    freshness_seconds: 86400
+    order: 30
+  - id: workout
+    label: 训练
+    class: measurement
+    source_surface_id: today
+    value_pointer: /indicators/workout_min
+    unit: 分钟
+    sensitivity: personal
+    freshness_seconds: 172800
+    order: 40
 surfaces:
   - id: today
     type: summary
