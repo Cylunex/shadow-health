@@ -13,6 +13,27 @@ surfaces:
     operation_id: get_health_profile_summary
     display:
       detail_pointer: /summary
+      metrics:
+        - id: weight
+          label: 体重
+          value_pointer: /indicators/weight_kg
+          unit: kg
+          tone: neutral
+        - id: sleep
+          label: 睡眠
+          value_pointer: /indicators/sleep_hours
+          unit: 小时
+          tone: neutral
+        - id: steps
+          label: 步数
+          value_pointer: /indicators/steps
+          unit: 步
+          tone: good
+        - id: workout
+          label: 训练
+          value_pointer: /indicators/workout_min
+          unit: 分钟
+          tone: good
   - id: weekly-suggestions
     type: suggestions
     capability: health.suggestions.read
@@ -23,6 +44,108 @@ surfaces:
     operation_id: create_nexus_health_review
     risk_level: L2
     intent_prefixes: [health.record, health.metric, health.meal, health.workout]
+  - id: weigh
+    type: quick-action
+    capability: health.records.draft
+    operation_id: create_nexus_health_review
+    risk_level: L2
+    action:
+      title: 记录体重
+      description: 不进入 Health，直接保存今天的体重
+      intent: health.metric.weight
+      icon: weight
+      order: 10
+      submit_label: 保存体重
+      success_message: 体重已写入 Health，并保留回执
+      summary_template: "记录体重 {weightKg} kg"
+      fields:
+        - id: recordType
+          label: 记录类型
+          type: hidden
+          required: true
+          default: metric
+        - id: weightKg
+          label: 体重
+          type: decimal
+          required: true
+          placeholder: 例如 72.4
+          unit: kg
+          minimum: 20
+          maximum: 400
+          step: 0.1
+        - id: effectiveDate
+          label: 日期
+          type: date
+          required: true
+          default: $today
+  - id: sleep
+    type: quick-action
+    capability: health.records.draft
+    operation_id: create_nexus_health_review
+    risk_level: L2
+    action:
+      title: 记录睡眠
+      description: 快速补充今天的睡眠时长
+      intent: health.metric.sleep
+      icon: sleep
+      order: 20
+      submit_label: 保存睡眠
+      success_message: 睡眠记录已写入 Health
+      summary_template: "记录睡眠 {sleepHours} 小时"
+      fields:
+        - id: recordType
+          label: 记录类型
+          type: hidden
+          required: true
+          default: metric
+        - id: sleepHours
+          label: 睡眠时长
+          type: decimal
+          required: true
+          placeholder: 例如 7.5
+          unit: 小时
+          minimum: 0
+          maximum: 24
+          step: 0.1
+        - id: effectiveDate
+          label: 日期
+          type: date
+          required: true
+          default: $today
+  - id: mood
+    type: quick-action
+    capability: health.records.draft
+    operation_id: create_nexus_health_review
+    risk_level: L2
+    action:
+      title: 记录状态
+      description: 用 1 到 10 分记录今天的主观状态
+      intent: health.metric.mood
+      icon: mood
+      order: 30
+      submit_label: 保存状态
+      success_message: 状态记录已写入 Health
+      summary_template: "记录今日状态 {moodScore} 分"
+      fields:
+        - id: recordType
+          label: 记录类型
+          type: hidden
+          required: true
+          default: metric
+        - id: moodScore
+          label: 状态评分
+          type: integer
+          required: true
+          placeholder: 1–10
+          unit: 分
+          minimum: 1
+          maximum: 10
+          step: 1
+        - id: effectiveDate
+          label: 日期
+          type: date
+          required: true
+          default: $today
   - id: review
     type: review
     capability: health.records.write

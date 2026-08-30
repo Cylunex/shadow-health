@@ -19,6 +19,12 @@ Shadow Health 是面向个人长期使用的健康记录与趋势中心。它统
 - Android 离线队列及失败补偿；
 - PostgreSQL 迁移、导入和审计基础。
 
+## Nexus 快捷操作
+
+Health 通过声明式 Surface 向 Nexus 提供体重、睡眠、步数和运动时长摘要，并上浮称重、睡眠、
+心情三个高频动作。Nexus 只收集字段并调用现有 Health Review 接口；Health 仍负责范围校验、
+幂等、最终写入和回执，完整健康页面与设备管理继续留在本项目。
+
 ## 本地开发
 
 ```bash
