@@ -57,12 +57,16 @@
   {# 壳内专属：按需开秤监听 3 分钟（常驻监听关着也能称），浏览器里不显示。
      内联 display:none——chip 的 display:inline-flex 会压过 hidden 属性 #}
   <button type="button" style="display:none" id="quick-scale-scan-btn"
-          onclick="ShellBridge.startScaleScan()"
+          onclick="shadowStartScaleScan().catch(function(){})"
           class="chip min-h-[44px] w-full">⚖️ 开秤监听 3 分钟（上秤即记）</button>
   <script>
-    if (window.ShellBridge && window.ShellBridge.startScaleScan) {
-      document.getElementById('quick-scale-scan-btn').style.display = '';
+    function revealQuickScaleScanButton() {
+      if (window.shadowHasScaleBridge && window.shadowHasScaleBridge()) {
+        document.getElementById('quick-scale-scan-btn').style.display = '';
+      }
     }
+    revealQuickScaleScanButton();
+    window.addEventListener('shadow-native-ready', revealQuickScaleScanButton, { once: true });
   </script>
 
   {# 心情分 1-10（两行各 5 个） #}

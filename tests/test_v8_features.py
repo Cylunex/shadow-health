@@ -356,7 +356,7 @@ def test_today_has_prominent_scale_scan_action(db, page):
     resp = page.get("/")
     assert resp.status_code == 200
     assert 'id="today-scale-scan-btn"' in resp.text
-    assert "window.ShellBridge.startScaleScan()" in resp.text
+    assert "window.shadowStartScaleScan()" in resp.text
     assert 'id="home-scale-status"' in resp.text
     assert "/fragments/today/scale-status" in resp.text
     assert "load, metrics-changed from:body" in resp.text

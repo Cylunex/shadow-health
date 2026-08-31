@@ -193,19 +193,22 @@
 {% block scripts %}
 <script>
   window.startHomeScaleScan = function () {
-    if (!(window.ShellBridge && window.ShellBridge.startScaleScan)) {
+    if (!(window.shadowHasScaleBridge && window.shadowHasScaleBridge())) {
       window.location.href = '{{ u('/scale') }}';
       return;
     }
-    window.ShellBridge.startScaleScan();
-    var status = document.getElementById('home-scale-status');
-    if (status && window.htmx) {
-      status.classList.remove('hidden');
-      window.htmx.ajax('GET', '{{ u('/fragments/today/scale-status') }}?start=1', {
-        target: '#home-scale-status',
-        swap: 'outerHTML'
-      });
-    }
+    window.shadowStartScaleScan().then(function () {
+      var status = document.getElementById('home-scale-status');
+      if (status && window.htmx) {
+        status.classList.remove('hidden');
+        window.htmx.ajax('GET', '{{ u('/fragments/today/scale-status') }}?start=1', {
+          target: '#home-scale-status',
+          swap: 'outerHTML'
+        });
+      }
+    }).catch(function () {
+      window.location.href = '{{ u('/scale') }}';
+    });
   };
 </script>
 {% endblock %}

@@ -7,12 +7,16 @@
   {# 壳内专属：一页完成 开监听 → 上秤 → 看结果；浏览器里只看状态。
      注意用内联 display:none——btn-primary 的 display:inline-flex 会压过 hidden 属性 #}
   <button type="button" style="display:none" id="scale-scan-btn"
-          onclick="ShellBridge.startScaleScan()"
+          onclick="shadowStartScaleScan().catch(function(){})"
           class="btn-primary w-full">⚖️ 开秤监听 3 分钟（上秤即记）</button>
   <script>
-    if (window.ShellBridge && window.ShellBridge.startScaleScan) {
-      document.getElementById('scale-scan-btn').style.display = '';
+    function revealScaleScanButton() {
+      if (window.shadowHasScaleBridge && window.shadowHasScaleBridge()) {
+        document.getElementById('scale-scan-btn').style.display = '';
+      }
     }
+    revealScaleScanButton();
+    window.addEventListener('shadow-native-ready', revealScaleScanButton, { once: true });
   </script>
 
   <div hx-get="{{ u('/fragments/scale/status') }}"

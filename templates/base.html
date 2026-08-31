@@ -168,6 +168,26 @@
   <div id="global-toast" class="fixed left-1/2 z-[60] hidden max-w-[92vw] -translate-x-1/2 rounded-xl border px-4 py-2.5 text-sm shadow-lg" style="bottom: calc(82px + env(safe-area-inset-bottom))"></div>
 
   <script>
+    (function () {
+      function nativeScaleBridge() {
+        var bridge = window.ShadowNativeBridge;
+        if (!bridge || bridge.moduleId !== 'health' || !Array.isArray(bridge.capabilities)) return null;
+        return bridge.capabilities.indexOf('health.scale') >= 0 ? bridge : null;
+      }
+      window.shadowHasScaleBridge = function () {
+        return !!nativeScaleBridge()
+          || !!(window.ShellBridge && window.ShellBridge.startScaleScan);
+      };
+      window.shadowStartScaleScan = function () {
+        var bridge = nativeScaleBridge();
+        if (bridge) return bridge.request('health.scale', 'health.scale.start', {});
+        if (window.ShellBridge && window.ShellBridge.startScaleScan) {
+          window.ShellBridge.startScaleScan();
+          return Promise.resolve({});
+        }
+        return Promise.reject(new Error('scale_bridge_unavailable'));
+      };
+    })();
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', function () {
         navigator.serviceWorker.register('{{ u('/sw.js') }}', { scope: '{{ u('/') }}' }).catch(function () {});
