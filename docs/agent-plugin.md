@@ -40,6 +40,18 @@ Nexus 只缓存审核所需的字段快照和 `shadow://health/drafts/{id}` 引�
 确认后该值进入对应 `DietLog.notes`；食物名称仍只进入 `free_text`/食物库身份，机器来源与识别
 依据仍只进入 `provenance`。旧记录不做括号文本推断或自动回填。
 
+餐图引用使用稳定 URI：
+
+```text
+shadow://health/meals/{YYYY-MM-DD}/{breakfast|lunch|snack|dinner}
+```
+
+Nexus 上传的私有图片仍由 Nexus 拥有。Nexus 以自己的 Platform Asset 凭据调用显式委派接口，
+把具体 Asset/Version 引用委派给 `health`；随后调用 Health 的
+`POST /profiles/{profile_id}/meal-asset-photos` 获取可重放回执，再以 GET 同路径回读。Health 只使用
+自己的 Asset service token 按 URI 解析、申请短时授权并代理图片，不接收 Nexus Token，不保存
+签名 URL 或 Blob。删除操作只释放 Health 的 `AssetReference`，不会删除 Platform 原始资产。
+
 旧 MCP 可继续服务现有本机工作流，但不是插件合同真相，也不被 DSH Builder 编译。
 
 ## 周度建议边界

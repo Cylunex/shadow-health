@@ -62,6 +62,42 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SuggestionList" }
+  /api/machine/v1/agent/profiles/{profile_id}/meal-asset-photos:
+    get:
+      operationId: list_health_meal_asset_photos
+      summary: Resolve Health-owned Platform Asset references for one meal
+      parameters:
+        - $ref: "#/components/parameters/ProfileId"
+        - name: date
+          in: query
+          required: true
+          schema: { type: string, format: date }
+        - name: meal
+          in: query
+          required: true
+          schema: { enum: [早餐, 午餐, 加餐, 晚餐] }
+      responses:
+        "200":
+          description: Stable references without signed URLs or Blob bytes
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MealAssetList" }
+    post:
+      operationId: attach_health_meal_asset_photo
+      summary: Attach an already authorized Platform Asset image to one meal
+      parameters:
+        - $ref: "#/components/parameters/ProfileId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MealAssetAttachmentInput" }
+      responses:
+        "201":
+          description: Idempotent attachment receipt
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MealAssetReceipt" }
   /api/machine/v1/agent/profiles/{profile_id}/drafts:
     get:
       operationId: list_pending_health_record_drafts
@@ -207,6 +243,47 @@ components:
       required: true
       schema: { type: string, pattern: "^hd_[a-f0-9]{32}$" }
   schemas:
+    MealAssetAttachmentInput:
+      type: object
+      additionalProperties: false
+      required: [effective_date, meal, asset_id, version_id]
+      properties:
+        effective_date: { type: string, format: date }
+        meal: { enum: [早餐, 午餐, 加餐, 晚餐] }
+        asset_id: { type: string, format: uuid }
+        version_id: { type: string, format: uuid }
+    MealAssetReceipt:
+      type: object
+      additionalProperties: false
+      required: [resource_uri, reference_id, asset_id, version_id, display_name, content_type, replayed]
+      properties:
+        resource_uri: { type: string }
+        reference_id: { type: string, format: uuid }
+        asset_id: { type: string, format: uuid }
+        version_id: { type: string, format: uuid }
+        display_name: { type: string }
+        content_type: { type: string, pattern: "^image/" }
+        replayed: { type: boolean }
+    MealAssetItem:
+      type: object
+      additionalProperties: false
+      required: [resource_uri, reference_id, asset_id, version_id, display_name, content_type]
+      properties:
+        resource_uri: { type: string }
+        reference_id: { type: string, format: uuid }
+        asset_id: { type: string, format: uuid }
+        version_id: { type: string, format: uuid }
+        display_name: { type: string }
+        content_type: { type: string, pattern: "^image/" }
+    MealAssetList:
+      type: object
+      additionalProperties: false
+      required: [resource_uri, items]
+      properties:
+        resource_uri: { type: string }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/MealAssetItem" }
     SuggestionList:
       type: object
       additionalProperties: false
@@ -318,6 +395,7 @@ components:
         - steps
         - workout_sessions
         - workout_min
+        - active_kcal
         - weight_kg
         - sleep_hours
         - mood_score
@@ -327,6 +405,7 @@ components:
         steps: { $ref: "#/components/schemas/NullableInteger" }
         workout_sessions: { type: integer }
         workout_min: { type: integer }
+        active_kcal: { $ref: "#/components/schemas/NullableInteger" }
         weight_kg: { $ref: "#/components/schemas/NullableNumber" }
         sleep_hours: { $ref: "#/components/schemas/NullableNumber" }
         mood_score: { $ref: "#/components/schemas/NullableInteger" }

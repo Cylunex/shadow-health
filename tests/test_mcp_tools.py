@@ -81,6 +81,19 @@ class FakeApi:
                 "updated": True,
                 "summary": f"{recorded['type']}#{recorded['row_id']} 已更新",
             })
+        if (method, path) == ("POST", "/api/agent/meal-asset-photos"):
+            return httpx.Response(201, json={
+                "resource_uri": f"shadow://health/meals/{recorded['date']}/lunch",
+                "reference_id": "reference-1",
+                "asset_id": recorded["asset_id"],
+                "version_id": recorded["version_id"],
+                "replayed": False,
+            })
+        if (method, path) == ("GET", "/api/agent/meal-asset-photos"):
+            return httpx.Response(200, json={
+                "resource_uri": f"shadow://health/meals/{recorded['date']}/lunch",
+                "items": [{"reference_id": "reference-1"}],
+            })
         if (method, path) == ("GET", "/api/agent/metrics/series"):
             return httpx.Response(200, json={
                 "field": recorded["field"], "days": int(recorded.get("days", 30)), "points": [],
@@ -215,6 +228,28 @@ def test_record_diet_self_reported_nutrition(api):
     p = api.ingest_bodies()[0]["records"][0]["payload"]
     assert p["food_id"] is None
     assert p["kcal"] == 200.0 and p["protein_g"] == 20.0
+
+
+def test_attach_and_query_meal_asset_photo_have_readable_receipts(api):
+    asset_id = "10000000-0000-4000-8000-000000000001"
+    version_id = "20000000-0000-4000-8000-000000000002"
+    attached = srv.attach_meal_asset_photo(
+        asset_id, version_id, "午餐", date=TEST_DATE
+    )
+    queried = srv.query_meal_asset_photos("午餐", date=TEST_DATE)
+    assert attached["asset_id"] == asset_id and attached["replayed"] is False
+    assert attached["resource_uri"] == f"shadow://health/meals/{TEST_DATE}/lunch"
+    assert queried["items"] == [{"reference_id": "reference-1"}]
+    body = next(
+        body for method, path, body in api.calls
+        if (method, path) == ("POST", "/api/agent/meal-asset-photos")
+    )
+    assert body == {
+        "asset_id": asset_id,
+        "version_id": version_id,
+        "meal": "午餐",
+        "date": TEST_DATE,
+    }
 
 
 # ---------- record_weight：全 None 报错 + 20 字段全进 payload ----------

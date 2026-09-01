@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import date
 from decimal import Decimal
@@ -182,3 +183,50 @@ def test_meal_copy_and_template_round_trip_notes(db, page, note_env) -> None:
         select(DietLog).where(DietLog.log_date == D3).order_by(DietLog.id)
     ).scalars().all()
     assert [row.notes for row in logged_rows] == ["食物库行备注", "只喝了半碗"]
+
+
+def test_diet_page_renders_proxies_and_unlinks_platform_asset_photo(
+    page, monkeypatch,
+) -> None:
+    from app.config import get_settings
+    from app.routers import diet
+    from app.services.platform_assets import MealAssetPhoto
+
+    reference_id = "30000000-0000-4000-8000-000000000003"
+    photo = MealAssetPhoto(
+        reference_id=reference_id,
+        asset_id="10000000-0000-4000-8000-000000000001",
+        version_id="20000000-0000-4000-8000-000000000002",
+        display_name="午餐照片.png",
+        content_type="image/png",
+    )
+    monkeypatch.setattr(get_settings(), "asset_base_url", "http://127.0.0.1:8400")
+    monkeypatch.setattr(
+        diet.platform_assets,
+        "list_meal_photos",
+        lambda day, meal: [photo] if meal == "午餐" else [],
+    )
+    released: list[tuple[str, date, str]] = []
+    monkeypatch.setattr(
+        diet.platform_assets,
+        "fetch_meal_photo",
+        lambda **_: (b"PNG", "image/png", "午餐照片.png"),
+    )
+    monkeypatch.setattr(
+        diet.platform_assets,
+        "release_meal_photo",
+        lambda *, reference_id, day, meal: released.append((reference_id, day, meal)),
+    )
+
+    html = page.get(f"/diet?d={D1.isoformat()}")
+    asset_url = f"/diet/asset-photos/{D1.isoformat()}/lunch/{reference_id}"
+    assert html.status_code == 200
+    assert asset_url in html.text and ">Asset<" in html.text
+    proxied = page.get(asset_url)
+    assert proxied.status_code == 200 and proxied.content == b"PNG"
+    assert proxied.headers["cache-control"] == "private, no-store"
+    unlinked = page.delete(asset_url)
+    assert unlinked.status_code == 200
+    assert released == [(reference_id, D1, "午餐")]
+    trigger = json.loads(unlinked.headers["hx-trigger"])
+    assert "原始资产仍保留" in trigger["toast"]

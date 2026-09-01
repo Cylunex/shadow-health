@@ -55,11 +55,11 @@
       </div>
       {% endfor %}
     </div>
-    {% if activity and (activity.distance_m or activity.active_kcal or activity.hr_avg) %}
+    {% if (activity and (activity.distance_m or activity.hr_avg)) or active_energy.kcal %}
     <p class="mt-3 text-xs text-slate-500 tabular-nums text-center">
-      {%- if activity.distance_m %}距离 {{ '%.1f' | format(activity.distance_m / 1000) }} km{% endif -%}
-      {%- if activity.active_kcal %} · 活动 {{ fmt(activity.active_kcal) }} kcal{% endif -%}
-      {%- if activity.hr_avg %} · 心率 {{ activity.hr_min or '—' }}/{{ activity.hr_avg }}/{{ activity.hr_max or '—' }}{% endif -%}
+      {%- if activity and activity.distance_m %}距离 {{ '%.1f' | format(activity.distance_m / 1000) }} km{% endif -%}
+      {%- if active_energy.kcal %} · 活动 {{ fmt(active_energy.kcal) }} kcal{% if active_energy.used_fallback %}（训练记录回退）{% endif %}{% endif -%}
+      {%- if activity and activity.hr_avg %} · 心率 {{ activity.hr_min or '—' }}/{{ activity.hr_avg }}/{{ activity.hr_max or '—' }}{% endif -%}
     </p>
     {% endif %}
   </section>

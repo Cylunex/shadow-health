@@ -268,6 +268,42 @@ def record_diet(items: list[DietItem], meal: str, date: str | None = None) -> di
 
 
 @mcp.tool()
+def attach_meal_asset_photo(
+    asset_id: str,
+    version_id: str,
+    meal: str,
+    date: str | None = None,
+) -> dict:
+    """把已由 Platform 授权给 Health 的 Asset 图片挂到某日餐次。
+    私有 Nexus 资产须先由 Nexus 调 Platform 显式委派；本工具不会使用或接收 Nexus Token。
+    返回稳定 resource_uri、reference_id 与 replayed，调用后应引用回执确认。"""
+    if meal not in MEALS:
+        raise ApiError(f"meal 必须是 {'/'.join(MEALS)} 之一：{meal!r}")
+    try:
+        asset_id = str(uuid.UUID(asset_id))
+        version_id = str(uuid.UUID(version_id))
+    except ValueError as exc:
+        raise ApiError("asset_id/version_id 必须是 UUID") from exc
+    date_str = _norm_date(date)
+    return _post("/api/agent/meal-asset-photos", {
+        "asset_id": asset_id,
+        "version_id": version_id,
+        "meal": meal,
+        "date": date_str,
+    })
+
+
+@mcp.tool()
+def query_meal_asset_photos(meal: str, date: str | None = None) -> dict:
+    """回读某日餐次已挂载的 Platform Asset 图片引用；不返回签名 URL 或图片字节。"""
+    if meal not in MEALS:
+        raise ApiError(f"meal 必须是 {'/'.join(MEALS)} 之一：{meal!r}")
+    return _get("/api/agent/meal-asset-photos", {
+        "date": _norm_date(date), "meal": meal,
+    })
+
+
+@mcp.tool()
 def record_weight(
     weight_kg: float | None = None,
     body_fat_pct: float | None = None,

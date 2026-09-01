@@ -19,7 +19,8 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models import BodyMetrics, DailyActivity, DietLog
+from app.models import BodyMetrics, DietLog
+from app.services.activity_energy import effective_activity_energy_map
 
 KCAL_PER_KG = 7700  # 1kg 体脂 ≈ 7700 kcal
 EMA_ALPHA_DAILY = 0.10  # 日衰减（≈10 天时间常数）
@@ -116,15 +117,7 @@ def energy_ledger(db: Session, start: date, end: date) -> dict[str, Any] | None:
         .where(BodyMetrics.log_date <= end, BodyMetrics.bmr_kcal.is_not(None))
         .order_by(BodyMetrics.log_date)
     ).all()
-    active_rows = {
-        d: float(v)
-        for d, v in db.execute(
-            select(DailyActivity.log_date, DailyActivity.active_kcal).where(
-                DailyActivity.log_date.between(start, end),
-                DailyActivity.active_kcal.is_not(None),
-            )
-        )
-    }
+    active_rows = effective_activity_energy_map(db, start, end)
     gap_sum = 0.0
     gap_days = 0
     bi = 0
@@ -135,7 +128,8 @@ def energy_ledger(db: Session, start: date, end: date) -> dict[str, Any] | None:
             bi += 1
         if cur_bmr is None:
             continue
-        gap_sum += intakes[d] - (cur_bmr + active_rows.get(d, 0.0))
+        active = active_rows.get(d)
+        gap_sum += intakes[d] - (cur_bmr + (active.kcal if active else 0.0))
         gap_days += 1
     if gap_days == 0:
         return None

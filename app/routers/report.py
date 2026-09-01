@@ -63,6 +63,7 @@ from app.routers.today import WEEKDAY_CN, _rings, _target_steps
 from app.routers.workout import SOURCE_LABELS
 from app.services import energy as energy_service
 from app.services import sleep
+from app.services.activity_energy import effective_activity_energy
 from app.timeutil import LOCAL_TZ, today_local
 
 router = APIRouter(dependencies=[Depends(require_login)])
@@ -168,6 +169,7 @@ def _habit_checklist(db: Session, d: date) -> tuple[list[dict[str, Any]], int]:
 
 def _daily_ctx(db: Session, d: date, today: date) -> dict[str, Any]:
     activity = db.get(DailyActivity, d)
+    active_energy = effective_activity_energy(db, d)
     steps = activity.steps if activity is not None else None
     target_steps = _target_steps(db)
 
@@ -239,6 +241,7 @@ def _daily_ctx(db: Session, d: date, today: date) -> dict[str, Any]:
         "weekday_cn": WEEKDAY_CN[d.isoweekday() - 1],
         "rings": _rings(db, d, steps, target_steps),
         "activity": activity,
+        "active_energy": active_energy,
         "wlogs": wlogs,
         "workout_min": workout_min,
         "training_load": training_load,

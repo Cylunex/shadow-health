@@ -28,6 +28,9 @@ description: 通过 shadow-health MCP 工具记录用户的饮食/训练/身体�
 3. `meal` 必须是 早餐/午餐/加餐/晚餐 之一；用户没说就按当前时间推
    （<10:30 早餐，<15:00 午餐，<17:00 加餐，之后晚餐），并在确认时带上餐次。
 4. 一顿多样东西合成**一次**调用（items 数组），不要拆多次。
+5. 用户提供的是已有 Platform Asset 餐图时，用 `attach_meal_asset_photo` 挂载并再用
+   `query_meal_asset_photos` 回读确认。私有 Nexus 资产必须先由 Nexus 以自己的凭据显式委派给
+   Health；不得要求或转用 Nexus Token，也不得保存签名 URL。
 
 ## 记训练（record_workout）
 

@@ -54,6 +54,17 @@ def _optional_https_url(name: str) -> str:
     return value
 
 
+def _optional_service_url(name: str) -> str:
+    value = os.environ.get(name, "").strip().rstrip("/")
+    if not value:
+        return ""
+    parsed = urlsplit(value)
+    loopback = parsed.hostname in {"127.0.0.1", "localhost", "::1"}
+    if not parsed.netloc or (parsed.scheme != "https" and not (loopback and parsed.scheme == "http")):
+        raise ValueError(f"{name} must use HTTPS except for a loopback HTTP endpoint")
+    return value
+
+
 class Settings:
     def __init__(self) -> None:
         _load_dotenv()
@@ -143,6 +154,10 @@ class Settings:
         self.photo_dir: Path = Path(
             os.environ.get("PHOTO_DIR") or (self.upload_dir / "photos")
         )
+        self.asset_base_url: str = _optional_service_url("SHADOW_ASSET_BASE_URL")
+        self.asset_service_token_file: str = os.environ.get(
+            "SHADOW_ASSET_SERVICE_TOKEN_FILE", ""
+        ).strip()
 
 
 @lru_cache

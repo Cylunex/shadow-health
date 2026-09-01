@@ -37,6 +37,7 @@ from __future__ import annotations
 import json
 import re
 import threading
+import uuid
 # date 别名：summary 的查询参数就叫 date（对 agent 最直觉），避免遮蔽
 from datetime import date as date_type, timedelta
 from typing import Any
@@ -58,6 +59,7 @@ from app.routers.offline import ingest_batch, parse_workout_payload
 from app.routers.report import _aggregate_month, _habit_checklist, _month_end, _month_start_of
 from app.routers.review import _aggregate_week, _week_start_of
 from app.services import llm
+from app.services import platform_assets
 from app.timeutil import now_local, today_local
 
 SOURCE = "agent"
@@ -151,6 +153,11 @@ def summary_data(db: Session, d: date_type) -> dict[str, Any]:
             "entries": entries,
         },
         "steps": activity.steps if activity is not None else None,
+        "active_energy": {
+            "kcal": s["active_kcal"],
+            "source": s["active_kcal_source"],
+            "used_fallback": s["active_kcal_fallback"],
+        },
         "workouts": workouts,
         "workout_min": sum(w.duration_min or 0 for w in wlogs),
         "weight_kg": _num(bm.weight_kg) if bm is not None else None,
@@ -184,6 +191,74 @@ def agent_summary(request: Request, date: str = "", db: Session = Depends(get_db
     else:
         d = today_local()
     return JSONResponse(summary_data(db, d))
+
+
+def _meal_asset_view(photo: platform_assets.MealAssetPhoto, d: date_type, meal: str) -> dict:
+    return {
+        "resource_uri": platform_assets.meal_resource_uri(d, meal),
+        "reference_id": photo.reference_id,
+        "asset_id": photo.asset_id,
+        "version_id": photo.version_id,
+        "display_name": photo.display_name,
+        "content_type": photo.content_type,
+    }
+
+
+def _parse_meal_asset_date(value: object) -> date_type:
+    day = date_type.fromisoformat(str(value))
+    if day > today_local() or day < today_local() - timedelta(days=366):
+        raise ValueError
+    return day
+
+
+@router.post("/api/agent/meal-asset-photos")
+async def agent_attach_meal_asset(request: Request) -> Response:
+    reject = _bearer_reject(request)
+    if reject is not None:
+        return reject
+    try:
+        if int(request.headers.get("content-length", "0") or 0) > 16 * 1024:
+            raise ValueError
+        body = await request.json()
+        if not isinstance(body, dict) or set(body) != {"asset_id", "version_id", "date", "meal"}:
+            raise ValueError
+        day = _parse_meal_asset_date(body["date"])
+        meal = str(body["meal"])
+        if meal not in MEALS:
+            raise ValueError
+        asset_id = str(uuid.UUID(str(body["asset_id"])))
+        version_id = str(uuid.UUID(str(body["version_id"])))
+        photo, replayed = platform_assets.attach_meal_photo(
+            day=day, meal=meal, asset_id=asset_id, version_id=version_id
+        )
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "餐图资产参数无效"}, status_code=400)
+    except platform_assets.PlatformAssetError:
+        return JSONResponse({"error": "Platform Asset 餐图挂载失败"}, status_code=502)
+    return JSONResponse({**_meal_asset_view(photo, day, meal), "replayed": replayed}, status_code=201)
+
+
+@router.get("/api/agent/meal-asset-photos")
+def agent_list_meal_assets(
+    request: Request, date: str = "", meal: str = "", db: Session = Depends(get_db)
+) -> Response:
+    del db  # 保持路由依赖生命周期一致；引用真相只在 Platform。
+    reject = _bearer_reject(request)
+    if reject is not None:
+        return reject
+    try:
+        day = _parse_meal_asset_date(date)
+        if meal not in MEALS:
+            raise ValueError
+        photos = platform_assets.list_meal_photos(day, meal)
+    except ValueError:
+        return JSONResponse({"error": "date 或 meal 无效"}, status_code=400)
+    except platform_assets.PlatformAssetError:
+        return JSONResponse({"error": "Platform Asset 餐图查询失败"}, status_code=502)
+    return JSONResponse({
+        "resource_uri": platform_assets.meal_resource_uri(day, meal),
+        "items": [_meal_asset_view(photo, day, meal) for photo in photos],
+    })
 
 
 @router.get("/api/agent/report/weekly")

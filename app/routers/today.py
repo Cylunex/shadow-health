@@ -25,6 +25,7 @@ from app.models import (
     WorkoutLog,
 )
 from app.services.discipline import discipline_summary
+from app.services.activity_energy import effective_activity_energy
 from app.services.sleep import sessions_by_date
 from app.timeutil import now_local, today_local
 
@@ -114,6 +115,7 @@ def _overview_ctx(db: Session, day: date | None = None) -> dict:
         }
 
     activity = db.get(DailyActivity, day)
+    active_energy = effective_activity_energy(db, day)
     workout_count, workout_min = db.execute(
         select(
             func.count(),
@@ -162,7 +164,9 @@ def _overview_ctx(db: Session, day: date | None = None) -> dict:
         "steps": activity.steps if activity is not None else None,
         "steps_label": f"{activity.steps:,}" if activity is not None and activity.steps is not None else "—",
         "target_steps": _target_steps(db),
-        "active_kcal": round(float(activity.active_kcal)) if activity is not None and activity.active_kcal is not None else None,
+        "active_kcal": round(active_energy.kcal) if active_energy.kcal is not None else None,
+        "active_kcal_source": active_energy.source,
+        "active_kcal_fallback": active_energy.used_fallback,
         "workout_count": int(workout_count),
         "workout_min": int(workout_min),
         "workout_label": session_label(latest_workout.session_type) if latest_workout else "",

@@ -33,7 +33,7 @@
     <div class="relative mt-5 grid grid-cols-3 divide-x divide-slate-700/30">
       <a href="{{ u('/metrics') }}?metric=steps" class="pr-3"><p class="metric-label text-emerald-400/80">步数</p><p class="mt-2 text-2xl font-medium tabular-nums">{{ steps_label }}</p><p class="mt-1 text-[10px] text-slate-600">目标 {{ '{:,}'.format(target_steps) }}</p></a>
       <a href="{{ u('/workout') }}" class="px-3"><p class="metric-label text-cyan-400/80">运动分钟</p><p class="mt-2 text-2xl font-medium tabular-nums">{{ workout_min }}</p><p class="mt-1 truncate text-[10px] text-slate-600">{{ workout_label or '今日累计' }}</p></a>
-      <div class="pl-3"><p class="metric-label text-amber-400/80">活动消耗</p><p class="mt-2 text-2xl font-medium tabular-nums">{{ active_kcal if active_kcal is not none else '—' }}</p><p class="mt-1 text-[10px] text-slate-600">kcal</p></div>
+      <div class="pl-3"><p class="metric-label text-amber-400/80">活动消耗</p><p class="mt-2 text-2xl font-medium tabular-nums">{{ active_kcal if active_kcal is not none else '—' }}</p><p class="mt-1 text-[10px] text-slate-600">kcal{% if active_kcal_fallback %} · 训练记录回退{% endif %}</p></div>
     </div>
   </section>
 

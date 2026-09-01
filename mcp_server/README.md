@@ -41,6 +41,7 @@ MCP 层未再加 Bearer。不要把监听改成 0.0.0.0。
 | 工具 | 说明 |
 |---|---|
 | `record_diet(items, meal, date?)` | 批量饮食条目；items 支持 `food_id`（search_food 拿的，营养按食物库自动算）或自报营养值，并可用 `notes` 保存份量、做法或估算依据 |
+| `attach_meal_asset_photo(asset_id, version_id, meal, date?)` | 将已委派给 Health 的 Platform Asset 图片挂到稳定餐次 URI；回执可重放 |
 | `record_weight(20 个指标字段…, date?)` | metric 通道：体重/体脂/围度/血压/静息心率/血氧/睡眠/心情等（metrics 页全白名单），同日=覆盖更新 |
 | `record_workout(type, duration_min, date?, distance_km?, calories?, rpe?, notes?)` | 手动训练 |
 | `record_habit(habit_name, date?, count?)` | 按名称打卡；count=N 为计数累计 +N（喝水等 target>1 习惯），缺省为声明式打卡（同日重复 skipped） |
@@ -50,6 +51,7 @@ MCP 层未再加 Bearer。不要把监听改成 0.0.0.0。
 | 工具 | 说明 |
 |---|---|
 | `query_today_summary(date?)` | 当日全景（含 diet/workout 行 id、饮食 `notes`、当日全部非空指标字段） |
+| `query_meal_asset_photos(meal, date?)` | 回读餐次 Asset 引用，不返回签名 URL 或图片字节 |
 | `query_weekly_report(week?)` | 周报数据（YYYY-Wnn，缺省=上一完整周） |
 | `query_monthly_report(month?)` | 月报数据（YYYY-MM，缺省=上一完整月；与报告中心同口径） |
 | `query_metric_series(field, days?)` | 单指标逐日序列（20 指标字段 + steps；manual=是否手动值） |

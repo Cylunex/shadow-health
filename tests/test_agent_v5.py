@@ -458,6 +458,43 @@ def test_ai_tools_record_diet_then_delete(client, db, env):
     assert "不存在" in again["error"]
 
 
+def test_agent_meal_asset_attach_and_readback(client, monkeypatch):
+    from app.routers import agent
+    from app.services.platform_assets import MealAssetPhoto
+
+    asset_id = "10000000-0000-4000-8000-000000000001"
+    version_id = "20000000-0000-4000-8000-000000000002"
+    photo = MealAssetPhoto(
+        reference_id="30000000-0000-4000-8000-000000000003",
+        asset_id=asset_id,
+        version_id=version_id,
+        display_name="测试午餐.png",
+        content_type="image/png",
+    )
+    monkeypatch.setattr(
+        agent.platform_assets, "attach_meal_photo", lambda **_: (photo, False)
+    )
+    monkeypatch.setattr(
+        agent.platform_assets, "list_meal_photos", lambda *_: [photo]
+    )
+    attached = client.post("/api/agent/meal-asset-photos", json={
+        "asset_id": asset_id,
+        "version_id": version_id,
+        "date": TEST_DATE.isoformat(),
+        "meal": "午餐",
+    })
+    assert attached.status_code == 201
+    assert attached.json()["resource_uri"] == (
+        f"shadow://health/meals/{TEST_DATE.isoformat()}/lunch"
+    )
+    listed = client.get(
+        "/api/agent/meal-asset-photos",
+        params={"date": TEST_DATE.isoformat(), "meal": "午餐"},
+    )
+    assert listed.status_code == 200
+    assert listed.json()["items"][0]["reference_id"] == photo.reference_id
+
+
 def test_ai_tools_search_food_and_query_summary(client, db, env):
     from app.services.ai_tools import run_tool
 

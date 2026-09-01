@@ -70,7 +70,7 @@ def test_shadow_plugin_contract_matches_machine_routes() -> None:
     actual_routes = _application_routes(app)
 
     assert plugin.plugin_id == "shadow-health"
-    assert plugin.version == "0.1.1"
+    assert plugin.version == "0.1.2"
     assert declared_routes <= actual_routes
     assert {item["id"] for item in plugin.agent_manifest["capabilities"]} == {
         "health.summary.read",
@@ -150,12 +150,12 @@ def machine_api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         )
         connection.exec_driver_sql(
             "CREATE TABLE health.workout_logs "
-            "(log_date DATE, duration_min INTEGER, source TEXT DEFAULT 'manual', "
+            "(log_date DATE, duration_min INTEGER, calories INTEGER, source TEXT DEFAULT 'manual', "
             "updated_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL)"
         )
         connection.exec_driver_sql(
             "CREATE TABLE health.daily_activity "
-            "(log_date DATE, steps INTEGER, hr_min INTEGER, source TEXT DEFAULT 'manual', "
+            "(log_date DATE, steps INTEGER, active_kcal NUMERIC, hr_min INTEGER, source TEXT DEFAULT 'manual', "
             "field_sources JSON DEFAULT '{}', "
             "updated_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL)"
         )
@@ -170,8 +170,8 @@ def machine_api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             (today, 820, 48),
         )
         connection.exec_driver_sql(
-            "INSERT INTO health.workout_logs (log_date, duration_min) VALUES (?, ?)",
-            (today, 35),
+            "INSERT INTO health.workout_logs (log_date, duration_min, calories) VALUES (?, ?, ?)",
+            (today, 35, 240),
         )
         connection.exec_driver_sql(
             "INSERT INTO health.daily_activity (log_date, steps, hr_min, field_sources) "
@@ -236,6 +236,10 @@ def test_machine_endpoints_return_bounded_summary_and_trend(machine_api) -> None
 
     assert summary.status_code == trend.status_code == heart_rate.status_code == 200
     assert summary.json()["indicators"]["steps"] == 6800
+    assert summary.json()["indicators"]["active_kcal"] == 240
+    assert summary.json()["data_quality"]["indicators"]["active_kcal"]["sources"] == [
+        "workout_log_fallback"
+    ]
     assert summary.json()["data_quality"]["coverage_ratio"] > 0
     assert summary.json()["data_quality"]["sources"]
     assert "不构成诊断或治疗建议" in summary.json()["summary"]
@@ -309,6 +313,62 @@ def test_machine_api_rejects_legacy_token_scope_and_resource_grant(machine_api) 
             )
         )
     assert denied == 3
+
+
+def test_machine_meal_asset_attach_readback_and_scope_denial(
+    machine_api, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.routers import machine_agent
+    from app.services.platform_assets import MealAssetPhoto
+
+    client, tokens, _ = machine_api
+    day = today_local()
+    asset_id = "10000000-0000-4000-8000-000000000001"
+    version_id = "20000000-0000-4000-8000-000000000002"
+    photo = MealAssetPhoto(
+        reference_id="30000000-0000-4000-8000-000000000003",
+        asset_id=asset_id,
+        version_id=version_id,
+        display_name="测试午餐.png",
+        content_type="image/png",
+    )
+    monkeypatch.setattr(
+        machine_agent.platform_assets, "attach_meal_photo", lambda **_: (photo, False)
+    )
+    monkeypatch.setattr(
+        machine_agent.platform_assets, "list_meal_photos", lambda *_: [photo]
+    )
+    attached = client.post(
+        "/api/machine/v1/agent/profiles/primary/meal-asset-photos",
+        headers=_bearer(tokens["health-helper"]),
+        json={
+            "effective_date": day.isoformat(),
+            "meal": "午餐",
+            "asset_id": asset_id,
+            "version_id": version_id,
+        },
+    )
+    assert attached.status_code == 201, attached.text
+    assert attached.json()["resource_uri"].endswith(f"/{day.isoformat()}/lunch")
+    readback = client.get(
+        "/api/machine/v1/agent/profiles/primary/meal-asset-photos",
+        headers=_bearer(tokens["health-helper"]),
+        params={"date": day.isoformat(), "meal": "午餐"},
+    )
+    assert readback.status_code == 200
+    assert readback.json()["items"][0]["asset_id"] == asset_id
+    denied = client.post(
+        "/api/machine/v1/agent/profiles/primary/meal-asset-photos",
+        headers=_bearer(tokens["summary-only"]),
+        json={
+            "effective_date": day.isoformat(),
+            "meal": "午餐",
+            "asset_id": asset_id,
+            "version_id": version_id,
+        },
+    )
+    assert denied.status_code == 403
+    assert denied.json()["error"]["code"] == "scope_forbidden"
 
 
 def test_draft_endpoint_is_pending_resource_granted_and_idempotent(machine_api) -> None:

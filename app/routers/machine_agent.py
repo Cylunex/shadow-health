@@ -33,6 +33,8 @@ from app.models import (
     DietLog,
     WorkoutLog,
 )
+from app.services import platform_assets
+from app.services.activity_energy import effective_activity_energy
 from app.timeutil import today_local
 
 router = APIRouter(prefix="/api/machine/v1/agent")
@@ -54,6 +56,7 @@ SUMMARY_INDICATORS = (
     "steps",
     "workout_sessions",
     "workout_min",
+    "active_kcal",
     "weight_kg",
     "sleep_hours",
     "mood_score",
@@ -124,6 +127,35 @@ def _metric_evidence(
         "freshness": _freshness_status(present=present, effective_day=effective_day),
         "sources": sorted(sources or set()),
     }
+
+
+def _meal_asset_response(
+    photo: platform_assets.MealAssetPhoto, day: date_type, meal: str
+) -> dict[str, Any]:
+    return {
+        "resource_uri": platform_assets.meal_resource_uri(day, meal),
+        "reference_id": photo.reference_id,
+        "asset_id": photo.asset_id,
+        "version_id": photo.version_id,
+        "display_name": photo.display_name,
+        "content_type": photo.content_type,
+    }
+
+
+def _validate_meal_asset_payload(raw: Any) -> tuple[date_type, str, str, str]:
+    if not isinstance(raw, dict) or set(raw) != {
+        "effective_date", "meal", "asset_id", "version_id",
+    }:
+        raise ValueError
+    day = date_type.fromisoformat(str(raw["effective_date"]))
+    if day > today_local() or day < today_local() - timedelta(days=366):
+        raise ValueError
+    meal = str(raw["meal"])
+    if meal not in platform_assets.MEAL_SLUGS:
+        raise ValueError
+    asset_id = str(uuid.UUID(str(raw["asset_id"])))
+    version_id = str(uuid.UUID(str(raw["version_id"])))
+    return day, meal, asset_id, version_id
 
 
 class MachineHealthService:
@@ -205,10 +237,15 @@ class MachineHealthService:
             "steps": int(activity.steps) if activity and activity.steps is not None else None,
             "workout_sessions": int(workout.sessions),
             "workout_min": int(workout.minutes),
+            "active_kcal": None,
             "weight_kg": _number(metrics.weight_kg) if metrics else None,
             "sleep_hours": _number(metrics.sleep_hours) if metrics else None,
             "mood_score": int(metrics.mood_score) if metrics and metrics.mood_score else None,
         }
+        active_energy = effective_activity_energy(self.db, day)
+        values["active_kcal"] = (
+            round(active_energy.kcal) if active_energy.kcal is not None else None
+        )
         diet_present = int(diet.records) > 0
         workout_present = int(workout.sessions) > 0
         metric_sources = _json_object(metrics.autofilled) if metrics else {}
@@ -252,6 +289,22 @@ class MachineHealthService:
                 sources=workout_sources,
                 last_updated_at=workout_updated,
             ),
+            "active_kcal": _metric_evidence(
+                present=values["active_kcal"] is not None,
+                effective_day=day,
+                sources=(
+                    {"workout_log_fallback"}
+                    if active_energy.used_fallback
+                    else {active_energy.source}
+                    if active_energy.kcal is not None
+                    else set()
+                ),
+                last_updated_at=(
+                    workout_updated
+                    if active_energy.source.startswith("workouts")
+                    else activity.updated_at if activity else workout_updated
+                ),
+            ),
         }
         for field in ("weight_kg", "sleep_hours", "mood_score"):
             source = metric_sources.get(field) or "manual"
@@ -275,6 +328,8 @@ class MachineHealthService:
                 if workout_present else "训练未记录"
             ),
         ]
+        if values["active_kcal"] is not None:
+            parts.append(f"活动消耗 {values['active_kcal']} kcal")
         if values["sleep_hours"] is not None:
             parts.append(f"睡眠 {values['sleep_hours']:g} 小时")
         if values["weight_kg"] is not None:
@@ -741,6 +796,126 @@ def list_health_suggestions(
         resource_uri=evidence,
     )
     return JSONResponse(result)
+
+
+@router.post("/profiles/{profile_id}/meal-asset-photos", status_code=201)
+async def attach_health_meal_asset_photo(
+    request: Request,
+    profile_id: str,
+    service: MachineHealthService = Depends(get_machine_health_service),
+) -> JSONResponse:
+    capability = "health.records.write"
+    principal, request_id = _authorize(
+        request, service, profile_id, capability, "records:write"
+    )
+    try:
+        body = await _read_bounded_body(request, MAX_DRAFT_BODY_BYTES)
+        day, meal, asset_id, version_id = _validate_meal_asset_payload(json.loads(body))
+        photo, replayed = platform_assets.attach_meal_photo(
+            day=day, meal=meal, asset_id=asset_id, version_id=version_id
+        )
+    except (UnicodeDecodeError, ValueError, json.JSONDecodeError) as exc:
+        service.audit(
+            request_id=request_id,
+            principal=principal,
+            capability=capability,
+            profile_id=profile_id,
+            outcome="rejected",
+            status_code=400,
+            detail_code="invalid_meal_asset",
+        )
+        service.commit_audit()
+        raise MachineAPIError(
+            400, "invalid_meal_asset", "Meal asset attachment is invalid."
+        ) from exc
+    except platform_assets.PlatformAssetError as exc:
+        service.audit(
+            request_id=request_id,
+            principal=principal,
+            capability=capability,
+            profile_id=profile_id,
+            outcome="failed",
+            status_code=502,
+            detail_code="asset_unavailable",
+        )
+        service.commit_audit()
+        raise MachineAPIError(
+            502, "asset_unavailable", "Platform Asset could not attach the meal photo."
+        ) from exc
+    result = {**_meal_asset_response(photo, day, meal), "replayed": replayed}
+    service.audit(
+        request_id=request_id,
+        principal=principal,
+        capability=capability,
+        profile_id=profile_id,
+        outcome="replayed" if replayed else "success",
+        status_code=201,
+        resource_uri=result["resource_uri"],
+    )
+    return JSONResponse(result, status_code=201)
+
+
+@router.get("/profiles/{profile_id}/meal-asset-photos")
+def list_health_meal_asset_photos(
+    request: Request,
+    profile_id: str,
+    date_value: str = Query(alias="date"),
+    meal: str = Query(),
+    service: MachineHealthService = Depends(get_machine_health_service),
+) -> JSONResponse:
+    capability = "health.summary.read"
+    principal, request_id = _authorize(
+        request, service, profile_id, capability, "summary:read"
+    )
+    try:
+        day = date_type.fromisoformat(date_value)
+        if day > today_local() or day < today_local() - timedelta(days=366):
+            raise ValueError
+        if meal not in platform_assets.MEAL_SLUGS:
+            raise ValueError
+        photos = platform_assets.list_meal_photos(day, meal)
+    except ValueError as exc:
+        service.audit(
+            request_id=request_id,
+            principal=principal,
+            capability=capability,
+            profile_id=profile_id,
+            outcome="rejected",
+            status_code=400,
+            detail_code="invalid_meal_asset_query",
+        )
+        service.commit_audit()
+        raise MachineAPIError(
+            400, "invalid_meal_asset_query", "Meal asset query is invalid."
+        ) from exc
+    except platform_assets.PlatformAssetError as exc:
+        service.audit(
+            request_id=request_id,
+            principal=principal,
+            capability=capability,
+            profile_id=profile_id,
+            outcome="failed",
+            status_code=502,
+            detail_code="asset_unavailable",
+        )
+        service.commit_audit()
+        raise MachineAPIError(
+            502, "asset_unavailable", "Platform Asset could not resolve meal photos."
+        ) from exc
+    resource_uri = platform_assets.meal_resource_uri(day, meal)
+    service.audit(
+        request_id=request_id,
+        principal=principal,
+        capability=capability,
+        profile_id=profile_id,
+        outcome="success",
+        status_code=200,
+        resource_uri=resource_uri,
+    )
+    return JSONResponse({
+        "resource_uri": resource_uri,
+        "items": [_meal_asset_response(photo, day, meal) for photo in photos],
+    })
 
 
 @router.post("/profiles/{profile_id}/drafts", status_code=201)

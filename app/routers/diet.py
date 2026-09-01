@@ -13,6 +13,8 @@
 - POST   /diet/photos              餐次照片上传（multipart：d + meal + file，存 photo_dir）
 - GET    /diet/photos/{id}         照片文件（登录后可见，FileResponse）
 - DELETE /diet/photos/{id}         删除照片（文件 + 行）
+- GET/DELETE /diet/asset-photos/{date}/{meal_slug}/{reference_id}
+                                   代理读取或解绑 Platform Asset 餐图；不删除物理资产
 - GET    /fragments/diet/day?d=    （契约外补充）四餐分组列表片段，diet-changed 被动刷新
 - GET    /fragments/diet/summary?d= 日汇总片段（今日面板也用）
 - GET    /fragments/diet/chips     近 30 天频次 top8 chips 片段
@@ -46,9 +48,11 @@ from app.db import get_db
 from app.deps import require_login, templates
 from app.diet_notes import parse_diet_notes
 from app.models import (
-    AppSetting, BodyMetrics, DailyActivity, DietLog, DietPhoto, Food, MealTemplate,
+    AppSetting, BodyMetrics, DietLog, DietPhoto, Food, MealTemplate,
     OffProduct, Recipe, WorkoutLog,
 )
+from app.services.activity_energy import effective_activity_energy
+from app.services import platform_assets
 from app.timeutil import now_local, today_local
 
 router = APIRouter(dependencies=[Depends(require_login)])
@@ -281,11 +285,24 @@ def _day_ctx(db: Session, d: date) -> dict:
         select(DietPhoto).where(DietPhoto.log_date == d).order_by(DietPhoto.id)
     ).scalars():
         photos_by_meal.setdefault(p.meal, []).append(_photo_view(db, p))
+    asset_photos_by_meal: dict[str, list[platform_assets.MealAssetPhoto]] = {
+        m: [] for m in MEALS
+    }
+    asset_photos_unavailable = False
+    if get_settings().asset_base_url:
+        try:
+            for meal in MEALS:
+                asset_photos_by_meal[meal] = platform_assets.list_meal_photos(d, meal)
+        except platform_assets.PlatformAssetError:
+            # Platform 短暂不可用不影响本地 DietPhoto 和饮食记录主链路。
+            asset_photos_unavailable = True
     meal_groups = [
         {
             "meal": meal,
             "rows": items,
             "photos": photos_by_meal[meal],
+            "asset_photos": asset_photos_by_meal[meal],
+            "meal_slug": platform_assets.MEAL_SLUGS[meal],
             "kcal": sum((r["log"].kcal or Decimal(0)) for r in items),
             "protein": sum((r["log"].protein_g or Decimal(0)) for r in items),
             "carb": sum((r["log"].carb_g or Decimal(0)) for r in items),
@@ -299,6 +316,7 @@ def _day_ctx(db: Session, d: date) -> dict:
         "d": d,
         "meal_groups": meal_groups,
         "ai_on": llm.is_vision_configured(db),
+        "asset_photos_unavailable": asset_photos_unavailable,
         "fmt": _fmt,
     }
 
@@ -358,11 +376,8 @@ def _summary_ctx(db: Session, d: date) -> dict:
         .order_by(BodyMetrics.log_date.desc())
         .limit(1)
     ).scalar_one_or_none()
-    activity = db.get(DailyActivity, d)
-    active_kcal = (
-        float(activity.active_kcal)
-        if activity is not None and activity.active_kcal is not None else None
-    )
+    active_energy = effective_activity_energy(db, d)
+    active_kcal = active_energy.kcal
     energy_gap = burn = None
     if bmr is not None:
         burn = round(bmr + (active_kcal or 0))
@@ -384,6 +399,9 @@ def _summary_ctx(db: Session, d: date) -> dict:
         "energy_gap": energy_gap,
         "burn": burn,
         "burn_has_active": active_kcal is not None,
+        "active_kcal": round(active_kcal) if active_kcal is not None else None,
+        "active_kcal_source": active_energy.source,
+        "active_kcal_fallback": active_energy.used_fallback,
         "train_day_bonus": train_day_bonus,
         "fmt": _fmt,
     }
@@ -1058,6 +1076,41 @@ def diet_photo_delete(photo_id: int, db: Session = Depends(get_db)):
     db.delete(photo)
     db.flush()
     return Response(status_code=200, content="", headers=dict(HX_TRIGGER))
+
+
+@router.get("/diet/asset-photos/{day}/{meal_slug}/{reference_id}")
+def diet_asset_photo_file(day: date, meal_slug: str, reference_id: str):
+    try:
+        meal = platform_assets.meal_from_slug(meal_slug)
+        content, content_type, _display_name = platform_assets.fetch_meal_photo(
+            reference_id=reference_id, day=day, meal=meal
+        )
+    except (ValueError, platform_assets.PlatformAssetError) as exc:
+        raise HTTPException(status_code=404, detail="餐图不存在或暂不可用") from exc
+    return Response(
+        content=content,
+        media_type=content_type,
+        headers={
+            "Cache-Control": "private, no-store",
+            "Content-Disposition": "inline",
+        },
+    )
+
+
+@router.delete("/diet/asset-photos/{day}/{meal_slug}/{reference_id}")
+def diet_asset_photo_release(day: date, meal_slug: str, reference_id: str):
+    try:
+        meal = platform_assets.meal_from_slug(meal_slug)
+        platform_assets.release_meal_photo(
+            reference_id=reference_id, day=day, meal=meal
+        )
+    except (ValueError, platform_assets.PlatformAssetError) as exc:
+        raise HTTPException(status_code=404, detail="餐图引用不存在或暂不可用") from exc
+    return Response(
+        status_code=200,
+        content="",
+        headers=_hx_trigger("已从本餐解绑资产照片；原始资产仍保留在 Platform"),
+    )
 
 
 @router.post("/diet/photos/{photo_id}/analyze")
