@@ -141,6 +141,13 @@
     </div>
     <p class="text-xs text-slate-600 -mt-1">选食物库条目时四项营养按用量自动算，无需手填。</p>
 
+    <label class="block">
+      <span class="field-label">备注（可空）</span>
+      <textarea name="notes" rows="2" maxlength="1000" autocomplete="off"
+                placeholder="份量、做法、估算依据或当时感受；不会写进食物名称"
+                class="field text-sm resize-y"></textarea>
+    </label>
+
     <div id="diet-form-msg" class="text-xs empty:hidden"></div>
     <button type="submit" class="btn-primary w-full">记一笔</button>
   </form>

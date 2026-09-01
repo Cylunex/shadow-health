@@ -78,6 +78,11 @@ TOOL_DEFS: list[dict[str, Any]] = [
                             "protein_g": {"type": "number"},
                             "fat_g": {"type": "number"},
                             "carb_g": {"type": "number"},
+                            "notes": {
+                                "type": "string",
+                                "maxLength": 1000,
+                                "description": "本条饮食的补充说明，不要并入食物名",
+                            },
                         },
                         "required": ["name"],
                     },
@@ -227,6 +232,7 @@ def _run_record_diet(db: Session, args: dict[str, Any]) -> dict[str, Any]:
             "protein_g": it.get("protein_g"),
             "fat_g": it.get("fat_g"),
             "carb_g": it.get("carb_g"),
+            "notes": it.get("notes"),
         }))
     out = _ingest(db, records)
     if "error" in out:

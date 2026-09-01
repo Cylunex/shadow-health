@@ -15,6 +15,7 @@ import json
 
 import httpx
 import pytest
+from pydantic import ValidationError
 
 pytest.importorskip("mcp", reason="mcp 依赖组未装（uv sync --group mcp）")
 
@@ -187,7 +188,10 @@ def test_record_diet_rejects_empty_items(api):
 
 def test_record_diet_food_id_in_payload(api):
     out = srv.record_diet(
-        [srv.DietItem(name="牛肉面", food_id=42, amount_g=300.0)],
+        [srv.DietItem(
+            name="牛肉面", food_id=42, amount_g=300.0,
+            notes="小份，汤只喝了一半",
+        )],
         meal="午餐", date=TEST_DATE,
     )
     assert out["date"] == TEST_DATE and out["new"] == 1
@@ -200,6 +204,7 @@ def test_record_diet_food_id_in_payload(api):
     assert rec["payload"]["free_text"] == "牛肉面"
     assert rec["payload"]["amount_g"] == 300.0
     assert rec["payload"]["meal"] == "午餐"
+    assert rec["payload"]["notes"] == "小份，汤只喝了一半"
 
 
 def test_record_diet_self_reported_nutrition(api):
@@ -295,6 +300,21 @@ def test_update_record_dedup_window(api):
     # 请求体走 /api/agent/update 且原样携参
     body = [b for m, p, b in api.calls if (m, p) == ("POST", "/api/agent/update")][0]
     assert body == {"type": "diet", "row_id": 5, "fields": {"kcal": 300.0}}
+
+
+def test_update_record_passes_diet_notes_without_changing_name(api):
+    srv.update_record("diet", 8, {"notes": "份量按包装估算"})
+    body = [b for m, p, b in api.calls if (m, p) == ("POST", "/api/agent/update")][0]
+    assert body == {
+        "type": "diet",
+        "row_id": 8,
+        "fields": {"notes": "份量按包装估算"},
+    }
+
+
+def test_diet_item_rejects_oversized_notes():
+    with pytest.raises(ValidationError):
+        srv.DietItem(name="面", notes="x" * 1001)
 
 
 # ---------- query_metric_series：field 白名单 ----------

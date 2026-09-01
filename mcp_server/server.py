@@ -221,6 +221,11 @@ class DietItem(BaseModel):
     protein_g: float | None = Field(default=None, description="蛋白质 g")
     carb_g: float | None = Field(default=None, description="碳水 g")
     fat_g: float | None = Field(default=None, description="脂肪 g")
+    notes: str | None = Field(
+        default=None,
+        max_length=1000,
+        description="本条饮食的人类可读备注，如份量、做法或估算依据；不要并入食物名",
+    )
 
 
 # ---------- 工具（16 个：写 5 + 查 8 + 纠错 2 + 分析 1，宁少勿滥） ----------
@@ -252,6 +257,7 @@ def record_diet(items: list[DietItem], meal: str, date: str | None = None) -> di
             "protein_g": i.protein_g,
             "carb_g": i.carb_g,
             "fat_g": i.fat_g,
+            "notes": i.notes,
         })
         for i in items
     ]
@@ -484,7 +490,7 @@ def update_record(type: str, row_id: int, fields: dict) -> dict:
     """改口修正：部分更新一条 diet 或 workout 记录（不必删了重记）。
     type ∈ diet/workout；row_id 从记录回执或 query_today_summary 取。
     fields 只写要改的键：diet 可改 meal/free_text/amount_g/kcal/protein_g/
-    fat_g/carb_g（食物关联记录只能改 meal/amount_g，营养自动重算）；
+    fat_g/carb_g/notes（食物关联记录可改 meal/amount_g/notes，营养自动重算）；
     workout 可改 session_type/duration_min/distance_km/calories/rpe/notes
     （传 null 清空可选字段）。外部同步来源（三星/Keep）禁改（403）。
     修改前先向用户复述改动内容并确认；确认话术引用返回的 summary。"""

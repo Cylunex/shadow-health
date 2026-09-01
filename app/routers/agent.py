@@ -30,7 +30,7 @@ Authorization 头跨站伪造不了）：
   下次同步复活，且不是 agent 记错的东西
 - POST /api/agent/update      {type, row_id, fields}：改口修正（V5，不必删了
   重记）。只动 fields 里出现的键；校验与编辑表单同口径；workout 外部来源
-  403 同 delete；食物关联 diet 行只能改 meal/amount_g（营养按食物库重算）
+  403 同 delete；食物关联 diet 行可改 meal/amount_g/notes（营养按食物库重算）
 """
 from __future__ import annotations
 
@@ -47,6 +47,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
+from app.diet_notes import parse_diet_notes
 from app.models import (
     AppSetting, BodyMetrics, DailyActivity, DietLog, Food, WorkoutLog,
 )
@@ -99,6 +100,7 @@ def summary_data(db: Session, d: date_type) -> dict[str, Any]:
             "amount_g": _num(log.amount_g),
             "kcal": _num(log.kcal),
             "protein_g": _num(log.protein_g),
+            "notes": log.notes,
         }
         for log, fname in db.execute(
             select(DietLog, Food.name)
@@ -444,7 +446,9 @@ async def agent_analysis_run(request: Request, db: Session = Depends(get_db)) ->
 
 # ---------- 改口修正（不必删了重记） ----------
 
-_DIET_UPDATE_FIELDS = ("meal", "free_text", "amount_g", "kcal", "protein_g", "fat_g", "carb_g")
+_DIET_UPDATE_FIELDS = (
+    "meal", "free_text", "amount_g", "kcal", "protein_g", "fat_g", "carb_g", "notes",
+)
 _WORKOUT_UPDATE_FIELDS = ("session_type", "duration_min", "distance_km", "calories", "rpe", "notes")
 
 
@@ -472,10 +476,10 @@ def update_record(db: Session, rtype: str, row_id: int, fields: dict[str, Any]) 
                     raise ValueError(f"meal 不在词表内：{meal!r}")
                 log.meal = meal
             if log.food_id is not None:
-                # 食物关联行：营养值按食物库自动计算，只能改 meal/amount_g（UI 同约束）
+                # 食物关联行：名称与营养值由食物库维护；备注仍属于本次记录，可独立修改。
                 locked = set(fields) & {"free_text", "kcal", "protein_g", "fat_g", "carb_g"}
                 if locked:
-                    return 400, {"error": "食物关联记录的营养值按食物库计算，只能改 meal/amount_g"}
+                    return 400, {"error": "食物关联记录的名称与营养值由食物库维护，只能改 meal/amount_g/notes"}
                 if "amount_g" in fields:
                     amount = _parse_decimal(fields["amount_g"], "用量", 5000)
                     if amount is None:
@@ -497,6 +501,8 @@ def update_record(db: Session, rtype: str, row_id: int, fields: dict[str, Any]) 
                 ):
                     if key in fields:
                         setattr(log, key, _parse_decimal(fields[key], label, hi))
+            if "notes" in fields:
+                log.notes = parse_diet_notes(fields["notes"])
         except ValueError as exc:
             return 400, {"error": str(exc)}
         db.flush()

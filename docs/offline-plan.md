@@ -38,7 +38,7 @@
 ```json
 {"records": [
   {"type": "habit",   "client_id": "uuid", "date": "2026-07-11", "payload": {"habit_id": 3, "done_count": 1}},
-  {"type": "diet",    "client_id": "uuid", "date": "2026-07-11", "payload": {"meal": "午餐", "free_text": "牛肉面", "kcal": 550, "protein_g": 25}},
+  {"type": "diet",    "client_id": "uuid", "date": "2026-07-11", "payload": {"meal": "午餐", "free_text": "牛肉面", "kcal": 550, "protein_g": 25, "notes": "小份，热量为估算"}},
   {"type": "workout", "client_id": "uuid", "date": "2026-07-11", "payload": {"session_type": "跑步", "duration_min": 30, "distance_km": 5.2, "rpe": 6}},
   {"type": "metric",  "client_id": "uuid", "date": "2026-07-11", "payload": {"weight_kg": 71.5, "sleep_hours": 7.5}}
 ]}
@@ -52,7 +52,7 @@
   - habit → habit_logs `ON CONFLICT (habit_id, log_date) DO NOTHING`
     （声明式「该日已做」，不用 toggle 翻转语义，重放安全；服务端校验 habit 存在且 active）
   - diet → DietLog 直插（parse_status 门控挡重复补发；数值直接复用 diet 页
-    `_parse_decimal`，同界值同舍入防漂移）
+    `_parse_decimal`，同界值同舍入防漂移）；可选 `notes` 独立保存补充说明，绝不拼入食物名
   - workout → WorkoutLog `source='manual'` + `external_id='offline-{client_id}'`
     （部分唯一索引现成，天然幂等；界值对齐 workout 页表单）
   - metric → **视同手动保存：直接覆盖 + mark_manual**（队列 FIFO 补发，同日多条

@@ -45,6 +45,12 @@
       </label>
       {% endif %}
     </div>
+    <label class="block">
+      <span class="field-label">备注（可空）</span>
+      <textarea name="notes" rows="2" maxlength="1000" autocomplete="off"
+                placeholder="份量、做法、估算依据或当时感受"
+                class="field text-sm resize-y">{{ log.notes or '' }}</textarea>
+    </label>
     {% if error %}<div class="text-xs text-red-400">{{ error }}</div>{% endif %}
     <div class="grid grid-cols-2 gap-2">
       <button type="button"

@@ -144,7 +144,7 @@ def machine_api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             "CREATE TABLE health.diet_logs "
             "(id INTEGER PRIMARY KEY AUTOINCREMENT, log_date DATE NOT NULL, meal TEXT, "
             "food_id INTEGER, free_text TEXT, amount_g NUMERIC, kcal NUMERIC, "
-            "protein_g NUMERIC, fat_g NUMERIC, carb_g NUMERIC, provenance JSON, "
+            "protein_g NUMERIC, fat_g NUMERIC, carb_g NUMERIC, notes TEXT, provenance JSON, "
             "created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL, "
             "updated_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL)"
         )
@@ -551,7 +551,7 @@ def test_pending_health_drafts_can_be_federated_and_rejected_from_nexus(machine_
 
 
 def test_standard_nexus_review_protocol_creates_lists_and_commits(machine_api) -> None:
-    client, tokens, _ = machine_api
+    client, tokens, session_factory = machine_api
     headers = {
         **_bearer(tokens["health-helper"]),
         "Idempotency-Key": "standard-health-review-0001",
@@ -568,6 +568,10 @@ def test_standard_nexus_review_protocol_creates_lists_and_commits(machine_api) -
                 "meal": "午餐",
                 "mealName": "测试套餐",
                 "kcal": 520,
+                "mealItemsJson": json.dumps([
+                    {"name": "测试米饭", "kcal": 220, "notes": "实际吃了约八成"},
+                    {"name": "测试鸡肉", "kcal": 300, "notes": "去皮后估算"},
+                ], ensure_ascii=False),
             },
         },
     )
@@ -577,6 +581,8 @@ def test_standard_nexus_review_protocol_creates_lists_and_commits(machine_api) -
     assert review["domain"] == "health"
     assert review["state"] == "pending"
     assert review["fields"]["mealName"] == "测试套餐"
+    projected_items = json.loads(review["fields"]["mealItemsJson"])
+    assert projected_items[0]["notes"] == "实际吃了约八成"
 
     listed = client.get(
         "/api/machine/v1/agent/nexus/reviews?profile_id=primary",
@@ -592,4 +598,15 @@ def test_standard_nexus_review_protocol_creates_lists_and_commits(machine_api) -
     )
     assert committed.status_code == 200, committed.text
     assert committed.json()["state"] == "committed"
-    assert committed.json()["receipt"].startswith("shadow://health/diet/")
+    assert committed.json()["receipt"].startswith("shadow://health/diet/batches/")
+    with session_factory() as session:
+        rows = session.execute(
+            text(
+                "SELECT free_text, notes FROM health.diet_logs "
+                "WHERE free_text IN ('测试米饭', '测试鸡肉') ORDER BY id"
+            )
+        ).all()
+    assert [(row.free_text, row.notes) for row in rows] == [
+        ("测试米饭", "实际吃了约八成"),
+        ("测试鸡肉", "去皮后估算"),
+    ]

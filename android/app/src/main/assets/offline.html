@@ -78,6 +78,8 @@
     <div><label for="dietProtein">蛋白质 g（可选）</label>
       <input id="dietProtein" type="number" inputmode="decimal" min="0" max="1000"></div>
   </div>
+  <label for="dietNotes">备注（可选）</label>
+  <input id="dietNotes" maxlength="1000" placeholder="份量、做法或估算依据">
   <button class="save" onclick="saveDiet()">暂存饮食</button>
 </section>
 
@@ -212,6 +214,8 @@
     var text = $('dietText').value.trim();
     if (!text) { toast('先写点吃了什么'); return; }
     var p = { meal: $('meal').value, free_text: text };
+    var notes = $('dietNotes').value.trim();
+    if (notes) p.notes = notes;
     var kcal = num('dietKcal');
     if (kcal !== null) {
       // 与服务端界值一致：越界记录服务端只留档标失败、不会入饮食表，得当场拦
@@ -225,6 +229,7 @@
     }
     if (enq('diet', p)) {
       $('dietText').value = ''; $('dietKcal').value = ''; $('dietProtein').value = '';
+      $('dietNotes').value = '';
     }
   };
 

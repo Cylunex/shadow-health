@@ -41,11 +41,25 @@ def test_record_date_rejects_future_ancient_and_garbage(bad):
 
 
 def test_diet_payload_normal():
-    got = parse_diet_payload({"meal": "午餐", "free_text": "牛肉面", "kcal": 550, "protein_g": 25})
+    got = parse_diet_payload({
+        "meal": "午餐", "free_text": "牛肉面", "kcal": 550, "protein_g": 25,
+        "notes": "  小份，汤未喝完  ",
+    })
     assert got["meal"] == "午餐"
     assert got["free_text"] == "牛肉面"
     assert got["kcal"] == Decimal("550.0")
     assert got["fat_g"] is None
+    assert got["notes"] == "小份，汤未喝完"
+
+
+def test_diet_payload_food_id_keeps_notes_separate_from_name():
+    got = parse_diet_payload({
+        "meal": "午餐", "food_id": 42, "free_text": "不应落库的显示名",
+        "notes": "称重 180g",
+    })
+    assert got["food_id"] == 42
+    assert got["free_text"] is None
+    assert got["notes"] == "称重 180g"
 
 
 @pytest.mark.parametrize("payload", [
@@ -53,6 +67,8 @@ def test_diet_payload_normal():
     {"meal": "午餐"},                                # 缺 free_text
     {"meal": "午餐", "free_text": "面", "kcal": "nan"},   # 非法数值
     {"meal": "午餐", "free_text": "面", "kcal": 99999},   # 越界
+    {"meal": "午餐", "free_text": "面", "notes": {"bad": "shape"}},  # 非文本备注
+    {"meal": "午餐", "free_text": "面", "notes": "x" * 1001},  # 备注越界
 ])
 def test_diet_payload_rejects(payload):
     with pytest.raises(ValueError):

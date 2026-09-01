@@ -217,6 +217,9 @@ class DietLog(TimestampMixin, Base):
     __table_args__ = (
         CheckConstraint("meal IN ('早餐','午餐','晚餐','加餐')", name="ck_meal"),
         CheckConstraint("food_id IS NOT NULL OR free_text IS NOT NULL", name="ck_diet_target"),
+        CheckConstraint(
+            "notes IS NULL OR char_length(notes) <= 1000", name="ck_diet_notes_length"
+        ),
         Index("idx_diet_logs_date", "log_date"),
         {"schema": SCHEMA},
     )
@@ -231,6 +234,7 @@ class DietLog(TimestampMixin, Base):
     protein_g: Mapped[float | None] = mapped_column(Numeric(5, 1))
     fat_g: Mapped[float | None] = mapped_column(Numeric(5, 1))
     carb_g: Mapped[float | None] = mapped_column(Numeric(6, 1))
+    notes: Mapped[str | None] = mapped_column(Text)
     provenance: Mapped[dict | None] = mapped_column(JSONB)
 
 
@@ -258,7 +262,7 @@ class DietPhoto(Base):
 # ---------- 3.4 运动训练 ----------
 class MealTemplate(Base):
     """组合菜谱（V6 P5）：某餐的可复用快照，一键整组记录。
-    items: [{food_id?, free_text?, amount_g?, kcal?, protein_g?, fat_g?, carb_g?}]"""
+    items: [{food_id?, free_text?, amount_g?, kcal?, protein_g?, fat_g?, carb_g?, notes?}]"""
     __tablename__ = "meal_templates"
     __table_args__ = ({"schema": SCHEMA},)
 

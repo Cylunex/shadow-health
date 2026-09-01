@@ -239,8 +239,10 @@ def test_agent_diet_food_id_macros_from_library(client, db, env):
     from app.models import DietLog
 
     _, food = env
-    rec = _rec("diet", {"meal": "午餐", "food_id": food.id, "amount_g": 200,
-                        "kcal": 1})  # agent 自报的 kcal 应被忽略，按食物库重算
+    rec = _rec("diet", {
+        "meal": "午餐", "food_id": food.id, "amount_g": 200, "kcal": 1,
+        "notes": "两人分食，我吃约一半",
+    })  # agent 自报的 kcal 应被忽略，按食物库重算
     r = client.post("/api/ingest/agent", json={"records": [rec]})
     j = r.json()
     assert j["new"] == 1
@@ -253,6 +255,11 @@ def test_agent_diet_food_id_macros_from_library(client, db, env):
     assert float(log.kcal) == 300.0       # 150 kcal/100g × 200g（服务端算的）
     assert float(log.protein_g) == 21.0   # 10.5 × 2
     assert float(log.carb_g) == 40.0
+    assert log.notes == "两人分食，我吃约一半"
+    summary = client.get(f"/api/agent/summary?date={TEST_DATE.isoformat()}").json()
+    entry = next(item for item in summary["diet"]["entries"] if item["id"] == log.id)
+    assert entry["name"] == food.name
+    assert entry["notes"] == "两人分食，我吃约一半"
 
 
 def test_agent_diet_food_id_missing_fails(client, db, env):
@@ -385,12 +392,15 @@ def test_agent_update_food_linked_diet(client, db, env):
     assert "食物关联" in r.json()["error"]
     # 改 amount_g 合法：冗余营养按食物库重算
     r2 = client.post("/api/agent/update", json={
-        "type": "diet", "row_id": row_id, "fields": {"amount_g": 100},
+        "type": "diet", "row_id": row_id,
+        "fields": {"amount_g": 100, "notes": "修正为净重 100g"},
     })
     assert r2.status_code == 200
     db.expire_all()
     log = db.get(DietLog, row_id)
     assert float(log.amount_g) == 100.0 and float(log.kcal) == 150.0
+    assert log.notes == "修正为净重 100g"
+    assert log.free_text is None
 
 
 # ---------- agent_name 留档归属 ----------
@@ -420,7 +430,10 @@ def test_ai_tools_record_diet_then_delete(client, db, env):
     out = run_tool(db, "record_diet", {
         "meal": "午餐",
         "date": TEST_DATE.isoformat(),
-        "items": [{"name": "测试AI面", "kcal": 500, "protein_g": 20}],
+        "items": [{
+            "name": "测试AI面", "kcal": 500, "protein_g": 20,
+            "notes": "热量来自包装标示",
+        }],
     })
     assert "error" not in out
     assert out["date"] == TEST_DATE.isoformat()
@@ -432,7 +445,9 @@ def test_ai_tools_record_diet_then_delete(client, db, env):
 
     blob = _blob(db, f"diet-{res['client_id']}")
     assert blob["agent"] == "内置AI"
-    assert db.get(DietLog, res["row_id"]).free_text == "测试AI面"
+    created = db.get(DietLog, res["row_id"])
+    assert created.free_text == "测试AI面"
+    assert created.notes == "热量来自包装标示"
 
     deleted = run_tool(db, "delete_record", {"type": "diet", "row_id": res["row_id"]})
     assert deleted["deleted"] is True and "测试AI面" in deleted["summary"]

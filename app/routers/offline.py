@@ -49,6 +49,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.db import get_db
+from app.diet_notes import parse_diet_notes
 from app.models import DietLog, Food, Habit, HabitLog, ImportRaw, WorkoutLog
 from app.routers.diet import (
     MEALS, _auto_catalog_food, _food_macros, _last_amount, _parse_decimal,
@@ -153,6 +154,7 @@ def parse_diet_payload(payload: dict) -> dict[str, Any]:
         "protein_g": _parse_decimal(payload.get("protein_g"), "蛋白质", 1000),
         "fat_g": _parse_decimal(payload.get("fat_g"), "脂肪", 1000),
         "carb_g": _parse_decimal(payload.get("carb_g"), "碳水", 2000),
+        "notes": parse_diet_notes(payload.get("notes")),
     }
 
 

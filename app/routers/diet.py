@@ -44,6 +44,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.db import get_db
 from app.deps import require_login, templates
+from app.diet_notes import parse_diet_notes
 from app.models import (
     AppSetting, BodyMetrics, DailyActivity, DietLog, DietPhoto, Food, MealTemplate,
     OffProduct, Recipe, WorkoutLog,
@@ -485,6 +486,7 @@ async def diet_log_create(request: Request, db: Session = Depends(get_db)):
         protein = _parse_decimal(form.get("protein_g"), "蛋白质", 1000)
         fat = _parse_decimal(form.get("fat_g"), "脂肪", 1000)
         carb = _parse_decimal(form.get("carb_g"), "碳水", 2000)
+        notes = parse_diet_notes(form.get("notes"))
     except ValueError as exc:
         return _form_msg(request, error=str(exc))
 
@@ -503,6 +505,7 @@ async def diet_log_create(request: Request, db: Session = Depends(get_db)):
         log = DietLog(
             log_date=log_date, meal=meal, food_id=food.id,
             amount_g=amount, kcal=kcal, protein_g=protein, fat_g=fat, carb_g=carb,
+            notes=notes,
         )
         name = food.name
     else:
@@ -512,6 +515,7 @@ async def diet_log_create(request: Request, db: Session = Depends(get_db)):
         log = DietLog(
             log_date=log_date, meal=meal, free_text=free_text,
             amount_g=amount, kcal=kcal, protein_g=protein, fat_g=fat, carb_g=carb,
+            notes=notes,
         )
         name = free_text
         # 带克数+热量的新食物自动进食物库（下次可搜索/chip 直选）
@@ -546,12 +550,14 @@ async def diet_log_update(log_id: int, request: Request, db: Session = Depends(g
         protein = _parse_decimal(form.get("protein_g"), "蛋白质", 1000)
         fat = _parse_decimal(form.get("fat_g"), "脂肪", 1000)
         carb = _parse_decimal(form.get("carb_g"), "碳水", 2000)
+        notes = parse_diet_notes(form.get("notes"))
     except ValueError as exc:
         return templates.TemplateResponse(
             request, "fragments/diet_log_edit.html", _edit_ctx(db, log, error=str(exc))
         )
     if meal in MEALS:
         log.meal = meal
+    log.notes = notes
     if log.food_id is not None:
         food = db.get(Food, log.food_id)
         if amount is not None:
@@ -640,12 +646,13 @@ async def diet_meal_copy(request: Request, db: Session = Depends(get_db)):
             kcal, protein, fat, carb = _food_macros(food, r.amount_g)
             db.add(DietLog(
                 log_date=day, meal=meal, food_id=food.id, amount_g=r.amount_g,
-                kcal=kcal, protein_g=protein, fat_g=fat, carb_g=carb,
+                kcal=kcal, protein_g=protein, fat_g=fat, carb_g=carb, notes=r.notes,
             ))
         else:
             db.add(DietLog(
                 log_date=day, meal=meal, free_text=r.free_text or "—", amount_g=r.amount_g,
                 kcal=r.kcal, protein_g=r.protein_g, fat_g=r.fat_g, carb_g=r.carb_g,
+                notes=r.notes,
             ))
     db.flush()
     return Response(
@@ -694,7 +701,11 @@ async def diet_template_save(request: Request, db: Session = Depends(get_db)):
     items = []
     for r in rows:
         if r.food_id is not None:
-            items.append({"food_id": r.food_id, "amount_g": float(r.amount_g) if r.amount_g else None})
+            items.append({
+                "food_id": r.food_id,
+                "amount_g": float(r.amount_g) if r.amount_g else None,
+                "notes": r.notes,
+            })
         else:
             items.append({
                 "free_text": r.free_text,
@@ -703,6 +714,7 @@ async def diet_template_save(request: Request, db: Session = Depends(get_db)):
                 "protein_g": float(r.protein_g) if r.protein_g is not None else None,
                 "fat_g": float(r.fat_g) if r.fat_g is not None else None,
                 "carb_g": float(r.carb_g) if r.carb_g is not None else None,
+                "notes": r.notes,
             })
     existing = db.execute(
         select(MealTemplate).where(MealTemplate.name == name)
@@ -745,6 +757,7 @@ async def diet_template_log(template_id: int, request: Request, db: Session = De
             db.add(DietLog(
                 log_date=day, meal=meal, food_id=food.id, amount_g=amount,
                 kcal=kcal, protein_g=protein, fat_g=fat, carb_g=carb,
+                notes=parse_diet_notes(it.get("notes")),
             ))
         else:
             db.add(DietLog(
@@ -752,6 +765,7 @@ async def diet_template_log(template_id: int, request: Request, db: Session = De
                 amount_g=amount,
                 kcal=it.get("kcal"), protein_g=it.get("protein_g"),
                 fat_g=it.get("fat_g"), carb_g=it.get("carb_g"),
+                notes=parse_diet_notes(it.get("notes")),
             ))
         n += 1
     db.flush()

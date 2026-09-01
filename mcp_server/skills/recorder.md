@@ -23,7 +23,8 @@ description: 通过 shadow-health MCP 工具记录用户的饮食/训练/身体�
 1. **优先 `search_food(关键词)` 拿 food_id**：命中就把 `food_id + amount_g(克)`
    填进 items——营养由服务端按食物库自动算，你不用估。
 2. 库里没有的才自报营养：估 `kcal/protein_g/fat_g/carb_g`（中式家常口径），
-   并在确认话术里注明「营养为估算」。
+   并在确认话术里注明「营养为估算」。份量、做法和估算依据写入 item 的 `notes`，
+   **不要拼进 `name`**；食物库命中时也可以单独填写 `notes`。
 3. `meal` 必须是 早餐/午餐/加餐/晚餐 之一；用户没说就按当前时间推
    （<10:30 早餐，<15:00 午餐，<17:00 加餐，之后晚餐），并在确认时带上餐次。
 4. 一顿多样东西合成**一次**调用（items 数组），不要拆多次。
@@ -51,7 +52,8 @@ description: 通过 shadow-health MCP 工具记录用户的饮食/训练/身体�
 
 - **改**（记错数值/餐次/时长）：`query_today_summary` 找到 row_id → 向用户复述
   该条内容确认 → `update_record(type, row_id, fields)`（只传要改的键）→
-  引用返回 summary 复述改成了什么。食物关联的饮食行只能改 meal/amount_g。
+  引用返回 summary 复述改成了什么。食物关联的饮食行可改 meal/amount_g/notes，
+  但不能改食物名称或营养快照。
 - **删**（整条记错）：同样先找 row_id 复述确认 → `delete_record` → 引用返回
   summary 复述删了什么。仅 diet/workout 可删；三星/Keep 同步来源会 403，
   如实告知「同步数据不能删，会被下次同步复活」。

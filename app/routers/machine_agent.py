@@ -17,6 +17,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db import get_db
+from app.diet_notes import DIET_NOTES_MAX_LENGTH, parse_diet_notes
 from app.machine_auth import (
     MachineAPIError,
     MachinePrincipal,
@@ -552,6 +553,7 @@ class MachineHealthService:
                     protein_g=item.get("protein_g"),
                     fat_g=item.get("fat_g"),
                     carb_g=item.get("carb_g"),
+                    notes=item.get("notes"),
                     provenance={
                         **provenance,
                         "meal_name": fields["name"],
@@ -1174,6 +1176,8 @@ def _nexus_health_payload(raw: Any) -> dict[str, Any]:
         }.items():
             if source in fields:
                 native[target] = fields[source]
+        if "notes" in fields:
+            native["notes"] = fields["notes"]
         items_json = fields.get("mealItemsJson")
         if items_json is not None:
             items = json.loads(str(items_json))
@@ -1354,7 +1358,9 @@ def _validate_metric_fields(fields: dict[str, Any]) -> dict[str, Any]:
 
 
 def _validate_meal_fields(fields: dict[str, Any]) -> dict[str, Any]:
-    allowed = {"meal", "name", "amount_g", "kcal", "protein_g", "fat_g", "carb_g", "items"}
+    allowed = {
+        "meal", "name", "amount_g", "kcal", "protein_g", "fat_g", "carb_g", "notes", "items",
+    }
     if set(fields) - allowed or fields.get("meal") not in {"早餐", "午餐", "晚餐", "加餐"}:
         raise ValueError
     name = fields.get("name")
@@ -1370,6 +1376,11 @@ def _validate_meal_fields(fields: dict[str, Any]) -> dict[str, Any]:
     }.items():
         if key in fields:
             result[key] = _bounded_number(fields[key], 0, high)
+    if "notes" in fields:
+        notes = fields["notes"]
+        if not isinstance(notes, str) or len(notes.strip()) > DIET_NOTES_MAX_LENGTH:
+            raise ValueError
+        result["notes"] = parse_diet_notes(notes)
     if "items" in fields:
         items = fields["items"]
         if not isinstance(items, list) or not 1 <= len(items) <= 50:
@@ -1379,7 +1390,7 @@ def _validate_meal_fields(fields: dict[str, Any]) -> dict[str, Any]:
 
 
 def _validate_meal_item(raw: Any) -> dict[str, Any]:
-    allowed = {"name", "amount_g", "kcal", "protein_g", "fat_g", "carb_g"}
+    allowed = {"name", "amount_g", "kcal", "protein_g", "fat_g", "carb_g", "notes"}
     if not isinstance(raw, dict) or set(raw) - allowed:
         raise ValueError
     name = raw.get("name")
@@ -1395,6 +1406,11 @@ def _validate_meal_item(raw: Any) -> dict[str, Any]:
     }.items():
         if key in raw:
             result[key] = _bounded_number(raw[key], 0, high)
+    if "notes" in raw:
+        notes = raw["notes"]
+        if not isinstance(notes, str) or len(notes.strip()) > DIET_NOTES_MAX_LENGTH:
+            raise ValueError
+        result["notes"] = parse_diet_notes(notes)
     return result
 
 

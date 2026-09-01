@@ -40,7 +40,7 @@ MCP 层未再加 Bearer。不要把监听改成 0.0.0.0。
 
 | 工具 | 说明 |
 |---|---|
-| `record_diet(items, meal, date?)` | 批量饮食条目；items 支持 `food_id`（search_food 拿的，营养按食物库自动算）或自报营养值 |
+| `record_diet(items, meal, date?)` | 批量饮食条目；items 支持 `food_id`（search_food 拿的，营养按食物库自动算）或自报营养值，并可用 `notes` 保存份量、做法或估算依据 |
 | `record_weight(20 个指标字段…, date?)` | metric 通道：体重/体脂/围度/血压/静息心率/血氧/睡眠/心情等（metrics 页全白名单），同日=覆盖更新 |
 | `record_workout(type, duration_min, date?, distance_km?, calories?, rpe?, notes?)` | 手动训练 |
 | `record_habit(habit_name, date?, count?)` | 按名称打卡；count=N 为计数累计 +N（喝水等 target>1 习惯），缺省为声明式打卡（同日重复 skipped） |
@@ -49,7 +49,7 @@ MCP 层未再加 Bearer。不要把监听改成 0.0.0.0。
 
 | 工具 | 说明 |
 |---|---|
-| `query_today_summary(date?)` | 当日全景（含 diet/workout 行 id、当日全部非空指标字段） |
+| `query_today_summary(date?)` | 当日全景（含 diet/workout 行 id、饮食 `notes`、当日全部非空指标字段） |
 | `query_weekly_report(week?)` | 周报数据（YYYY-Wnn，缺省=上一完整周） |
 | `query_monthly_report(month?)` | 月报数据（YYYY-MM，缺省=上一完整月；与报告中心同口径） |
 | `query_metric_series(field, days?)` | 单指标逐日序列（20 指标字段 + steps；manual=是否手动值） |
@@ -62,7 +62,7 @@ MCP 层未再加 Bearer。不要把监听改成 0.0.0.0。
 
 | 工具 | 说明 |
 |---|---|
-| `update_record(type, row_id, fields)` | 改口修正（不必删了重记）：diet 改 meal/free_text/营养（food 关联行只能改 meal/amount_g），workout 改六字段；外部同步来源 403 |
+| `update_record(type, row_id, fields)` | 改口修正（不必删了重记）：diet 改 meal/free_text/营养/notes（food 关联行可改 meal/amount_g/notes），workout 改六字段；外部同步来源 403 |
 | `delete_record(type, row_id)` | 改口纠错删除，仅 diet/workout；外部同步来源 403 |
 | `run_analysis(days?)` | 触发内置 AI 分析报告（后台 1-2 分钟，days ∈ 7/30/90） |
 | `get_analysis()` | 读最近一次分析报告与任务状态（job=running 时稍后再查） |
@@ -88,7 +88,7 @@ clientInfo.name，取不到记 'mcp'）落 `import_raw.blob`，/agent-log 流水
    `delete_record`/`update_record`，并引用返回的 `summary` 复述改/删了什么。
 5. 工具报错（API 4xx/5xx）原样告知用户，不得掩饰成成功。
 6. 记饮食优先 `search_food` 拿 `food_id`（营养按食物库自动算，只报用量即可）；
-   库里没有的才自报营养数值。
+   库里没有的才自报营养数值。份量、做法、估算依据放在 item 的 `notes`，不要塞进食物名。
 
 ## 同参数短窗去重（防超时重调双写）
 
