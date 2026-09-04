@@ -16,10 +16,13 @@ def digest(value):
                                     separators=(",", ":"), default=str).encode()).hexdigest()
 
 
-def target_snapshot(db, payload):
+def target_snapshot(db, payload, *, lock=True):
     """Lock the compared row before hashing; values and timestamp both matter."""
     if payload.get("target_id"):
-        row = db.scalars(select(DietLog).where(DietLog.id == payload["target_id"]).with_for_update()).first()
+        query = select(DietLog).where(DietLog.id == payload["target_id"])
+        if lock:
+            query = query.with_for_update()
+        row = db.scalars(query.execution_options(populate_existing=True)).first()
         if not row or str(row.log_date) != payload["effective_date"]:
             raise MachineAPIError(409, "target_changed", "原记录不存在或日期已改变，请重新生成草案。")
         if (row.provenance or {}).get("source") not in (None, "manual", "agent", "shadow-nexus", "health-assistant"):
@@ -28,8 +31,9 @@ def target_snapshot(db, payload):
             "id", "log_date", "meal", "free_text", "amount_g", "kcal", "protein_g", "fat_g", "carb_g", "notes", "updated_at")}
     if payload["record_type"] == "metric":
         columns = [getattr(BodyMetrics, k) for k in sorted(payload["fields"])]
-        row = db.execute(select(*columns, BodyMetrics.updated_at, BodyMetrics.autofilled).where(
-            BodyMetrics.log_date == date.fromisoformat(payload["effective_date"])).with_for_update()).first()
+        query = select(*columns, BodyMetrics.updated_at, BodyMetrics.autofilled).where(
+            BodyMetrics.log_date == date.fromisoformat(payload["effective_date"]))
+        row = db.execute(query.with_for_update() if lock else query).first()
         if row and any((row[-1] or {}).get(key) not in (None, "manual", "agent", "shadow-nexus") for key in payload["fields"]):
             raise MachineAPIError(403, "source_read_only", "该指标已有设备来源，请保留自动采集值，在来源设置中手动处理。")
         return list(map(str, row[:-1])) if row else None
@@ -59,14 +63,16 @@ def locked_review(db, draft):
                       .with_for_update().execution_options(populate_existing=True)).one()
 
 
-def validate_review(db, draft):
-    if draft.payload.get("_photo_id") and db.get(DietPhoto, draft.payload["_photo_id"]) is None:
-        raise MachineAPIError(409, "photo_removed", "原照片已移除，请重新生成草案。")
+def validate_review(db, draft, *, lock=True):
+    if draft.payload.get("_photo_id"):
+        query = select(DietPhoto).where(DietPhoto.id == draft.payload["_photo_id"])
+        if db.scalar(query.with_for_update() if lock else query) is None:
+            raise MachineAPIError(409, "photo_removed", "原照片已移除，请重新生成草案。")
     if draft.payload.get("_review_version") != 2:
         raise MachineAPIError(409, "review_upgrade_required", "旧草案需要重新生成后审核。")
     if datetime.fromisoformat(draft.payload["_expires_at"]) <= datetime.now(UTC):
         raise MachineAPIError(409, "draft_expired", "草案已过期，请重新生成。")
-    if digest(target_snapshot(db, draft.payload)) != digest(draft.payload.get("_target")):
+    if digest(target_snapshot(db, draft.payload, lock=lock)) != digest(draft.payload.get("_target")):
         raise MachineAPIError(409, "target_changed", "原记录已改变，请重新核对差异。")
 
 
@@ -131,4 +137,6 @@ def propose_tool(db, name, args, owner, key):
         payload=payload, payload_hash=digest(payload))
     return {"draft_id": draft.draft_id, "status": draft.status, "direct_domain_write": False,
             "new": 0, "replayed": replayed, "review_url": f"/companion/drafts/{draft.draft_id}",
-            "summary": "已生成待审核草案，尚未写入健康记录。"}
+            "summary": {"pending": "已生成待审核草案，尚未写入健康记录。",
+                        "applied": "该请求已确认入库，本次没有重复写入。",
+                        "rejected": "该请求的草案已拒绝，不会写入。"}.get(draft.status, "请查看草案当前状态。")}

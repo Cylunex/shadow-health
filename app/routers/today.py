@@ -41,6 +41,8 @@ _SOURCE_LABELS = {
     "samsung_direct": "三星健康",
     "samsung_zip": "三星历史",
     "agent": "Agent",
+    "shadow-nexus": "Agent（已确认）",
+    "health_connect": "健康连接",
     "offline": "离线补录",
 }
 

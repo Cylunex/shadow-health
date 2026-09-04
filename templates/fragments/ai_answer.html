@@ -1,6 +1,7 @@
 {# AI 问答结果片段 #}
 {% if error %}
 <div class="rounded-xl border border-red-900/60 bg-red-950/30 px-4 py-3 text-sm text-red-300 fade-in">{{ error }}</div>
+<a class="btn-ghost" href="{{ u('/companion') }}">查看待处理，避免重复提交</a>
 {% elif html %}
 <div class="fade-in space-y-2">
   <div class="text-xs text-slate-500">Q：{{ question }}</div>
@@ -9,7 +10,7 @@
     {{ html | safe }}
   </div>
   {% if actions %}
-  {# 本次问答执行的写操作（走 agent 通道留档，/agent-log 可核对撤销） #}
+  {# 本次草案统一在健康助手核对，不会直接执行写入。 #}
   <div class="rounded-xl border border-slate-800 bg-slate-900/60 px-4 py-2.5 space-y-1">
     <p class="text-xs text-slate-400">本次生成的草案 · 确认前不会写入</p>
     {% for a in actions %}
@@ -23,3 +24,4 @@
   {% endif %}
 </div>
 {% endif %}
+{% if next_request_key %}<input id="ai-ask-key" type="hidden" name="request_key" value="{{ next_request_key }}" hx-swap-oob="outerHTML">{% endif %}

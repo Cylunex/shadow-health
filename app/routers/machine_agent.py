@@ -685,8 +685,17 @@ class MachineHealthService:
             from app.models import DietPhoto
             photo = self.db.get(DietPhoto, draft.payload["_photo_id"])
             if photo and (photo.analysis or {}).get("draft_id") == draft.draft_id:
+                # Move the photo only when the reviewed date/meal is actually applied.
+                photo.log_date, photo.meal = draft.effective_date, fields["meal"]
                 photo.analysis = {**photo.analysis, "status": "success", "diet_log_ids": draft.payload.get("_result_ids", [])}
         draft.status = "applied"
+        from app.models import SyncState
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+        state = pg_insert(SyncState).values(source="agent", last_success_at=datetime.now(UTC),
+            consecutive_failures=0, last_error=None, needs_reauth=False)
+        self.db.execute(state.on_conflict_do_update(index_elements=["source"], set_={
+            "last_success_at": state.excluded.last_success_at, "consecutive_failures": 0,
+            "last_error": None, "needs_reauth": False}))
         self.db.flush()
         return resource_uri, False
 

@@ -131,9 +131,10 @@ async def fitness_save(request: Request, db: Session = Depends(get_db)):
     try:
         d = date.fromisoformat(str(form.get("test_date") or "").strip())
     except ValueError:
-        d = today_local()
-    d = min(d, today_local())
-    saved_any = False
+        return templates.TemplateResponse(request, "fitness.html", _page_ctx(db, error="日期格式不正确"))
+    if d > today_local():
+        return templates.TemplateResponse(request, "fitness.html", _page_ctx(db, error="不能记录未来的测试"))
+    values = []
     for key, name, _unit, _anchor, lo, hi in ITEMS:
         raw = str(form.get(key) or "").strip()
         if not raw:
@@ -144,19 +145,21 @@ async def fitness_save(request: Request, db: Session = Depends(get_db)):
             return templates.TemplateResponse(
                 request, "fitness.html", _page_ctx(db, error=f"{name}格式不正确")
             )
-        if not (Decimal(str(lo)) <= v <= Decimal(str(hi))):
+        if not v.is_finite() or not (Decimal(str(lo)) <= v <= Decimal(str(hi))):
             return templates.TemplateResponse(
                 request, "fitness.html",
                 _page_ctx(db, error=f"{name}超出合理范围（{lo:g}~{hi:g}）"),
             )
-        stmt = pg_insert(FitnessTest).values(test_date=d, item=key, value=v)
-        db.execute(stmt.on_conflict_do_update(
-            index_elements=["test_date", "item"], set_={"value": stmt.excluded.value},
-        ))
-        saved_any = True
-    if not saved_any:
+        values.append((key, v))
+    if not values:
         return templates.TemplateResponse(
             request, "fitness.html", _page_ctx(db, error="至少填一项再保存")
         )
+    # Validate the entire form before writing; an error must never partially save it.
+    for key, value in values:
+        stmt = pg_insert(FitnessTest).values(test_date=d, item=key, value=value)
+        db.execute(stmt.on_conflict_do_update(
+            index_elements=["test_date", "item"], set_={"value": stmt.excluded.value},
+        ))
     db.flush()
     return templates.TemplateResponse(request, "fitness.html", _page_ctx(db, saved=True))

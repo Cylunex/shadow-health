@@ -16,7 +16,7 @@ from sqlalchemy.pool import StaticPool
 ROOT = Path(__file__).parents[1]
 
 from app.db import get_db  # noqa: E402
-from app.models import AgentMachineAudit, AgentRecordDraft  # noqa: E402
+from app.models import AgentMachineAudit, AgentRecordDraft, SyncState  # noqa: E402
 from app.routers.machine_agent import get_machine_health_service  # noqa: E402
 from app.timeutil import today_local  # noqa: E402
 
@@ -139,6 +139,7 @@ def machine_api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
     AgentRecordDraft.__table__.create(engine)
     AgentMachineAudit.__table__.create(engine)
+    SyncState.__table__.create(engine)
     with engine.begin() as connection:
         connection.exec_driver_sql(
             "CREATE TABLE health.diet_logs "

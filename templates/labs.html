@@ -36,7 +36,7 @@
       <div>
         <h2 class="text-sm font-semibold text-emerald-200">识别完成，核对后入库</h2>
         <p class="mt-1 text-[11px] text-slate-500">
-          {{ parsed.metadata.trace.provider | upper }} · {{ parsed.metadata.trace.model }}
+      {{ parsed.metadata.get('trace', {}).get('provider', '手动核对') | upper }} · {{ parsed.metadata.get('trace', {}).get('model', '') }}
           {% if parsed.metadata.trace.confidence is number %} · 置信度 {{ (parsed.metadata.trace.confidence * 100) | round | int }}%{% endif %}
         </p>
       </div>

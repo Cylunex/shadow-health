@@ -64,9 +64,13 @@ def _page_ctx(db: Session, saved: bool = False, error: str | None = None,
     rows = db.execute(
         select(LabResult).order_by(LabResult.item_key, LabResult.report_date)
     ).scalars().all()
+    units_by_key: dict[str, set[str | None]] = {}
+    for row in rows:
+        units_by_key.setdefault(row.item_key, set()).add(row.unit)
     groups: dict[str, dict[str, Any]] = {}
     for r in rows:
-        g = groups.setdefault(r.item_key, {
+        group_key = r.item_key if len(units_by_key[r.item_key]) == 1 else f"{r.item_key}::{r.unit or '无单位'}"
+        g = groups.setdefault(group_key, {
             "label": r.item_label, "unit": r.unit, "points": [],
         })
         g["points"].append({
@@ -92,7 +96,10 @@ def _page_ctx(db: Session, saved: bool = False, error: str | None = None,
     )
     if parsed is not None:
         parsed = dict(parsed)
-        parsed["metadata_json"] = json_lib.dumps(parsed.get("metadata") or {}, ensure_ascii=False)
+        metadata = dict(parsed.get("metadata") or {})
+        metadata["trace"] = metadata.get("trace") if isinstance(metadata.get("trace"), dict) else {}
+        parsed["metadata"] = metadata
+        parsed["metadata_json"] = json_lib.dumps(metadata, ensure_ascii=False)
     return {
         "groups": groups,
         "common_items": COMMON_ITEMS,
@@ -127,7 +134,7 @@ def _save_row(db: Session, report_date: date, key: str, label: str, value: Decim
 
 
 def _dec(raw: Any) -> Decimal | None:
-    s = str(raw or "").strip()
+    s = str(raw if raw is not None else "").strip()
     if not s:
         return None
     try:
@@ -137,6 +144,11 @@ def _dec(raw: Any) -> Decimal | None:
     if not v.is_finite() or not (Decimal("-100000") <= v <= Decimal("100000")):
         raise ValueError(f"数值超出范围：{s!r}")
     return v
+
+
+def _validate_range(low, high):
+    if low is not None and high is not None and low > high:
+        raise ValueError("参考下限不能大于上限，请按化验单核对")
 
 
 @router.get("/labs")
@@ -166,11 +178,11 @@ async def labs_save(request: Request, db: Session = Depends(get_db)):
             request, "labs.html", _page_ctx(db, error=str(exc))
         )
     if item in _COMMON_BY_KEY:
-        key, label, unit, dlow, dhigh = _COMMON_BY_KEY[item]
-        unit = str(form.get("unit") or "").strip() or unit
-        if ref_low is None and dlow is not None:
+        key, label, default_unit, dlow, dhigh = _COMMON_BY_KEY[item]
+        unit = str(form.get("unit") or "").strip() or default_unit
+        if unit == default_unit and ref_low is None and dlow is not None:
             ref_low = Decimal(str(dlow))
-        if ref_high is None and dhigh is not None:
+        if unit == default_unit and ref_high is None and dhigh is not None:
             ref_high = Decimal(str(dhigh))
     else:
         label = str(form.get("custom_label") or "").strip()[:50]
@@ -180,6 +192,10 @@ async def labs_save(request: Request, db: Session = Depends(get_db)):
             )
         key = f"custom_{label}"
         unit = str(form.get("unit") or "").strip() or None
+    try:
+        _validate_range(ref_low, ref_high)
+    except ValueError as exc:
+        return templates.TemplateResponse(request, "labs.html", _page_ctx(db, error=str(exc)))
     _save_row(db, d, key, label, value, unit, ref_low, ref_high)
     db.flush()
     return templates.TemplateResponse(request, "labs.html", _page_ctx(db, saved=True))
@@ -202,8 +218,12 @@ async def labs_photo(request: Request, file: UploadFile, db: Session = Depends(g
     """化验单照片 → AI 结构化 → 可编辑预览（不直接入库，确认后走 /labs/bulk）。"""
     if not llm.is_vision_configured(db):
         raise HTTPException(status_code=400, detail="未配置 AI 模型")
-    data = await file.read()
+    data = await file.read(8 * 1024 * 1024 + 1)
+    if not data or len(data) > 8 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="请上传不超过 8 MB 的化验单照片")
     media_type = file.content_type or "image/jpeg"
+    if media_type not in {"image/jpeg", "image/png", "image/webp"}:
+        raise HTTPException(status_code=400, detail="请上传 JPEG、PNG 或 WebP 照片")
     try:
         text = llm._call(
             db, LAB_PHOTO_PROMPT, "提取这张化验单的指标，按要求返回 JSON。",
@@ -219,6 +239,8 @@ async def labs_photo(request: Request, file: UploadFile, db: Session = Depends(g
         payload = json_lib.loads(text[start:end + 1]) if start != -1 else {}
     except ValueError:
         payload = {}
+    if not isinstance(payload, dict) or not isinstance(payload.get("items", []), list):
+        payload = {}
     def confidence(value: Any) -> float | None:
         try:
             number = float(value)
@@ -230,14 +252,20 @@ async def labs_photo(request: Request, file: UploadFile, db: Session = Depends(g
     for raw in payload.get("items") or []:
         if not isinstance(raw, dict) or not str(raw.get("label") or "").strip():
             continue
-        if not isinstance(raw.get("value"), (int, float)):
+        try:
+            number = _dec(raw.get("value"))
+            low, high = _dec(raw.get("ref_low")), _dec(raw.get("ref_high"))
+            _validate_range(low, high)
+        except ValueError:
+            continue
+        if number is None:
             continue
         items.append({
             "label": str(raw.get("label") or "").strip()[:50],
-            "value": raw["value"],
+            "value": float(number),
             "unit": str(raw.get("unit") or "").strip()[:20],
-            "ref_low": raw.get("ref_low") if isinstance(raw.get("ref_low"), (int, float)) else None,
-            "ref_high": raw.get("ref_high") if isinstance(raw.get("ref_high"), (int, float)) else None,
+            "ref_low": float(low) if low is not None else None,
+            "ref_high": float(high) if high is not None else None,
             "confidence": confidence(raw.get("confidence")),
         })
         if len(items) >= 30:
@@ -292,7 +320,11 @@ async def labs_bulk(request: Request, db: Session = Depends(get_db)):
     if trace_confidence is not None and 0 <= trace_confidence <= 1:
         trace["confidence"] = round(trace_confidence, 3)
     original_items = metadata.get("items") if isinstance(metadata.get("items"), list) else []
-    n = 0
+    pending = []
+    errors = []
+    preview_items = [{"label": str(form.get(f"label_{i}") or ""),
+                      **{k: str(form.get(f"{k}_{i}") or "") for k in ("value", "unit", "ref_low", "ref_high")}}
+                     for i in range(30) if str(form.get(f"label_{i}") or "").strip() and not form.get(f"skip_{i}")]
     for i in range(30):
         label = str(form.get(f"label_{i}") or "").strip()[:50]
         if not label or form.get(f"skip_{i}"):
@@ -300,13 +332,15 @@ async def labs_bulk(request: Request, db: Session = Depends(get_db)):
         try:
             value = _dec(form.get(f"value_{i}"))
             if value is None:
-                continue
+                raise ValueError("请填写数值，或勾选跳过该行")
             ref_low = _dec(form.get(f"ref_low_{i}"))
             ref_high = _dec(form.get(f"ref_high_{i}"))
-        except ValueError:
-            continue  # 单行坏数据跳过，其余照存
+            _validate_range(ref_low, ref_high)
+        except ValueError as exc:
+            errors.append(f"第 {i + 1} 行：{exc}")
+            continue
         # 与词表按名称对齐（同名合并成同一 key，多年趋势才能连起来）
-        match = next((c for c in COMMON_ITEMS if c[1] in label or label in c[1]), None)
+        match = next((c for c in COMMON_ITEMS if c[1] == label), None)
         key = match[0] if match else f"custom_{label}"
         unit = str(form.get(f"unit_{i}") or "").strip() or (match[2] if match else None)
         raw_original = (
@@ -334,11 +368,18 @@ async def labs_bulk(request: Request, db: Session = Depends(get_db)):
                 "ref_high": float(ref_high) if ref_high is not None else None,
             },
         } if trace else None
-        _save_row(
-            db, d, key, label if not match else match[1], value, unit, ref_low, ref_high,
-            provenance=provenance,
-        )
-        n += 1
+        if any(row[0] == key for row in pending):
+            errors.append(f"第 {i + 1} 行：项目重复，请核对名称，避免覆盖同日记录")
+        pending.append((key, label if not match else match[1], value, unit, ref_low, ref_high, provenance))
+    if errors:
+        kept = [i for i in range(30) if str(form.get(f"label_{i}") or "").strip() and not form.get(f"skip_{i}")]
+        metadata = {**metadata, "items": [original_items[i] if i < len(original_items) else {} for i in kept]}
+        return templates.TemplateResponse(request, "labs.html", _page_ctx(db,
+            error="未保存任何行。" + "；".join(errors), parsed={
+                "report_date": str(d), "items": preview_items, "metadata": metadata}))
+    for key, label, value, unit, low, high, provenance in pending:
+        _save_row(db, d, key, label, value, unit, low, high, provenance=provenance)
+    n = len(pending)
     if n:
         db.flush()
     return templates.TemplateResponse(

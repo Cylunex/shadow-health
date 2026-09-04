@@ -133,7 +133,7 @@ def test_update_keeps_before_and_refuses_changed_target(db):
         MachineHealthService(db).commit_draft(row)
     second = create_draft(db, payload=payload)
     MachineHealthService(db).commit_draft(second)
-    assert record.provenance["revisions"][-1]["before"]["kcal"] == "320"
+    assert float(record.provenance["revisions"][-1]["before"]["kcal"]) == 320
     assert record.free_text == "修正食物"
 
 
@@ -352,10 +352,24 @@ def test_wrong_nexus_revision_cannot_apply(db):
 
 def test_source_revocation_hides_previous_evidence(db):
     from app.models import SyncCursor
-    evidence=hc.create_evidence(db,"one",today_local()-timedelta(days=60))
+    end=today_local()-timedelta(days=60)
+    db.add(BodyMetrics(log_date=end, weight_kg=72, autofilled={"weight_kg":"health_connect"})); db.flush()
+    evidence=hc.create_evidence(db,"one",end)
     cursor=SyncCursor(source="health_connect",record_type="weight",permission_state="revoked")
     db.merge(cursor); db.flush()
     assert hc.evidence_state(db,evidence)=="revoked"
+    refreshed = hc.create_evidence(db, "one", end)
+    assert refreshed.payload["daily"][-1]["values"]["weight_kg"] is None
+    assert hc.evidence_state(db, refreshed) == "current"
+
+
+def test_unrelated_source_revocation_does_not_hide_manual_evidence(db):
+    from app.models import SyncCursor
+    end=today_local()-timedelta(days=80)
+    db.add(BodyMetrics(log_date=end, weight_kg=71, autofilled={"weight_kg":"manual"})); db.flush()
+    evidence=hc.create_evidence(db,"one",end)
+    db.merge(SyncCursor(source="health_connect",record_type="weight",permission_state="revoked")); db.flush()
+    assert hc.evidence_state(db,evidence)=="current"
 
 
 def test_worker_cancellation_fences_uncommitted_result(db,monkeypatch):

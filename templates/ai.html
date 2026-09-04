@@ -4,7 +4,7 @@
 {% block content %}
 <div class="space-y-5">
 
-  <div class="section-heading"><div><p class="eyebrow">AI INSIGHTS</p><h2 class="mt-1">AI 分析</h2><p>读取你的健康数据，也可以直接帮你记录</p></div><a href="{{ u('/report') }}" class="btn-ghost hidden sm:inline-flex">查看报告</a></div>
+  <div class="section-heading"><div><p class="eyebrow">AI INSIGHTS</p><h2 class="mt-1">AI 分析</h2><p>查看数据依据，生成待你确认的记录草案</p></div><a href="{{ u('/report') }}" class="btn-ghost hidden sm:inline-flex">查看报告</a></div>
 
   {% if not configured %}
   <section class="card border-amber-800/60">
@@ -47,9 +47,7 @@
     </form>
     <div id="ai-analysis" class="mt-3">
       {# 页面加载时任务在跑（如锁屏回来）→ 直接接上轮询 #}
-      {% with running = job_running, days = job_days, error = none %}
-      {% include "fragments/ai_job_status.html" %}
-      {% endwith %}
+      {% if task %}{% include "fragments/companion_task_status.html" %}{% endif %}
     </div>
   </section>
 
@@ -60,7 +58,7 @@
     <form hx-post="{{ u('/ai/ask') }}" hx-target="#ai-answer" hx-swap="innerHTML"
           hx-disabled-elt="find button[type='submit']" hx-indicator="#ai-ask-spinner"
           class="space-y-2">
-      <input type="hidden" name="request_key" value="{{ request_key }}">
+      <input id="ai-ask-key" type="hidden" name="request_key" value="{{ request_key }}">
       <textarea name="question" rows="2" placeholder="输入你的问题…" required
                 class="field !min-h-[68px] py-2.5 resize-y"></textarea>
       <button type="submit" class="btn-ghost w-full" {% if not configured %}disabled{% endif %}>提问</button>

@@ -26,10 +26,12 @@ def _render_md(content: str) -> str:
 @router.get("")
 def ai_page(request: Request, db: Session = Depends(get_db)):
     cfg = llm.get_config(db)
+    task = db.scalar(select(HealthTask).where(HealthTask.owner == hc.owner_id(request),
+        HealthTask.kind == "analysis").order_by(HealthTask.created_at.desc()).limit(1))
     return templates.TemplateResponse(request, "ai.html", {
         "configured": cfg["configured"], "model": cfg["model"],
         "provider_label": llm.PROVIDER_LABELS[cfg["provider"]],
-        "analysis": None, "job_running": False, "days_options": _DAYS_OPTIONS,
+        "task": task, "days_options": _DAYS_OPTIONS,
         "request_key": uuid.uuid4().hex})
 
 
@@ -50,7 +52,7 @@ async def ai_analyze(request: Request, db: Session = Depends(get_db)):
 
 @router.get("/analyze/status")
 def ai_status(request: Request, db: Session = Depends(get_db)):
-    task = db.scalars(select(HealthTask).where(HealthTask.owner == hc.owner_id(request))
+    task = db.scalars(select(HealthTask).where(HealthTask.owner == hc.owner_id(request), HealthTask.kind == "analysis")
                       .order_by(HealthTask.created_at.desc()).limit(1)).first()
     return templates.TemplateResponse(request, "fragments/companion_task_status.html", {"task": task})
 
@@ -69,4 +71,5 @@ async def ai_ask(request: Request, db: Session = Depends(get_db)):
         return templates.TemplateResponse(request, "fragments/ai_answer.html", {
             "error": "模型暂不可用；若已生成草案，可到待处理查看，请勿重复提交。"})
     return templates.TemplateResponse(request, "fragments/ai_answer.html", {
-        "question": question, "html": _render_md(answer), "actions": actions}, headers={"HX-Trigger": "drafts-changed"})
+        "question": question, "html": _render_md(answer), "actions": actions,
+        "next_request_key": uuid.uuid4().hex}, headers={"HX-Trigger": "drafts-changed"})
