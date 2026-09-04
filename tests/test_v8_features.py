@@ -435,13 +435,13 @@ def api(db):
 
 def test_bearer_header_still_works(api):
     c, token = api
-    assert c.get("/api/agent/summary", headers={"Authorization": f"Bearer {token}"}).status_code == 200
+    assert c.post("/api/ingest/miscale", json={}, headers={"Authorization": f"Bearer {token}"}).status_code == 200
 
 
 def test_x_ingest_token_header_accepted(api):
     # frp Basic 验证场景：Authorization 被 Basic 占用，token 走备用头
     c, token = api
-    resp = c.get("/api/agent/summary", headers={
+    resp = c.post("/api/ingest/miscale", json={}, headers={
         "Authorization": "Basic dXNlcjpwYXNz",  # frp 消费的 Basic 凭据，app 不认它
         "X-Ingest-Token": token,
     })
@@ -450,13 +450,13 @@ def test_x_ingest_token_header_accepted(api):
 
 def test_x_ingest_token_wrong_rejected(api):
     c, _ = api
-    assert c.get("/api/agent/summary", headers={"X-Ingest-Token": "wrong"}).status_code == 401
+    assert c.post("/api/ingest/miscale", json={}, headers={"X-Ingest-Token": "wrong"}).status_code == 401
 
 
 def test_bearer_takes_priority_over_alt_header(api):
     # Authorization Bearer 合法时优先；备用头乱填不影响
     c, token = api
-    resp = c.get("/api/agent/summary", headers={
+    resp = c.post("/api/ingest/miscale", json={}, headers={
         "Authorization": f"Bearer {token}", "X-Ingest-Token": "garbage",
     })
     assert resp.status_code == 200

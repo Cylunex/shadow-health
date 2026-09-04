@@ -52,7 +52,13 @@ Nexus 上传的私有图片仍由 Nexus 拥有。Nexus 以自己的 Platform Ass
 自己的 Asset service token 按 URI 解析、申请短时授权并代理图片，不接收 Nexus Token，不保存
 签名 URL 或 Blob。删除操作只释放 Health 的 `AssetReference`，不会删除 Platform 原始资产。
 
-旧 MCP 可继续服务现有本机工作流，但不是插件合同真相，也不被 DSH Builder 编译。
+MCP v2 只适配 machine v1 读取/草案合同，必须改用独立 HEALTH_AGENT_TOKEN；旧 Agent REST 已返回 410。
+它不是插件合同真相，也不被 DSH Builder 编译。完整迁移与 worker 说明见 [Agent 工作流](agent-workflows.md)。
+
+合同 v0.2.0 在现有 summary/trends scope 下提供 health.data.status 与 health.weekly.evidence。
+草案两天过期，内容修改创建新 ID 并拒绝旧稿；同一 ID 的审核 revision 固定为 1。
+Nexus 响应附 payload_hash、expires_at；提交若传 revision/hash，服务端必须匹配。
+目标记录和来源在提交事务中重新核对；权限仍逐请求检查，不因已经展示审核卡而跳过。
 
 ## 周度建议边界
 

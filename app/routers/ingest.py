@@ -1596,6 +1596,9 @@ async def ingest_miscale(request: Request, db: Session = Depends(get_db)) -> Res
         profile_id = profile_raw if isinstance(profile_raw, int) and 0 <= profile_raw <= 255 else None
         model_raw = item.get("model")
         model = model_raw.strip()[:64] if isinstance(model_raw, str) and model_raw.strip() else None
+        attempt_id = str(item.get("attempt_id") or "")
+        if not re.fullmatch(r"[0-9a-f-]{36}", attempt_id):
+            attempt_id = ""
         # 秤 RTC 失效时监听器/服务端都以"当前时间取整到分钟"兜底，双端 key 才能对齐
         if ts == now:
             ts = now.replace(second=0, microsecond=0)
@@ -1603,7 +1606,7 @@ async def ingest_miscale(request: Request, db: Session = Depends(get_db)) -> Res
         parsed[ext_id] = {
             "ts": ts, "weight": round(float(w), 2), "impedance": impedance,
             "impedance_high": impedance_high, "heart_rate": heart_rate,
-            "profile_id": profile_id, "model": model,
+            "profile_id": profile_id, "model": model, "attempt_id": attempt_id,
         }
 
     received = len(records)
@@ -1617,6 +1620,10 @@ async def ingest_miscale(request: Request, db: Session = Depends(get_db)) -> Res
             "source": MISCALE_SOURCE,
             "record_type": "measurement",
             "external_id": ext_id,
+            "provenance": {"received_at": now.isoformat(), **({
+                "last_attempt_id": m["attempt_id"], "first_attempt_id": m["attempt_id"],
+                "attempt_received_at": now.isoformat(),
+            } if m["attempt_id"] else {})},
             "raw": {
                 "ts": m["ts"].isoformat(), "weight_kg": m["weight"],
                 "impedance": m["impedance"], "impedance_low": m["impedance"],
@@ -1632,7 +1639,9 @@ async def ingest_miscale(request: Request, db: Session = Depends(get_db)) -> Res
     ins = pg_insert(ImportRaw).values(entries)
     stmt = ins.on_conflict_do_update(
         index_elements=["source", "record_type", "external_id"],
-        set_={"last_seen_at": now},
+        set_={"last_seen_at": now, "provenance": func.coalesce(
+            ImportRaw.provenance, cast({}, JSONB)).op("||")(
+                ins.excluded.provenance.op("-")("first_attempt_id"))},
     ).returning(ImportRaw.external_id, literal_column("(xmax = 0)"))
     for ext_id, is_new in db.execute(stmt):
         if is_new:
@@ -1656,7 +1665,7 @@ async def ingest_miscale(request: Request, db: Session = Depends(get_db)) -> Res
             values = compute_body_metrics(m["weight"], m["impedance"], sex, age, height_cm)
             autofill_fields(db, d, MISCALE_SOURCE, values)
         for ext_id in new_ids:
-            _mark_raw(db, MISCALE_SOURCE, "measurement", ext_id, "parsed")
+            _mark_raw(db, MISCALE_SOURCE, "measurement", ext_id, "parsed", attempted=True)
 
         _touch_sync_state(db, MISCALE_SOURCE, True, now=now)
         db.commit()

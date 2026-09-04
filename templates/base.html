@@ -30,7 +30,7 @@
     {% set mobile_parent = '/workout' %}{% set mobile_parent_label = '返回运动记录' %}
   {% elif p.startswith('/settings/') %}
     {% set mobile_parent = '/settings' %}{% set mobile_parent_label = '返回数据与设置' %}
-  {% elif p.startswith('/report/') or p.startswith('/review/') or p.startswith('/achievements') or p.startswith('/ai') %}
+  {% elif p.startswith('/report/') or p.startswith('/review/') or p.startswith('/achievements') or p.startswith('/ai') or p.startswith('/companion') %}
     {% set mobile_parent = '/report' %}{% set mobile_parent_label = '返回报告与复盘' %}
   {% elif p.startswith('/scale') %}
     {% set mobile_parent = '/metrics' %}{% set mobile_parent_label = '返回身体趋势' %}
@@ -58,7 +58,7 @@
     <nav class="mt-5 space-y-1">
       {% for href, label, icon in side_nav %}
       {% set active = p == href or (href != '/' and p.startswith(href))
-         or (href == '/report' and (p.startswith('/ai') or p.startswith('/review')))
+         or (href == '/report' and (p.startswith('/ai') or p.startswith('/review') or p.startswith('/companion')))
          or (href == '/settings' and (p.startswith('/agent-log') or p.startswith('/scale'))) %}
       <a href="{{ u(href) }}" class="side-nav-item {% if active %}side-nav-item-active{% endif %}">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5 shrink-0"><path d="{{ icon }}"/></svg>
@@ -135,7 +135,7 @@
       </button>
       {% else %}
       {% set active = (p == href or (href != '/' and p.startswith(href)))
-         if href != '/more' else p.startswith(('/more','/discipline','/labs','/workout','/report','/review','/ai','/habits','/fitness','/scale','/agent-log','/settings','/achievements')) %}
+         if href != '/more' else p.startswith(('/more','/discipline','/labs','/workout','/report','/review','/ai','/companion','/habits','/fitness','/scale','/agent-log','/settings','/achievements')) %}
       <a href="{{ u(href) }}" class="relative flex min-h-[62px] flex-col items-center justify-center gap-1 {% if active %}text-violet-300{% else %}text-slate-500{% endif %}">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><path d="{{ icon }}"/></svg>
         <span class="text-[10px]">{{ label }}</span>

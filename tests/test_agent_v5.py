@@ -50,9 +50,12 @@ def client():
     from fastapi.testclient import TestClient
 
     from app.main import app
+    from app.routers.agent import _legacy_retired
+    app.dependency_overrides[_legacy_retired] = lambda: None  # retained helper tests only
     with TestClient(app) as c:
         c.headers["Authorization"] = f"Bearer {get_settings().ingest_token}"
         yield c
+    app.dependency_overrides.pop(_legacy_retired, None)
 
 
 @pytest.fixture()
@@ -423,8 +426,9 @@ def test_agent_name_lands_in_import_raw_blob(client, db, env):
 # ---------- ai_tools.run_tool 进程内直测 ----------
 
 def test_ai_tools_record_diet_then_delete(client, db, env):
-    """record_diet 走通完整管线（source='agent'、blob.agent='内置AI'）→ delete_record 删掉。"""
-    from app.models import DietLog
+    """AI only drafts; domain review commits; model deletion remains unavailable."""
+    from app.models import DietLog, AgentRecordDraft
+    from app.routers.machine_agent import MachineHealthService
     from app.services.ai_tools import run_tool
 
     out = run_tool(db, "record_diet", {
@@ -434,28 +438,20 @@ def test_ai_tools_record_diet_then_delete(client, db, env):
             "name": "测试AI面", "kcal": 500, "protein_g": 20,
             "notes": "热量来自包装标示",
         }],
-    })
+    }, owner="browser:test", request_key=uuid.uuid4().hex)
     assert "error" not in out
-    assert out["date"] == TEST_DATE.isoformat()
-    assert (out["new"], out["skipped"]) == (1, 0)
-    res = out["results"][0]
-    assert res["status"] == "new" and isinstance(res["row_id"], int)
-    _SENT_EXT_IDS.append(f"diet-{res['client_id']}")  # 留档纳入精确清理
-    assert out["day_totals"]["kcal"] >= 500.0
-
-    blob = _blob(db, f"diet-{res['client_id']}")
-    assert blob["agent"] == "内置AI"
-    created = db.get(DietLog, res["row_id"])
+    assert out["new"] == 0 and out["direct_domain_write"] is False
+    draft = db.get(AgentRecordDraft, out["draft_id"])
+    assert draft.status == "pending"
+    MachineHealthService(db).commit_draft(draft)
+    created = db.get(DietLog, draft.payload["_result_ids"][0])
     assert created.free_text == "测试AI面"
     assert created.notes == "热量来自包装标示"
 
-    deleted = run_tool(db, "delete_record", {"type": "diet", "row_id": res["row_id"]})
-    assert deleted["deleted"] is True and "测试AI面" in deleted["summary"]
-    db.commit()  # delete_record 只 flush，commit 是调用方（请求收尾）的事
-    assert db.get(DietLog, res["row_id"]) is None
-    # 再删同 id：错误折成 {"error": ...} 喂回模型，不抛异常
-    again = run_tool(db, "delete_record", {"type": "diet", "row_id": res["row_id"]})
-    assert "不存在" in again["error"]
+    deleted = run_tool(db, "delete_record", {"type": "diet", "row_id": created.id})
+    assert "error" in deleted
+    assert db.get(DietLog, created.id) is created
+    db.delete(draft)
 
 
 def test_agent_meal_asset_attach_and_readback(client, monkeypatch):
@@ -508,7 +504,8 @@ def test_ai_tools_search_food_and_query_summary(client, db, env):
     s = run_tool(db, "query_summary", {"date": TEST_DATE.isoformat()})
     assert "error" not in s
     assert s["date"] == TEST_DATE.isoformat()
-    assert "diet" in s and "habits" in s and "metrics" in s
+    assert "indicators" in s and "data_quality" in s
+    assert "habits" not in s and "mood_score" not in s["indicators"]
     assert "不是合法日期" in run_tool(db, "query_summary", {"date": "昨天"})["error"]
 
 

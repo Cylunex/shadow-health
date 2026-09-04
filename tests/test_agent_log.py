@@ -105,9 +105,12 @@ def client():
     from fastapi.testclient import TestClient
 
     from app.main import app
+    from app.routers.agent import _legacy_retired
+    app.dependency_overrides[_legacy_retired] = lambda: None  # historical data fixtures only
     with TestClient(app) as c:
         c.headers["Authorization"] = f"Bearer {get_settings().ingest_token}"
         yield c
+    app.dependency_overrides.pop(_legacy_retired, None)
 
 
 @pytest.fixture(scope="module")

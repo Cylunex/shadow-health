@@ -48,6 +48,10 @@ async def machine_api_error_handler(request: Request, exc: MachineAPIError):
         exc.status_code,
         exc.code,
     )
+    if request.url.path.startswith("/companion") and "text/html" in request.headers.get("accept", ""):
+        from app.deps import templates
+        return templates.TemplateResponse(request, "companion_error.html", {"message": exc.message},
+                                          status_code=exc.status_code, headers={"Cache-Control": "private, no-store"})
     return JSONResponse(
         {"error": {"code": exc.code, "message": exc.message}},
         status_code=exc.status_code,
@@ -66,7 +70,10 @@ async def forwarded_prefix(request: Request, call_next):
     prefix = request.headers.get("X-Forwarded-Prefix", "").strip()
     if prefix and prefix.startswith("/"):
         request.scope["x_forwarded_prefix"] = prefix.rstrip("/")
-    return await call_next(request)
+    response = await call_next(request)
+    if request.url.path.startswith(("/companion", "/ai")):
+        response.headers["Cache-Control"] = "private, no-store"
+    return response
 
 
 @app.middleware("http")
@@ -278,6 +285,7 @@ def _register_routers() -> None:
         agent,
         agent_log,
         ai,
+        companion,
         awards,
         diet,
         discipline,
@@ -302,6 +310,7 @@ def _register_routers() -> None:
     app.include_router(fitness.router)
     app.include_router(labs.router)
     app.include_router(ai.router)
+    app.include_router(companion.router)
     app.include_router(machine_agent.router)
     app.include_router(metrics.router)
     app.include_router(diet.router)

@@ -1,8 +1,11 @@
 {% set polling = state in ('waiting', 'processing') %}
 <section id="home-scale-status"
          class="app-panel fade-in p-4"
+         data-attempt-id="{{ attempt_id }}"
+         data-view-id="{{ view_id }}"
+         data-state="{{ state }}"
          {% if polling %}
-         hx-get="{{ u('/fragments/today/scale-status') }}?after={{ after }}"
+         hx-get="{{ u('/fragments/today/scale-status') }}?after={{ after }}&amp;attempt_id={{ attempt_id }}&amp;view_id={{ view_id }}"
          hx-trigger="every 3s [document.visibilityState === 'visible']"
          hx-swap="outerHTML"
          {% endif %}>
@@ -32,7 +35,10 @@
       <div class="min-w-0 flex-1">
         <div class="flex items-center justify-between gap-3">
           <div>
-            <p class="text-xs font-medium text-emerald-400">称重已接收并入库</p>
+            <p class="text-xs font-medium text-emerald-400">{{ '重复消息，原记录已处理（未新增）' if duplicate else '称重已接收并入库' }}</p>
+            <p class="text-xs text-slate-400">{{ '本次会话已关联' if attempt_id else '本时间窗收到（旧客户端无法精确关联）' }}</p>
+            <p class="text-xs text-slate-500">测量：{{ measured_at }} · 接收：{{ local_hm(received_at) }}</p>
+            {% if normalized_at %}<p class="text-xs text-slate-500">标准化完成：{{ local_hm(normalized_at) }} · 来源：体脂秤</p>{% endif %}
             {% if measurement and measurement.weight %}
               <p class="mt-1 text-2xl font-semibold tabular-nums text-slate-50">{{ measurement.weight }} <span class="text-sm font-normal text-slate-400">kg</span></p>
             {% endif %}

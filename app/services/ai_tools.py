@@ -1,16 +1,7 @@
-"""内置 AI 的进程内工具执行器（V5 P4）：让 /ai 问答能真正动手记录/查询。
+"""内置 AI 的受控进程内工具：读取最小事实，写操作仅生成审核草案。
 
-设计要点：
-- **不 import mcp**（依赖组隔离铁律：生产镜像无 mcp 依赖，进 app/ 代码路径会崩）。
-  工具面与 mcp_server 的 9+ 工具刻意同名同语义，但这里是给应用内 LLM 用的
-  进程内版本。
-- 写入一律走 offline.ingest_records(source='agent', agent_name='内置AI')——与
-  外部 agent 完全同一套校验/幂等/import_raw 留档，/agent-log 可核对可撤销；
-  删除走 agent.delete_record（同 /api/agent/delete 边界）。
-- 工具执行错误返回 {"error": ...} 喂回模型（不抛异常）：模型如实向用户转述，
-  反假确认规则（确认话术必须引用回执 new 计数）写在 llm.ask 的 system prompt。
-- TOOL_DEFS 用 Claude 原生 {name, description, input_schema} 形态；OpenAI
-  function calling 的转换在 llm._call_openai 里做。
+与机器合同复用 MachineHealthService；模型没有批准、删除或私密数据权限。
+生产 app 不依赖 MCP SDK。保留的历史私有 helper 仅供既有兼容测试调用。
 """
 from __future__ import annotations
 
@@ -27,9 +18,10 @@ from app.timeutil import today_local
 AGENT_NAME = "内置AI"  # 落 import_raw.blob，/agent-log 归属展示
 
 MEALS = ("早餐", "午餐", "加餐", "晚餐")
-WRITE_TOOLS = ("record_diet", "record_workout", "record_weight", "record_habit", "delete_record")
+WRITE_TOOLS = ("record_diet", "update_diet", "record_workout", "record_weight", "record_habit", "delete_record")
 TOOL_LABELS = {
     "record_diet": "记录饮食",
+    "update_diet": "修正饮食草案",
     "record_workout": "记录训练",
     "record_weight": "记录指标",
     "record_habit": "习惯打卡",
@@ -349,9 +341,25 @@ _RUNNERS = {
 }
 
 
-def run_tool(db: Session, name: str, args: dict[str, Any]) -> dict[str, Any]:
+def run_tool(db: Session, name: str, args: dict[str, Any], *, owner: str = "", request_key: str = "") -> dict[str, Any]:
     """执行一个工具调用；一切错误都折成 {"error": ...} 喂回模型，不抛异常。"""
-    runner = _RUNNERS.get(name)
+    if name in WRITE_TOOLS:
+        from app.services.agent_drafts import propose_tool, digest
+        try:
+            return propose_tool(db, name, args, owner, digest([request_key, name, args]))
+        except (ValueError, TypeError) as exc:
+            return {"error": "草案参数不完整或超出范围，请核对日期、食物、份量。"}
+    if name == "query_summary":
+        from app.routers.machine_agent import MachineHealthService
+        try:
+            day = date_type.fromisoformat(args.get("date") or str(today_local()))
+        except (ValueError, TypeError):
+            return {"error": "不是合法日期，请使用 YYYY-MM-DD"}
+        result = MachineHealthService(db).summary("primary", day)
+        result["indicators"].pop("mood_score", None)
+        result["data_quality"]["indicators"].pop("mood_score", None)
+        return result
+    runner = _RUNNERS.get(name) if name == "search_food" else None
     if runner is None:
         return {"error": f"未知工具：{name}"}
     try:
@@ -364,6 +372,8 @@ def receipt_summary(name: str, result: dict[str, Any]) -> str:
     """给 UI「本次执行的操作」列表用的一句话回执摘要。"""
     if "error" in result:
         return f"失败：{result['error']}"
+    if result.get("draft_id"):
+        return "待审核，尚未写入健康记录"
     if name == "delete_record":
         return f"已删除：{result.get('summary', '')}".strip("：")
     parts = [f"new={result.get('new', 0)}"]
@@ -375,3 +385,22 @@ def receipt_summary(name: str, result: dict[str, Any]) -> str:
     if totals.get("kcal") is not None:
         parts.append(f"当日累计 {round(totals['kcal'])} kcal")
     return " · ".join(parts)
+
+
+def review_tool_defs():
+    import copy
+    tools = [copy.deepcopy(t) for t in TOOL_DEFS if t["name"] not in {"record_habit", "delete_record"}]
+    for tool in tools:
+        if tool["name"] in WRITE_TOOLS:
+            tool["description"] = "创建待用户审核的草案，绝不直接写入。" + tool["description"].split("回执")[0]
+            tool["input_schema"].setdefault("required", []).append("date")
+        if tool["name"] == "record_weight":
+            tool["input_schema"]["properties"] = {k: v for k, v in tool["input_schema"]["properties"].items()
+                if k in {"date", "weight_kg", "sleep_hours", "mood_score"}}
+    update_tool = copy.deepcopy(next(t for t in tools if t["name"] == "record_diet"))
+    update_tool["name"] = "update_diet"
+    update_tool["description"] = "修正一条饮食记录：只生成差异草案，需用户审核。items 仅一项。"
+    update_tool["input_schema"]["properties"]["row_id"] = {"type": "integer", "minimum": 1}
+    update_tool["input_schema"]["required"].append("row_id")
+    tools.append(update_tool)
+    return tools

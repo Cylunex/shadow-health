@@ -40,19 +40,10 @@ def test_mcp_dedup_window():
     pytest.importorskip("mcp", reason="mcp 依赖组未装（uv sync --group mcp）")
     from mcp_server import server as srv
 
-    srv._dedup_cache.clear()
-    key = srv._dedup_key("record_diet", {"meal": "午餐", "items": [{"name": "面"}]})
-    assert srv._dedup_hit(key) is None          # 首调无缓存
-    srv._dedup_store(key, {"new": 1, "skipped": 0})
-    hit = srv._dedup_hit(key)
-    assert hit == {"new": 1, "skipped": 0, "dedup": True}  # 窗口内重调 → 回执 + dedup 标记
-    # 不同参数不去重
-    other = srv._dedup_key("record_diet", {"meal": "晚餐", "items": [{"name": "面"}]})
-    assert other != key and srv._dedup_hit(other) is None
-    # 过窗即失效
-    srv._dedup_cache[key] = (srv.time.monotonic() - srv._DEDUP_WINDOW_S - 1, {"new": 1})
-    assert srv._dedup_hit(key) is None
-    srv._dedup_cache.clear()
+    # The old 60-second process cache is gone: server-side idempotency is durable.
+    assert not hasattr(srv, "_dedup_cache")
+    assert not hasattr(srv, "_ingest")
+    assert callable(srv.draft_record)
 
 
 # ---------- DB 集成（不可达自动跳过） ----------
@@ -88,9 +79,14 @@ def client():
     from fastapi.testclient import TestClient
 
     from app.main import app
+    from app.routers.agent import _legacy_retired
+    # Exercise retained ingest helpers behind a test-only override. Production
+    # retirement itself is asserted in test_health_companion.py.
+    app.dependency_overrides[_legacy_retired] = lambda: None
     with TestClient(app) as c:
         c.headers["Authorization"] = f"Bearer {get_settings().ingest_token}"
         yield c
+    app.dependency_overrides.pop(_legacy_retired, None)
 
 
 @pytest.fixture()

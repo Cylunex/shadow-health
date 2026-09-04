@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -173,6 +173,8 @@ def today_scale_status_fragment(
     request: Request,
     start: bool = False,
     after: float | None = None,
+    attempt_id: str = Query(default="", max_length=36, pattern=r"^([0-9a-f-]{36})?$"),
+    view_id: str = Query(default="", max_length=48, pattern=r"^[A-Za-z0-9-]*$"),
     db: Session = Depends(get_db),
 ):
     """一次开秤会话的首页反馈；收到或超时后不再输出轮询属性。"""
@@ -192,8 +194,11 @@ def today_scale_status_fragment(
     row = None
     # 截止点附近已经到达、尚在处理的记录仍给 30 秒收尾时间；更老的会话不查库。
     if elapsed <= HOME_SCAN_SECONDS + 30:
+        query = select(ImportRaw)
+        if attempt_id:
+            query = query.where(ImportRaw.provenance["last_attempt_id"].astext == attempt_id)
         row = db.execute(
-            select(ImportRaw)
+            query
             .where(
                 ImportRaw.source == "miscale",
                 ImportRaw.last_seen_at >= scan_started,
@@ -210,8 +215,10 @@ def today_scale_status_fragment(
         state = "processing"
     elif row.parse_status == "failed":
         state = "failed"
-    else:
+    elif row.parse_status == "parsed":
         state = "success"
+    else:
+        state = "failed"
 
     response = templates.TemplateResponse(
         request,
@@ -219,6 +226,13 @@ def today_scale_status_fragment(
         {
             "state": state,
             "after": f"{scan_started.timestamp():.3f}",
+            "attempt_id": attempt_id,
+            "view_id": view_id,
+            "duplicate": bool(row and ((row.provenance or {}).get("first_attempt_id") != attempt_id
+                                        if attempt_id else row.imported_at < scan_started)),
+            "received_at": row.last_seen_at if row else None,
+            "measured_at": (row.raw or {}).get("ts") if row else None,
+            "normalized_at": row.last_normalization_at if row else None,
             "measurement": _home_measurement(db, row) if row is not None else None,
         },
     )

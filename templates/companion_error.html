@@ -1,0 +1,5 @@
+{% extends 'base.html' %}
+{% block page_title %}请重新核对{% endblock %}
+{% block content %}
+<section class="card space-y-4"><h2 class="card-title">这次操作没有继续执行</h2><p class="text-sm text-amber-300">{{ message }}</p><p class="text-sm text-slate-400">返回健康助手查看最新状态；不要重复提交旧页面。</p><a class="btn-primary" href="{{ u('/companion') }}">返回健康助手</a></section>
+{% endblock %}

@@ -1,0 +1,5 @@
+<section class="card space-y-3" {% if task and task.status in ('pending','running') %}hx-get="{{ u('/companion/tasks/' ~ task.id ~ '/status') }}" hx-trigger="every 3s" hx-swap="outerHTML"{% endif %}>
+{% if task %}<h2 class="card-title">{{ task.payload.end }} · {{ task.payload.days }} 天复盘</h2><p>{{ {'pending':'已排队，关闭页面也不丢失','running':'正在核对数据与来源','done':'复盘已完成','failed':'任务失败','cancelled':'任务已取消'}.get(task.status) }}</p>
+{% if task.status == 'done' %}<a class="btn-primary" href="{{ u('/companion/evidence/' ~ task.result.evidence_id) }}">查看复盘与依据</a>{% elif task.status == 'failed' %}<p class="text-sm text-amber-300">{{ task.result.get('error') }}</p>{% endif %}
+{% if task.status in ('pending','running','failed') %}<form method="post" action="{{ u('/companion/tasks/' ~ task.id ~ ('/retry' if task.status == 'failed' else '/cancel')) }}"><button class="btn-ghost">{{ '重试（最多三次）' if task.status == 'failed' else '取消' }}</button></form>{% endif %}
+{% else %}<p>暂无任务</p>{% endif %}</section>

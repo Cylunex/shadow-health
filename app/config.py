@@ -68,6 +68,7 @@ def _optional_service_url(name: str) -> str:
 class Settings:
     def __init__(self) -> None:
         _load_dotenv()
+        self.agent_review_enabled = os.environ.get("HEALTH_AGENT_REVIEW_ENABLED", "true").lower() == "true"
         self.database_url: str = os.environ.get(
             "DATABASE_URL",
             "postgresql+psycopg://health_app:health_dev@127.0.0.1:55433/health_dev",

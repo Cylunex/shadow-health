@@ -20,6 +20,8 @@ Shadow Health 是面向个人长期使用的健康记录与趋势中心。它统
 - OIDC Web 会话、机器同步接口和 MCP 能力；
 - Android 离线队列及失败补偿；
 - PostgreSQL 迁移、导入和审计基础。
+- 健康助手：一餐草案核对、可信回执、来源证据复盘、持久任务、小行动与显式偏好；
+- 默认关闭的站内主动整理，先影子观察再启用；首页开秤显示本次接收与重复状态。
 
 ## Nexus 快捷操作
 
@@ -34,6 +36,8 @@ uv sync
 cp .env.example .env
 uv run alembic upgrade head
 uv run uvicorn app.main:app --reload
+# 另一个终端启动领域任务执行器
+uv run python -m scripts.health_worker
 ```
 
 `.env` 只用于本地实际配置并保持忽略；仓库只保留字段示例。
@@ -45,3 +49,5 @@ uv run uvicorn app.main:app --reload
 长期记录身份、Health Connect 游标、覆盖/来源证据与 Platform 恢复验证见
 [长期健康数据底座](docs/health-data-foundation.md)。
 医疗相关输出仅供个人记录和参考。
+
+本轮 Agent 改造、迁移、MCP 凭据切换和 APK 兼容性见 [工作流实施说明](docs/agent-workflows.md)。

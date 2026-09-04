@@ -10,7 +10,7 @@ from datetime import UTC, datetime, time, timedelta
 from datetime import date as date_type
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Body, Depends, Query, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
@@ -541,7 +541,7 @@ class MachineHealthService:
             )
         ).scalar_one_or_none()
         if existing is not None:
-            if existing.payload_hash != payload_hash:
+            if existing.payload_hash != payload_hash or existing.profile_id != profile_id:
                 raise MachineAPIError(
                     409,
                     "idempotency_conflict",
@@ -549,13 +549,14 @@ class MachineHealthService:
                 )
             return existing, True
 
+        from app.services.agent_drafts import prepare_review
         draft = AgentRecordDraft(
             draft_id=f"hd_{uuid.uuid4().hex}",
             agent_id=principal.agent_id,
             profile_id=profile_id,
             record_type=payload["record_type"],
             effective_date=date_type.fromisoformat(payload["effective_date"]),
-            payload=payload,
+            payload=prepare_review(self.db, payload),
             payload_hash=payload_hash,
             idempotency_key=idempotency_key,
             status="pending",
@@ -571,7 +572,7 @@ class MachineHealthService:
                     AgentRecordDraft.idempotency_key == idempotency_key,
                 )
             ).scalar_one()
-            if existing.payload_hash != payload_hash:
+            if existing.payload_hash != payload_hash or existing.profile_id != profile_id:
                 raise MachineAPIError(
                     409,
                     "idempotency_conflict",
@@ -582,6 +583,8 @@ class MachineHealthService:
 
     def commit_draft(self, draft: AgentRecordDraft) -> tuple[str, bool]:
         """Materialize one explicitly reviewed Nexus draft into canonical Health data."""
+        from app.services.agent_drafts import locked_review, validate_review
+        draft = locked_review(self.db, draft)
         if draft.status == "applied":
             resource_uri = draft.payload.get("_result_uri")
             if isinstance(resource_uri, str) and resource_uri:
@@ -589,13 +592,32 @@ class MachineHealthService:
             raise MachineAPIError(409, "draft_state_invalid", "The applied draft has no result reference.")
         if draft.status != "pending":
             raise MachineAPIError(409, "draft_state_invalid", "The draft is not pending review.")
+        from app.config import get_settings
+        if not get_settings().agent_review_enabled:
+            raise MachineAPIError(503, "review_paused", "草案执行已暂停；仍可查看或拒绝，手动录入与设备采集不受影响。")
+        validate_review(self.db, draft)
         fields = draft.payload["fields"]
         provenance = {
             "source": "shadow-nexus",
             "agent_draft_id": draft.draft_id,
             "agent_id": draft.agent_id,
         }
-        if draft.record_type == "meal":
+        if draft.record_type == "meal" and draft.payload.get("operation") == "update":
+            record = self.db.get(DietLog, draft.payload["target_id"])
+            item = fields.get("items", [fields])[0]
+            previous = dict(record.provenance or {})
+            revisions = list(previous.get("revisions", []))
+            revisions.append({"before": draft.payload["_target"], "draft_id": draft.draft_id})
+            record.meal = fields["meal"]
+            for key in ("amount_g", "kcal", "protein_g", "fat_g", "carb_g", "notes"):
+                setattr(record, key, item.get(key))
+            record.free_text = item["name"]
+            record.food_id = None  # 修订已显式展示的快照，不能沿用旧食物关联覆盖名称。
+            record.provenance = {**previous, **provenance, "revisions": revisions}
+            self.db.flush()
+            draft.payload = {**draft.payload, "_result_ids": [record.id]}
+            resource_uri = f"shadow://health/diet/{record.id}"
+        elif draft.record_type == "meal":
             items = fields.get("items")
             meal_items = items if isinstance(items, list) else [fields]
             records = [
@@ -614,6 +636,7 @@ class MachineHealthService:
                         "meal_name": fields["name"],
                         "item_index": index,
                         "item_count": len(meal_items),
+                        "nutrition_source": (draft.payload.get("_nutrition_sources") or ["estimate"] * len(meal_items))[index - 1],
                     },
                 )
                 for index, item in enumerate(meal_items, start=1)
@@ -656,7 +679,13 @@ class MachineHealthService:
             record.autofilled = markers
             self.db.flush()
             resource_uri = f"shadow://health/metrics/{draft.effective_date.isoformat()}"
-        draft.payload = {**draft.payload, "_result_uri": resource_uri}
+        draft.payload = {**draft.payload, "_result_uri": resource_uri,
+                         "_applied_at": datetime.now(UTC).isoformat()}
+        if draft.payload.get("_photo_id"):
+            from app.models import DietPhoto
+            photo = self.db.get(DietPhoto, draft.payload["_photo_id"])
+            if photo and (photo.analysis or {}).get("draft_id") == draft.draft_id:
+                photo.analysis = {**photo.analysis, "status": "success", "diet_log_ids": draft.payload.get("_result_ids", [])}
         draft.status = "applied"
         self.db.flush()
         return resource_uri, False
@@ -678,6 +707,8 @@ class MachineHealthService:
         )
 
     def reject_draft(self, draft: AgentRecordDraft) -> bool:
+        from app.services.agent_drafts import locked_review
+        draft = locked_review(self.db, draft)
         if draft.status == "rejected":
             return True
         if draft.status != "pending":
@@ -689,6 +720,37 @@ class MachineHealthService:
 
 def get_machine_health_service(db: Session = Depends(get_db)) -> MachineHealthService:
     return MachineHealthService(db)
+
+
+@router.get("/profiles/{profile_id}/weekly-evidence", operation_id="get_health_weekly_evidence")
+def get_health_weekly_evidence(request: Request, profile_id: str, end: date_type,
+    service: MachineHealthService = Depends(get_machine_health_service)):
+    from app.services.health_companion import weekly_facts, analyze_facts
+    from app.services.agent_drafts import digest
+    principal, rid = _authorize(request, service, profile_id, "health.trends.read", "trends:read")
+    if not today_local() - timedelta(days=365) <= end <= today_local():
+        raise MachineAPIError(400, "invalid_window", "日期超出支持范围。")
+    facts = weekly_facts(service.db, end)
+    service.audit(request_id=rid, principal=principal, capability="health.trends.read", profile_id=profile_id,
+                  outcome="success", status_code=200)
+    return {"profile_id": profile_id, "end": str(end), "cards": analyze_facts(facts),
+            "fingerprint": digest(facts), "algorithm": facts["algorithm"], "timezone": facts["timezone"],
+            "evidence_refs": [f"shadow://health/profiles/{profile_id}/summary/{d['date']}" for d in facts["daily"]],
+            "caution": "两个互不重叠的周窗口；数据不足或来源变化时不作趋势判断。"}
+
+
+@router.get("/profiles/{profile_id}/data-status", operation_id="get_health_data_status")
+def get_health_data_status(request: Request, profile_id: str,
+    service: MachineHealthService = Depends(get_machine_health_service)):
+    from app.models import SyncState
+    principal, rid = _authorize(request, service, profile_id, "health.summary.read", "summary:read")
+    rows = service.db.scalars(select(SyncState).where(SyncState.source.in_(
+        ("miscale", "health_connect", "samsung_direct")))).all()
+    service.audit(request_id=rid, principal=principal, capability="health.summary.read", profile_id=profile_id,
+                  outcome="success", status_code=200)
+    return {"sources": [{"source": r.source, "last_success_at": _iso(r.last_success_at),
+                          "consecutive_failures": r.consecutive_failures} for r in rows],
+            "caution": "仅表示服务端已知状态。未收到消息不能证明蓝牙或手机采集失败。"}
 
 
 @router.get("/profiles/{profile_id}/summary")
@@ -1025,6 +1087,7 @@ def commit_health_record_draft(
     request: Request,
     profile_id: str,
     draft_id: str,
+    approval: dict[str, Any] | None = Body(default=None),
     service: MachineHealthService = Depends(get_machine_health_service),
 ) -> JSONResponse:
     capability = "health.records.write"
@@ -1044,6 +1107,7 @@ def commit_health_record_draft(
         )
         raise MachineAPIError(404, "draft_not_found", "The health draft was not found.")
     try:
+        _check_approval(draft, approval)
         resource_uri, replayed = service.commit_draft(draft)
     except MachineAPIError as exc:
         service.audit(
@@ -1250,6 +1314,7 @@ def commit_nexus_health_review(
     review_id: str,
     request: Request,
     profile_id: str = Query(min_length=1, max_length=64),
+    approval: dict[str, Any] | None = Body(default=None),
     service: MachineHealthService = Depends(get_machine_health_service),
 ) -> JSONResponse:
     capability = "health.records.write"
@@ -1259,6 +1324,7 @@ def commit_nexus_health_review(
     draft = service.db.get(AgentRecordDraft, review_id)
     if draft is None or draft.profile_id != profile_id or draft.agent_id != principal.agent_id:
         raise MachineAPIError(404, "draft_not_found", "The health draft was not found.")
+    _check_approval(draft, approval)
     receipt, replayed = service.commit_draft(draft)
     service.audit(
         request_id=request_id,
@@ -1392,6 +1458,16 @@ def _nexus_health_payload(raw: Any) -> dict[str, Any]:
     )
 
 
+def _check_approval(draft, approval):
+    # Drafts are immutable: edits issue a new ID and reject the old one. Version 1
+    # remains compatible with Nexus; never silently accept a supplied newer version.
+    if approval and approval.get("revision", 1) != 1:
+        raise MachineAPIError(409, "review_changed", "草案版本不匹配，请重新加载。")
+    if approval and approval.get("payload_hash"):
+        from app.services.agent_drafts import approve_match
+        approve_match(draft, approval["payload_hash"])
+
+
 def _health_review_envelope(
     draft: AgentRecordDraft,
     *,
@@ -1430,6 +1506,8 @@ def _health_review_envelope(
         "review_id": draft.draft_id,
         "reference": f"shadow://health/drafts/{draft.draft_id}",
         "revision": 1,
+        "payload_hash": draft.payload_hash,
+        "expires_at": draft.payload.get("_expires_at"),
         "domain": "health",
         "intent": f"health.{draft.record_type}",
         "summary": draft.payload.get("note") or f"Health {draft.record_type} 草稿",
@@ -1479,7 +1557,7 @@ def _authorize(
 
 
 def _validate_draft_payload(raw: Any) -> dict[str, Any]:
-    if not isinstance(raw, dict) or set(raw) - {"record_type", "effective_date", "fields", "note"}:
+    if not isinstance(raw, dict) or set(raw) - {"record_type", "effective_date", "fields", "note", "operation", "target_id"}:
         raise ValueError
     record_type = raw.get("record_type")
     if record_type not in {"metric", "meal", "workout"}:
@@ -1507,6 +1585,15 @@ def _validate_draft_payload(raw: Any) -> dict[str, Any]:
     }
     if note and note.strip():
         result["note"] = note.strip()
+    if "operation" in raw or "target_id" in raw:
+        if raw.get("operation") != "update" or record_type != "meal":
+            raise ValueError
+        target = raw.get("target_id")
+        if isinstance(target, bool) or not isinstance(target, int) or target <= 0:
+            raise ValueError
+        if len(normalized_fields.get("items", [normalized_fields])) != 1:
+            raise ValueError
+        result.update(operation="update", target_id=target)
     return result
 
 
@@ -1534,7 +1621,7 @@ def _validate_metric_fields(fields: dict[str, Any]) -> dict[str, Any]:
 
 def _validate_meal_fields(fields: dict[str, Any]) -> dict[str, Any]:
     allowed = {
-        "meal", "name", "amount_g", "kcal", "protein_g", "fat_g", "carb_g", "notes", "items",
+        "meal", "name", "amount_g", "kcal", "protein_g", "fat_g", "carb_g", "notes", "items", "food_id",
     }
     if set(fields) - allowed or fields.get("meal") not in {"早餐", "午餐", "晚餐", "加餐"}:
         raise ValueError
@@ -1542,6 +1629,10 @@ def _validate_meal_fields(fields: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(name, str) or not 1 <= len(name.strip()) <= 120:
         raise ValueError
     result: dict[str, Any] = {"meal": fields["meal"], "name": name.strip()}
+    if "food_id" in fields:
+        result["food_id"] = _bounded_number(fields["food_id"], 1, 2147483647)
+        if not isinstance(result["food_id"], int):
+            raise ValueError
     for key, high in {
         "amount_g": 5000,
         "kcal": 20000,
@@ -1565,13 +1656,17 @@ def _validate_meal_fields(fields: dict[str, Any]) -> dict[str, Any]:
 
 
 def _validate_meal_item(raw: Any) -> dict[str, Any]:
-    allowed = {"name", "amount_g", "kcal", "protein_g", "fat_g", "carb_g", "notes"}
+    allowed = {"name", "amount_g", "kcal", "protein_g", "fat_g", "carb_g", "notes", "food_id"}
     if not isinstance(raw, dict) or set(raw) - allowed:
         raise ValueError
     name = raw.get("name")
     if not isinstance(name, str) or not 1 <= len(name.strip()) <= 120:
         raise ValueError
     result: dict[str, Any] = {"name": name.strip()}
+    if "food_id" in raw:
+        result["food_id"] = _bounded_number(raw["food_id"], 1, 2147483647)
+        if not isinstance(result["food_id"], int):
+            raise ValueError
     for key, high in {
         "amount_g": 5000,
         "kcal": 20000,

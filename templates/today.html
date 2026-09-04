@@ -30,6 +30,8 @@
 
   {# 开秤后的当前会话状态：仅点击后出现，收到结果或超时即停止轮询。 #}
   <div id="home-scale-status" class="hidden"></div>
+  <p id="home-scale-native" class="text-xs text-slate-400" aria-live="polite"></p>
+  <div hx-get="{{ u('/companion/badge') }}" hx-trigger="load" hx-swap="outerHTML"></div>
 
   <!-- 自动采集 + Agent 录入后的查看型概览：首屏直接给结论与通道状态。 -->
   <div hx-get="{{ u('/fragments/today/overview') }}"
@@ -51,9 +53,7 @@
        hx-trigger="load, every 60s" hx-swap="outerHTML"></div>
 
   <!-- 1.6 今日准备度（V6 A2：睡眠/负荷/静息心率/主观合成；数据不足不显示） -->
-  <div hidden hx-get="{{ u('/fragments/today/readiness') }}"
-       hx-trigger="load, workout-changed from:body, metrics-changed from:body"
-       hx-swap="outerHTML"></div>
+  {# 不再默认展示未经个人验证的综合准备度分；改为有据复盘。 #}
 
   <!-- 2. 今日三环（步数 / 训练分钟 / 打卡完成；打卡/训练写操作后被动刷新） -->
   <section class="card">
@@ -197,18 +197,51 @@
       window.location.href = '{{ u('/scale') }}';
       return;
     }
-    window.shadowStartScaleScan().then(function () {
+    var generation = (window.homeScaleGeneration || 0) + 1;
+    window.homeScaleGeneration = generation;
+    window.homeScaleView = String(generation);
+    window.homeScaleServerFinal = false;
+    document.getElementById('home-scale-native').textContent = '';
+    window.shadowStartScaleScan().then(function (result) {
+      if (window.homeScaleGeneration !== generation) return;
+      var attempt = result && result.attempt_id || '';
+      window.homeScaleAttempt = attempt;
       var status = document.getElementById('home-scale-status');
       if (status && window.htmx) {
         status.classList.remove('hidden');
-        window.htmx.ajax('GET', '{{ u('/fragments/today/scale-status') }}?start=1', {
+        window.htmx.ajax('GET', '{{ u('/fragments/today/scale-status') }}?start=1&attempt_id=' + encodeURIComponent(attempt) + '&view_id=' + generation, {
           target: '#home-scale-status',
           swap: 'outerHTML'
         });
+      }
+      var until = Date.now() + 225000;
+      clearInterval(window.homeScaleNativeTimer);
+      if (attempt && window.ShadowNativeBridge && !window.homeScaleServerFinal) {
+        window.homeScaleNativeTimer = setInterval(function () {
+          if (Date.now() > until || window.homeScaleGeneration !== generation) { clearInterval(window.homeScaleNativeTimer); return; }
+          window.ShadowNativeBridge.request('health.scale', 'health.scale.status', {attempt_id: attempt}).then(function (s) {
+            if (window.homeScaleGeneration !== generation || window.homeScaleServerFinal) return;
+            var labels = {requested:'手机正在启动监听',scanning:'手机正在扫描蓝牙',captured:'手机已采集，等待上传',uploading:'手机正在上传',retrying:'上传重试中',queued:'上传失败，已存手机队列',server_received:'服务端已接收，正在核对入库结果',permission_required:'请在手机授予蓝牙权限',permission_denied:'蓝牙权限未授予',start_failed:'手机监听启动失败',configuration_required:'请配置手机同步连接',superseded:'该会话已被新的开秤操作替代',scan_failed:'蓝牙扫描失败',bluetooth_off:'手机蓝牙未开启'};
+            document.getElementById('home-scale-native').textContent = labels[s.stage] || '';
+          }).catch(function () { clearInterval(window.homeScaleNativeTimer); });
+        }, 2000);
       }
     }).catch(function () {
       window.location.href = '{{ u('/scale') }}';
     });
   };
+  document.addEventListener('htmx:beforeSwap', function (event) {
+    if (event.detail.target && event.detail.target.id === 'home-scale-status') {
+      var doc = new DOMParser().parseFromString(event.detail.xhr.responseText, 'text/html');
+      var incoming = doc.querySelector('[data-attempt-id]');
+      if (incoming && (incoming.dataset.attemptId !== (window.homeScaleAttempt || '') || incoming.dataset.viewId !== (window.homeScaleView || ''))) {
+        event.detail.shouldSwap = false;
+      } else if (incoming && ['success','failed','timeout'].includes(incoming.dataset.state)) {
+        window.homeScaleServerFinal = true;
+        clearInterval(window.homeScaleNativeTimer);
+        document.getElementById('home-scale-native').textContent = '';
+      }
+    }
+  });
 </script>
 {% endblock %}

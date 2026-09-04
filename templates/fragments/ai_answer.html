@@ -11,13 +11,14 @@
   {% if actions %}
   {# 本次问答执行的写操作（走 agent 通道留档，/agent-log 可核对撤销） #}
   <div class="rounded-xl border border-slate-800 bg-slate-900/60 px-4 py-2.5 space-y-1">
-    <p class="text-xs text-slate-400">本次执行的操作</p>
+    <p class="text-xs text-slate-400">本次生成的草案 · 确认前不会写入</p>
     {% for a in actions %}
     <p class="text-xs {{ 'text-emerald-400' if a.ok else 'text-red-400' }}">
       {{ '✓' if a.ok else '✗' }} {{ a.label }} · {{ a.summary }}
+      {% if a.review_url %}<a class="btn-primary ml-2" href="{{ u(a.review_url) }}">核对这餐 / 草案</a>{% endif %}
     </p>
     {% endfor %}
-    <a href="{{ u('/agent-log') }}" class="inline-block text-xs text-slate-500 underline decoration-slate-700">到 Agent 记录页核对/撤销</a>
+    <a href="{{ u('/companion') }}" class="inline-block text-xs text-slate-400">查看全部待处理</a>
   </div>
   {% endif %}
 </div>

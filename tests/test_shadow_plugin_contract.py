@@ -70,7 +70,7 @@ def test_shadow_plugin_contract_matches_machine_routes() -> None:
     actual_routes = _application_routes(app)
 
     assert plugin.plugin_id == "shadow-health"
-    assert plugin.version == "0.1.2"
+    assert plugin.version == "0.2.0"
     assert declared_routes <= actual_routes
     assert {item["id"] for item in plugin.agent_manifest["capabilities"]} == {
         "health.summary.read",

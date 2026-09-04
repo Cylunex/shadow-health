@@ -1115,14 +1115,19 @@ def diet_asset_photo_release(day: date, meal_slug: str, reference_id: str):
 
 @router.post("/diet/photos/{photo_id}/analyze")
 def diet_photo_analyze(photo_id: int, request: Request, db: Session = Depends(get_db)):
-    """AI 识别餐食照片：估算各食物营养 → 生成该餐次的饮食记录。
-
-    识别结果按自由文本记录（kcal/protein 为该份量总值），可行内编辑修正。
-    成功带 HX-Trigger: diet-changed，餐次列表立刻出现新行。
-    """
+    """一餐一份审核草案；照片级事务锁避免并发识别生成重复草案。"""
     from app.services import llm
 
-    photo = _load_photo(db, photo_id)
+    photo = db.scalars(select(DietPhoto).where(DietPhoto.id == photo_id)
+                       .with_for_update()).first()
+    if photo is None:
+        raise HTTPException(status_code=404, detail="照片不存在")
+    from app.models import AgentRecordDraft
+    from app.deps import prefixed
+    existing_id = (photo.analysis or {}).get("draft_id")
+    existing_draft = db.get(AgentRecordDraft, existing_id) if existing_id else None
+    if existing_draft is not None and existing_draft.status in {"pending", "applied"}:
+        return Response(headers={"HX-Redirect": prefixed(request, f"/companion/drafts/{existing_id}")})
 
     def _msg(error: str | None = None, ok: str | None = None, note: str = "",
              trace: dict[str, Any] | None = None):
@@ -1151,8 +1156,8 @@ def diet_photo_analyze(photo_id: int, request: Request, db: Session = Depends(ge
         result = llm.analyze_meal_photo(
             db, path.read_bytes(), photo.content_type or "image/jpeg"
         )
-    except llm.LLMError as exc:
-        return _msg(error=str(exc))
+    except llm.LLMError:
+        return _msg(error="照片识别暂时失败，请检查模型配置后重试。未生成正式记录。")
 
     items = result["items"]
     if not items:
@@ -1160,50 +1165,27 @@ def diet_photo_analyze(photo_id: int, request: Request, db: Session = Depends(ge
     trace = llm.vision_trace(
         db, llm.MEAL_PHOTO_PROMPT_VERSION, confidence=result.get("confidence")
     )
-    total_kcal = 0.0
-    new_foods = 0
-    created_logs: list[DietLog] = []
-    for it in items:
-        log = DietLog(
-            log_date=photo.log_date,
-            meal=photo.meal,
-            free_text=it["name"],
-            amount_g=it["amount_g"],
-            kcal=it["kcal"],
-            protein_g=it["protein_g"],
-            fat_g=it.get("fat_g"),
-            carb_g=it.get("carb_g"),
-            provenance={
-                "method": "vision",
-                "photo_id": photo.id,
-                "trace": {**trace, "confidence": it.get("confidence")}
-                if it.get("confidence") is not None else trace,
-                "input": it,
-            },
-        )
-        db.add(log)
-        created_logs.append(log)
-        total_kcal += it["kcal"] or 0
-        # 识别出的新菜自动进食物库（估算值按每 100g 折算，重名跳过）
-        if _auto_catalog_food(db, it["name"], it["amount_g"], it["kcal"],
-                              it["protein_g"], it.get("fat_g"), it.get("carb_g")):
-            new_foods += 1
-    db.flush()
+    from app.services.agent_drafts import propose_tool, digest
+    from app.services.health_companion import owner_id
+    args = {"date": str(photo.log_date), "meal": photo.meal,
+            "items": [{k: v for k, v in item.items() if k in {
+                "name", "amount_g", "kcal", "protein_g", "fat_g", "carb_g", "notes"} and v is not None} for item in items]}
+    proposed = propose_tool(db, "record_diet", args, owner_id(request),
+                            digest(["photo", photo.id, existing_id, args]))
+    if "error" in proposed:
+        return _msg(error=proposed["error"])
+    draft = db.get(AgentRecordDraft, proposed["draft_id"])
+    draft.payload = {**draft.payload, "_photo_id": photo.id, "_vision_trace": trace}
     photo.analysis = {
-        "status": "success",
+        "status": "pending_review",
+        "draft_id": draft.draft_id,
         "trace": trace,
         "items": items,
         "note": result["note"],
-        "diet_log_ids": [log.id for log in created_logs],
+        "diet_log_ids": [],
     }
     db.flush()
-    names = "、".join(it["name"] for it in items[:5]) + ("…" if len(items) > 5 else "")
-    return _msg(
-        ok=f"已识别 {len(items)} 项计入{photo.meal}：{names}（约 {round(total_kcal)} kcal）"
-           + (f"，{new_foods} 个新食物已入库" if new_foods else ""),
-        note=result["note"],
-        trace=trace,
-    )
+    return Response(headers={"HX-Redirect": prefixed(request, proposed["review_url"])})
 
 
 # ---------- 搜索联想 ----------

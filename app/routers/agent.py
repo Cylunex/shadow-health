@@ -1,42 +1,13 @@
-"""多 Agent 统一接入通道。
+"""已退役的旧 Agent 路由及历史领域 helper。
 
-背景：Hermes 等 agent 此前直写旧库 personal_data 裸 SQL，假确认（说记了没记）与
-日期错记反复发生。本模块给所有 agent（Hermes/OpenClaw/未来其他）一个带审计、
-带幂等、带回执的统一入口，MCP server（mcp_server/）的工具全部落到这里。
-
-端点（全部 Bearer=INGEST_TOKEN，不挂 session；写路径豁免 CSRF 的原因同秤/手表：
-Authorization 头跨站伪造不了）：
-- POST /api/ingest/agent      写通道：offline 管线薄别名（source='agent'，
-  workout external_id='agent-{client_id}'），响应附 per-record 明细
-  [{client_id, status, row_id}]——status ∈ new/skipped/failed，diet/workout
-  的 new 带落库行 id（delete 纠错用），顶层保持 {received,new,skipped} 兼容
-- GET  /api/agent/summary?date=YYYY-MM-DD   当日全景：饮食汇总+明细（带行 id）/
-  步数/训练（带行 id）/体重/心情/打卡完成度。复用 diet._summary_ctx 与
-  report._habit_checklist，口径与页面一致。date 非法直接 400——agent 通道
-  绝不静默回退日期（旧伤疤就是日期错记）
-- GET  /api/agent/report/weekly?week=YYYY-Wnn   周报数据（review._aggregate_week
-  同一查询，口径与报告中心一致）；缺省=上一完整周
-- GET  /api/agent/report/monthly?month=YYYY-MM   月报数据（report._aggregate_month
-  同一查询）；缺省=上一完整月；complete=false 表示该月还没走完
-- GET  /api/agent/context?days=N   全景上下文（llm.build_context 同一文本，
-  与内置 AI 分析/问答注入的完全一致）——agent 做趋势分析一次拿全
-- GET  /api/agent/metrics/series?field=&days=N   单指标逐日序列（体重/血压/
-  心情等 metrics 页白名单字段 + steps），manual 标记字段是否手动值
-- GET  /api/agent/foods?q=    食物库搜索（MCP search_food 工具；热量估算辅助），
-  近 90 天使用频次优先，与饮食页搜索同排序
-- POST /api/agent/delete      {type: diet|workout, row_id}：改口纠错删除。
-  仅 diet/workout；workout 仅 source='manual'（含 agent/offline 写入的
-  manual+external_id 行）可删，keep/三星等外部来源 403——同步数据删了会被
-  下次同步复活，且不是 agent 记错的东西
-- POST /api/agent/update      {type, row_id, fields}：改口修正（V5，不必删了
-  重记）。只动 fields 里出现的键；校验与编辑表单同口径；workout 外部来源
-  403 同 delete；食物关联 diet 行可改 meal/amount_g/notes（营养按食物库重算）
+公开 legacy 路由统一返回 410；设备 ingest 不受影响。
+新入口为 routers.machine_agent，内置 AI 与 MCP 仅通过共享草案服务。
+保留的历史函数用于已有手工/兼容测试，不得再注册为模型写工具。
 """
 from __future__ import annotations
 
 import json
 import re
-import threading
 import uuid
 # date 别名：summary 的查询参数就叫 date（对 agent 最直觉），避免遮蔽
 from datetime import date as date_type, timedelta
@@ -50,7 +21,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.diet_notes import parse_diet_notes
 from app.models import (
-    AppSetting, BodyMetrics, DailyActivity, DietLog, Food, WorkoutLog,
+    BodyMetrics, DailyActivity, DietLog, Food, WorkoutLog,
 )
 from app.routers.diet import MEALS, _food_macros, _parse_decimal, _summary_ctx
 from app.routers.ingest import _bearer_reject
@@ -72,7 +43,12 @@ SERIES_DAYS_MAX = 366
 _SERIES_FIELDS: dict[str, str] = {name: label for name, label, *_ in _FIELD_DEFS}
 _SERIES_FIELDS["steps"] = "步数"
 
-router = APIRouter()
+def _legacy_retired():
+    from app.machine_auth import MachineAPIError
+    raise MachineAPIError(410, "legacy_agent_retired", "旧 Agent 通道已停用，请使用 machine v1 的读取和审核草案接口。设备上传不受影响。")
+
+
+router = APIRouter(dependencies=[Depends(_legacy_retired)])
 
 
 def _num(v: Any) -> Any:
@@ -459,64 +435,14 @@ def delete_record(db: Session, rtype: str, row_id: int) -> tuple[int, dict[str, 
 
 @router.get("/api/agent/analysis")
 def agent_analysis(request: Request, db: Session = Depends(get_db)) -> Response:
-    """最近一次内置 AI 分析报告 + 任务状态（job ∈ idle/running/done/failed）。"""
-    reject = _bearer_reject(request)
-    if reject is not None:
-        return reject
-    from app.routers.ai import _CACHE_KEY, _job_state
-
-    row = db.get(AppSetting, _CACHE_KEY)
-    analysis = None
-    if row is not None and isinstance(row.value, dict):
-        analysis = {
-            "content": row.value.get("content", ""),
-            "generated_at": row.value.get("generated_at", ""),
-            "days": row.value.get("days"),
-        }
-    state = _job_state(db)
-    return JSONResponse({
-        "job": state.get("status") or "idle",
-        "error": state.get("error"),
-        "analysis": analysis,
-    })
+    """旧分析入口明确退役，不保留线程式任务路径。"""
+    return _legacy_retired()
 
 
 @router.post("/api/agent/analysis")
 async def agent_analysis_run(request: Request, db: Session = Depends(get_db)) -> Response:
-    """触发内置 AI 分析（后台线程 + app_settings 轮询，与 /ai/analyze 同一 job，
-    互斥防并发覆盖）。agent 触发后轮询 GET /api/agent/analysis 取结果。"""
-    reject = _bearer_reject(request)
-    if reject is not None:
-        return reject
-    try:
-        payload = json.loads(await request.body() or b"{}")
-    except (ValueError, UnicodeDecodeError):
-        return JSONResponse({"error": "invalid json"}, status_code=400)
-    if not isinstance(payload, dict):
-        return JSONResponse({"error": "unsupported payload"}, status_code=400)
-    from app.routers.ai import _DAYS_OPTIONS, _JOB_KEY, _job_state, _run_analysis, _set_setting
-
-    try:
-        days = int(str(payload.get("days", 30)).strip())
-    except (TypeError, ValueError):
-        days = 0
-    if days not in _DAYS_OPTIONS:
-        return JSONResponse(
-            {"error": f"days 仅支持 {'/'.join(map(str, _DAYS_OPTIONS))}"}, status_code=400
-        )
-    state = _job_state(db)
-    if state.get("status") == "running":
-        return JSONResponse({"started": False, "job": "running", "days": state.get("days")})
-    if not llm.is_configured(db):
-        return JSONResponse(
-            {"error": "未配置 AI 模型 API Key（设置→AI 模型）"}, status_code=400
-        )
-    _set_setting(db, _JOB_KEY, {
-        "status": "running", "days": days, "started_at": now_local().isoformat(),
-    })
-    db.commit()  # 后台线程用独立会话读状态，必须先落库（与 /ai/analyze 同口径）
-    threading.Thread(target=_run_analysis, args=(days,), daemon=True).start()
-    return JSONResponse({"started": True, "job": "running", "days": days})
+    """已退役；使用健康助手的持久任务。"""
+    return _legacy_retired()
 
 
 # ---------- 改口修正（不必删了重记） ----------

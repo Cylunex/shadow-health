@@ -1,12 +1,40 @@
 openapi: 3.1.0
 info:
   title: Shadow Health Agent API
-  version: 0.1.0
+  version: 0.2.0
 servers:
   - url: https://health.example.com
 security:
   - machineBearer: []
 paths:
+  /api/machine/v1/agent/profiles/{profile_id}/weekly-evidence:
+    get:
+      operationId: get_health_weekly_evidence
+      summary: Compare two disjoint weeks with source-aware deterministic evidence
+      parameters:
+        - $ref: "#/components/parameters/ProfileId"
+        - name: end
+          in: query
+          required: true
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: Bounded aggregate evidence, no private raw records
+          content:
+            application/json:
+              schema: { type: object }
+  /api/machine/v1/agent/profiles/{profile_id}/data-status:
+    get:
+      operationId: get_health_data_status
+      summary: Server-observed source reception state without raw logs
+      parameters:
+        - $ref: "#/components/parameters/ProfileId"
+      responses:
+        "200":
+          description: Source timestamps and counters; no speculative device diagnosis
+          content:
+            application/json:
+              schema: { type: object }
   /api/machine/v1/agent/profiles/{profile_id}/summary:
     get:
       operationId: get_health_profile_summary
@@ -353,6 +381,8 @@ components:
         review_id: { type: string }
         reference: { type: string }
         revision: { type: integer }
+        payload_hash: { type: string }
+        expires_at: { type: [string, "null"], format: date-time }
         domain: { const: health }
         intent: { type: string }
         summary: { type: string }
@@ -452,6 +482,7 @@ components:
       type: object
       additionalProperties: false
       properties:
+        food_id: { type: integer, minimum: 1 }
         weight_kg: { type: number, minimum: 20, maximum: 400 }
         sleep_hours: { type: number, minimum: 0, maximum: 24 }
         mood_score: { type: integer, minimum: 1, maximum: 10 }
@@ -477,6 +508,8 @@ components:
       additionalProperties: false
       required: [name]
       properties:
+        food_id: { type: integer, minimum: 1 }
+        notes: { type: string, maxLength: 1000 }
         name: { type: string, minLength: 1, maxLength: 120 }
         amount_g: { type: number, minimum: 0, maximum: 5000 }
         kcal: { type: number, minimum: 0, maximum: 20000 }
@@ -488,6 +521,8 @@ components:
       additionalProperties: false
       required: [record_type, effective_date, fields]
       properties:
+        operation: { enum: [update] }
+        target_id: { type: integer, minimum: 1 }
         record_type:
           enum: [metric, meal, workout]
         effective_date:

@@ -705,3 +705,74 @@ class AgentMachineAudit(Base):
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, default=_utc_now
     )
+
+
+class HealthTask(Base):
+    """Durable domain work; no prompts, credentials or arbitrary executable payloads."""
+    __tablename__ = "health_tasks"
+    __table_args__ = (UniqueConstraint("owner", "task_key"), {"schema": SCHEMA})
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    owner: Mapped[str] = mapped_column(Text, nullable=False)
+    task_key: Mapped[str] = mapped_column(Text, nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, default="pending", nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    result: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    lease_token: Mapped[str | None] = mapped_column(Text)
+    lease_until: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), default=_utc_now)
+    finished_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+
+
+class HealthEvidence(Base):
+    __tablename__ = "health_evidence"
+    __table_args__ = ({"schema": SCHEMA},)
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    owner: Mapped[str] = mapped_column(Text, nullable=False)
+    profile_id: Mapped[str] = mapped_column(Text, default="primary", nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    fingerprint: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), default=_utc_now)
+    expires_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+
+
+class HealthPreference(Base):
+    __tablename__ = "health_preferences"
+    __table_args__ = (UniqueConstraint("owner", "name"), {"schema": SCHEMA})
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    owner: Mapped[str] = mapped_column(Text, nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    value: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(Text, default="confirmed", nullable=False)
+    source: Mapped[str] = mapped_column(Text, default="explicit-user", nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), default=_utc_now)
+    expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+
+
+class HealthGoal(Base):
+    __tablename__ = "health_goals"
+    __table_args__ = ({"schema": SCHEMA},)
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    owner: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, default="active", nullable=False)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    plan: Mapped[dict] = mapped_column(JSON, nullable=False)
+    history: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    checkins: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    outcome: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    due_date: Mapped[date] = mapped_column(Date, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), default=_utc_now)
+
+
+class HealthMonitor(Base):
+    __tablename__ = "health_monitors"
+    __table_args__ = (UniqueConstraint("owner", "kind"), {"schema": SCHEMA})
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    owner: Mapped[str] = mapped_column(Text, nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    mode: Mapped[str] = mapped_column(Text, default="shadow", nullable=False)
+    config: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    state: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    snoozed_until: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), default=_utc_now)

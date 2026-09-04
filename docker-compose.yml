@@ -37,6 +37,22 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  worker:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    command: ["python", "-m", "scripts.health_worker"]
+    environment:
+      TZ: Asia/Shanghai
+    depends_on:
+      app:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+
   backup:
     image: prodrigestivill/postgres-backup-local:16
     container_name: shadow-health-backup

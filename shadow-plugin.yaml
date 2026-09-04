@@ -2,7 +2,7 @@ apiVersion: shadow.cylunex/v1alpha1
 kind: ShadowDomainPlugin
 metadata:
   id: shadow-health
-  version: 0.1.2
+  version: 0.2.0
   display_name: Shadow Health
   description: 以最小披露方式提供健康摘要、聚合趋势和待审核记录草案
 spec:
