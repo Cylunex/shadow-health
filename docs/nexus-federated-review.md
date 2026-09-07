@@ -1,5 +1,7 @@
 # Nexus 联邦审核边界
 
+> 2026-09-07 设计衔接：统一鉴权、Agent 与 Nexus 目标规范以 [本项目接入设计](nexus-integration-design.md) 为准。不再新增领域自管 OIDC/Session、Agent registry/Grant/审批中心或模型/工具通用循环；普通明确写入采用中央 current_intent。以下相关条目仅描述旧实现/历史阶段，不能作为新增实现继续复制；未迁移接口仍保留当前安全限制。
+
 状态：已接受，2026-08-25。
 
 统一 Shadow Nexus Profile 不再选择 `health.records.draft`。模型只读取健康摘要与趋势，并向 Nexus

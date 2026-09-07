@@ -51,3 +51,5 @@ uv run python -m scripts.health_worker
 医疗相关输出仅供个人记录和参考。
 
 本轮 Agent 改造、迁移、MCP 凭据切换和 APK 兼容性见 [工作流实施说明](docs/agent-workflows.md)。
+
+- [统一鉴权、Agent 与 Nexus 接入设计（目标方案，尚未实现）](docs/nexus-integration-design.md)

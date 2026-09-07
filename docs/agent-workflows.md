@@ -1,5 +1,7 @@
 # Health Agent 工作流：实施与上线说明
 
+> 2026-09-07 设计衔接：统一鉴权、Agent 与 Nexus 目标规范以 [本项目接入设计](nexus-integration-design.md) 为准。不再新增领域自管 OIDC/Session、Agent registry/Grant/审批中心或模型/工具通用循环；普通明确写入采用中央 current_intent。以下相关条目仅描述旧实现/历史阶段，不能作为新增实现继续复制；未迁移接口仍保留当前安全限制。
+
 日期：2026-09-04。对应 [改造方案](agent-evolution-plan-2026-09-04.md) 的 P0–P4 可开发范围。
 后续逻辑修复与验证范围见 [全功能走查](logic-walkthrough-2026-09-04.md)。
 已实现服务端与 Shadow App 客户端代码；本文件不代表生产已部署或真实设备验收已通过。
