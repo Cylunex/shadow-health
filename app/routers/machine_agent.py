@@ -1317,6 +1317,7 @@ async def execute_nexus_health_command(
         ):
             raise ValueError
         payload = _nexus_health_payload(command["arguments"])
+        payload["_command_capability_ref"] = capability_ref
     except (UnicodeDecodeError, ValueError, json.JSONDecodeError) as exc:
         raise MachineAPIError(400, "invalid_command", "Health command is invalid.") from exc
 
@@ -1401,7 +1402,8 @@ def get_nexus_health_command(
     result = {
         "protocol": "shadow.execution-result.v1",
         "command_id": command_id,
-        "capability_ref": f"shadow://capabilities/shadow-health/{profile_id}/health.records.write",
+        "capability_ref": draft.payload.get("_command_capability_ref")
+        or f"shadow://capabilities/shadow-health/{profile_id}/health.records.write",
         "operation_id": "execute_nexus_health_command",
         "status": "committed",
         "result_kind": "record",
@@ -1539,6 +1541,9 @@ def _nexus_health_payload(raw: Any) -> dict[str, Any]:
     if not isinstance(fields, dict):
         raise ValueError
     record_type = fields.get("recordType")
+    intent_family = intent.split(".", 2)[1]
+    if intent_family != "record" and intent_family != record_type:
+        raise ValueError
     effective_date = str(fields.get("effectiveDate") or today_local().isoformat())
     native: dict[str, Any]
     if record_type == "metric":

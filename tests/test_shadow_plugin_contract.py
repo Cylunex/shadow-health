@@ -725,12 +725,23 @@ def test_nexus_direct_metric_command_commits_and_replays_without_review(machine_
             f"/api/machine/v1/agent/nexus/commands/{command_id}?profile_id=primary",
             headers=headers,
         )
+        invalid = client.post(
+            "/api/machine/v1/agent/nexus/commands?profile_id=primary",
+            headers=headers,
+            json={
+                **command,
+                "command_id": "cmd_health_mismatched_intent_0001",
+                "arguments": {**command["arguments"], "intent": "health.meal"},
+            },
+        )
         assert first.status_code == replay.status_code == status.status_code == 200
+        assert invalid.status_code == 400
         assert first.json()["status"] == "committed"
         assert first.json()["result_kind"] == "record"
         assert first.json()["fields"]["weight_kg"] == "70.2"
         assert replay.json()["replayed"] is True
         assert status.json()["resource_ref"] == first.json()["resource_ref"]
+        assert status.json()["capability_ref"] == command["capability_ref"]
         with session_factory() as session:
             row = session.scalar(select(BodyMetrics).where(BodyMetrics.log_date == day))
             assert row is not None and str(row.weight_kg) == "70.20"
