@@ -81,14 +81,14 @@ surfaces:
     operation_id: list_health_suggestions
   - id: capture
     type: capture
-    capability: health.records.draft
-    operation_id: create_nexus_health_review
+    capability: health.records.write
+    operation_id: execute_nexus_health_command
     risk_level: L2
     intent_prefixes: [health.record, health.metric, health.meal, health.workout]
   - id: weigh
     type: quick-action
-    capability: health.records.draft
-    operation_id: create_nexus_health_review
+    capability: health.records.write
+    operation_id: execute_nexus_health_command
     risk_level: L2
     action:
       title: 记录体重
@@ -121,8 +121,8 @@ surfaces:
           default: $today
   - id: sleep
     type: quick-action
-    capability: health.records.draft
-    operation_id: create_nexus_health_review
+    capability: health.records.write
+    operation_id: execute_nexus_health_command
     risk_level: L2
     action:
       title: 记录睡眠
@@ -155,8 +155,8 @@ surfaces:
           default: $today
   - id: mood
     type: quick-action
-    capability: health.records.draft
-    operation_id: create_nexus_health_review
+    capability: health.records.write
+    operation_id: execute_nexus_health_command
     risk_level: L2
     action:
       title: 记录状态

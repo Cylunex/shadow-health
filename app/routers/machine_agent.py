@@ -1283,6 +1283,146 @@ async def create_nexus_health_review(
     )
 
 
+@router.post("/nexus/commands", operation_id="execute_nexus_health_command")
+async def execute_nexus_health_command(
+    request: Request,
+    profile_id: str = Query(min_length=1, max_length=64),
+    service: MachineHealthService = Depends(get_machine_health_service),
+) -> JSONResponse:
+    """Apply one explicit, ordinary Nexus intent without creating user review work."""
+    capability = "health.records.write"
+    principal, request_id = _authorize(
+        request, service, profile_id, capability, "records:write"
+    )
+    try:
+        command = json.loads(await _read_bounded_body(request, MAX_DRAFT_BODY_BYTES))
+        if not isinstance(command, dict) or set(command) - {
+            "protocol", "command_id", "capability_ref", "operation_id", "schema_version",
+            "arguments", "target_refs", "source_refs", "group_id", "item_id",
+        }:
+            raise ValueError
+        command_id = command.get("command_id")
+        capability_ref = command.get("capability_ref")
+        if (
+            command.get("protocol") != "shadow.command.v1"
+            or command.get("schema_version") != 1
+            or command.get("operation_id") != "execute_nexus_health_command"
+            or not isinstance(command_id, str)
+            or not re.fullmatch(r"cmd_[A-Za-z0-9_-]{8,128}", command_id)
+            or not isinstance(capability_ref, str)
+            or not capability_ref.endswith("/health.records.write")
+            or not isinstance(command.get("arguments"), dict)
+            or not isinstance(command.get("target_refs"), list)
+            or not isinstance(command.get("source_refs"), list)
+        ):
+            raise ValueError
+        payload = _nexus_health_payload(command["arguments"])
+    except (UnicodeDecodeError, ValueError, json.JSONDecodeError) as exc:
+        raise MachineAPIError(400, "invalid_command", "Health command is invalid.") from exc
+
+    payload_hash = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    ).hexdigest()
+    try:
+        draft, created_replay = service.create_draft(
+            principal=principal,
+            profile_id=profile_id,
+            idempotency_key=command_id,
+            payload=payload,
+            payload_hash=payload_hash,
+        )
+        resource_ref, commit_replay = service.commit_draft(draft)
+    except MachineAPIError as exc:
+        service.audit(
+            request_id=request_id,
+            principal=principal,
+            capability=capability,
+            profile_id=profile_id,
+            outcome="rejected",
+            status_code=exc.status_code,
+            detail_code=exc.code,
+        )
+        raise
+
+    replayed = created_replay or commit_replay
+    fields = {
+        key: str(value)
+        for key, value in draft.payload.get("fields", {}).items()
+        if key in {"weight_kg", "sleep_hours", "mood_score"}
+    }
+    result = {
+        "protocol": "shadow.execution-result.v1",
+        "command_id": command_id,
+        "capability_ref": capability_ref,
+        "operation_id": "execute_nexus_health_command",
+        "status": "committed",
+        "result_kind": "record",
+        "resource_ref": resource_ref,
+        "receipt_ref": f"shadow://health/operations/{command_id}",
+        "completed_at": draft.payload["_applied_at"],
+        "replayed": replayed,
+        "summary": "健康记录已保存。",
+        "fields": fields,
+    }
+    service.audit(
+        request_id=request_id,
+        principal=principal,
+        capability=capability,
+        profile_id=profile_id,
+        outcome="replayed" if replayed else "success",
+        status_code=200,
+        resource_uri=resource_ref,
+    )
+    return JSONResponse(result)
+
+
+@router.get("/nexus/commands/{command_id}", operation_id="get_nexus_health_command")
+def get_nexus_health_command(
+    command_id: str,
+    request: Request,
+    profile_id: str = Query(min_length=1, max_length=64),
+    service: MachineHealthService = Depends(get_machine_health_service),
+) -> JSONResponse:
+    capability = "health.records.write"
+    principal, request_id = _authorize(
+        request, service, profile_id, capability, "records:write"
+    )
+    draft = service.db.scalar(
+        select(AgentRecordDraft).where(
+            AgentRecordDraft.agent_id == principal.agent_id,
+            AgentRecordDraft.profile_id == profile_id,
+            AgentRecordDraft.idempotency_key == command_id,
+        )
+    )
+    if draft is None:
+        raise MachineAPIError(404, "command_not_found", "The Health command was not found.")
+    if draft.status != "applied" or not draft.payload.get("_result_uri"):
+        raise MachineAPIError(409, "command_not_committed", "The Health command is not committed.")
+    result = {
+        "protocol": "shadow.execution-result.v1",
+        "command_id": command_id,
+        "capability_ref": f"shadow://capabilities/shadow-health/{profile_id}/health.records.write",
+        "operation_id": "execute_nexus_health_command",
+        "status": "committed",
+        "result_kind": "record",
+        "resource_ref": draft.payload["_result_uri"],
+        "receipt_ref": f"shadow://health/operations/{command_id}",
+        "completed_at": draft.payload["_applied_at"],
+        "replayed": True,
+        "summary": "健康记录已保存。",
+    }
+    service.audit(
+        request_id=request_id,
+        principal=principal,
+        capability=capability,
+        profile_id=profile_id,
+        outcome="success",
+        status_code=200,
+        resource_uri=draft.payload["_result_uri"],
+    )
+    return JSONResponse(result)
+
+
 @router.get("/nexus/reviews", operation_id="list_nexus_health_reviews")
 def list_nexus_health_reviews(
     request: Request,

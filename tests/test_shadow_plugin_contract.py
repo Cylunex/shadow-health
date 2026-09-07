@@ -4,6 +4,7 @@ import hashlib
 import json
 import sys
 from collections.abc import Iterator
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -161,9 +162,16 @@ def machine_api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             "updated_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL)"
         )
         connection.exec_driver_sql(
-            "CREATE TABLE health.body_metrics "
-            "(log_date DATE, weight_kg NUMERIC, sleep_hours NUMERIC, mood_score INTEGER, "
-            "autofilled JSON DEFAULT '{}', updated_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL)"
+            "CREATE TABLE health.body_metrics ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, log_date DATE NOT NULL UNIQUE, "
+            "weight_kg NUMERIC, body_fat_pct NUMERIC, muscle_mass_kg NUMERIC, "
+            "skeletal_muscle_kg NUMERIC, bmr_kcal INTEGER, body_water_kg NUMERIC, "
+            "visceral_fat_level INTEGER, waist_cm NUMERIC, chest_cm NUMERIC, arm_cm NUMERIC, "
+            "thigh_cm NUMERIC, hip_cm NUMERIC, bp_systolic INTEGER, bp_diastolic INTEGER, "
+            "resting_hr INTEGER, spo2_pct NUMERIC, sleep_hours NUMERIC, sleep_quality INTEGER, "
+            "morning_erection BOOLEAN, energy_level INTEGER, mood_score INTEGER, notes TEXT, "
+            "autofilled JSON DEFAULT '{}' NOT NULL, created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL, "
+            "updated_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL)"
         )
         today = today_local().isoformat()
         connection.exec_driver_sql(
@@ -671,3 +679,66 @@ def test_standard_nexus_review_protocol_creates_lists_and_commits(machine_api) -
         ("测试米饭", "实际吃了约八成"),
         ("测试鸡肉", "去皮后估算"),
     ]
+
+
+def test_nexus_direct_metric_command_commits_and_replays_without_review(machine_api) -> None:
+    client, tokens, session_factory = machine_api
+    from sqlalchemy import delete, select
+
+    from app.models import BodyMetrics
+
+    day = today_local() - timedelta(days=200)
+    command_id = "cmd_health_direct_metric_0001"
+    command = {
+        "protocol": "shadow.command.v1",
+        "command_id": command_id,
+        "capability_ref": "shadow://capabilities/shadow-health/health-primary/health.records.write",
+        "operation_id": "execute_nexus_health_command",
+        "schema_version": 1,
+        "arguments": {
+            "intent": "health.metric.weight",
+            "summary": "记录体重 70.2 kg",
+            "fields": {
+                "recordType": "metric",
+                "effectiveDate": day.isoformat(),
+                "weightKg": "70.2",
+            },
+            "source_text": "记一下 70.2kg",
+            "source_refs": [],
+        },
+        "target_refs": [],
+        "source_refs": ["turn:test-direct-health"],
+    }
+    headers = _bearer(tokens["health-helper"])
+    try:
+        first = client.post(
+            "/api/machine/v1/agent/nexus/commands?profile_id=primary",
+            headers=headers,
+            json=command,
+        )
+        replay = client.post(
+            "/api/machine/v1/agent/nexus/commands?profile_id=primary",
+            headers=headers,
+            json=command,
+        )
+        status = client.get(
+            f"/api/machine/v1/agent/nexus/commands/{command_id}?profile_id=primary",
+            headers=headers,
+        )
+        assert first.status_code == replay.status_code == status.status_code == 200
+        assert first.json()["status"] == "committed"
+        assert first.json()["result_kind"] == "record"
+        assert first.json()["fields"]["weight_kg"] == "70.2"
+        assert replay.json()["replayed"] is True
+        assert status.json()["resource_ref"] == first.json()["resource_ref"]
+        with session_factory() as session:
+            row = session.scalar(select(BodyMetrics).where(BodyMetrics.log_date == day))
+            assert row is not None and str(row.weight_kg) == "70.20"
+    finally:
+        with session_factory() as session:
+            session.execute(delete(BodyMetrics).where(BodyMetrics.log_date == day))
+            session.execute(
+                text("DELETE FROM health.agent_record_drafts WHERE idempotency_key = :key"),
+                {"key": command_id},
+            )
+            session.commit()

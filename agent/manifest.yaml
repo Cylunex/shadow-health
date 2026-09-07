@@ -141,10 +141,32 @@ capabilities:
     resource_grant_required: true
     idempotency_required: true
   - id: health.records.write
-    summary: 将用户在 Nexus Review 明确确认的 Health 草稿写入正式记录
+    summary: 保存用户当前明确要求的普通 Health 记录
     audience: health
     scopes: [health.records.write]
     tools:
+      - name: health.records.execute
+        transport: http
+        contract_ref: contracts/agent.openapi.yaml
+        operation_id: execute_nexus_health_command
+        exposure: hidden
+        result_mode: structured
+        max_result_bytes: 8192
+        max_model_chars: 1000
+        timeout_ms: 10000
+        concurrency_safe: false
+        retry_policy: idempotent
+      - name: health.records.operation
+        transport: http
+        contract_ref: contracts/agent.openapi.yaml
+        operation_id: get_nexus_health_command
+        exposure: hidden
+        result_mode: structured
+        max_result_bytes: 8192
+        max_model_chars: 1000
+        timeout_ms: 10000
+        concurrency_safe: true
+        retry_policy: idempotent
       - name: health.records.write
         transport: http
         contract_ref: contracts/agent.openapi.yaml
@@ -218,3 +240,11 @@ capabilities:
     reversible: true
     resource_grant_required: true
     idempotency_required: true
+    execution:
+      interaction: direct
+      effect_scope: private
+      reversibility: correctable
+      result_kind: record
+      authorization_mode: current_intent
+      status_operation_id: get_nexus_health_command
+      idempotency_window_seconds: 172800

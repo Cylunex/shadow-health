@@ -7,6 +7,39 @@ servers:
 security:
   - machineBearer: []
 paths:
+  /api/machine/v1/agent/nexus/commands:
+    post:
+      operationId: execute_nexus_health_command
+      summary: Save one explicit ordinary Health command without a review page
+      parameters:
+        - $ref: "#/components/parameters/ProfileQuery"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "200":
+          description: Committed Health execution result
+          content:
+            application/json:
+              schema: { type: object }
+  /api/machine/v1/agent/nexus/commands/{command_id}:
+    get:
+      operationId: get_nexus_health_command
+      summary: Read the authoritative result for a previous Health command
+      parameters:
+        - $ref: "#/components/parameters/ProfileQuery"
+        - name: command_id
+          in: path
+          required: true
+          schema: { type: string, pattern: "^cmd_[A-Za-z0-9_-]{8,128}$" }
+      responses:
+        "200":
+          description: Committed Health execution result
+          content:
+            application/json:
+              schema: { type: object }
   /api/machine/v1/agent/profiles/{profile_id}/weekly-evidence:
     get:
       operationId: get_health_weekly_evidence
