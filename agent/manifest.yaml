@@ -1,10 +1,10 @@
 version: 2
 app_id: health
-package_version: 0.2.0
+package_version: 0.2.1
 skills:
   - id: health-companion
     path: skills/health-companion/SKILL.md
-    summary: 读取独立 Health Profile 的最小健康摘要与聚合趋势，并创建待用户审核的记录草案
+    summary: 读取健康摘要与趋势，并按当前 Profile 保存用户明确要求的普通健康记录
     capabilities:
       - health.summary.read
       - health.trends.read
